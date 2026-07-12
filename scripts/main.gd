@@ -8,6 +8,7 @@ const PREVIEW_INVALID := Color(0.95, 0.25, 0.25, 0.65)
 @onready var _terrain: TerrainRenderer = $TerrainMap
 @onready var _node_spawner: NodeSpawner = $NodeMarkers
 @onready var _camera: Camera3D = $Camera3D
+@onready var _directional_light: DirectionalLight3D = $DirectionalLight3D
 
 var _map_data: MapData
 var _base_nodes: Array[NodeData] = []
@@ -36,6 +37,7 @@ var _report_title: Label
 var _tool_buttons: Dictionary = {}
 
 func _ready() -> void:
+	_apply_web_mobile_rendering_limits()
 	_map_data = load(REGION_MAP_PATH)
 	_configure_static_nodes()
 	_base_nodes.assign(_map_data.node_placements)
@@ -50,6 +52,13 @@ func _ready() -> void:
 	add_child(_preview_visuals)
 	_build_ui()
 	_update_ui()
+
+func _apply_web_mobile_rendering_limits() -> void:
+	# Mobile browsers have much smaller WebGL memory budgets than native apps.
+	# High-DPI rendering is disabled in project settings, and shadows are the
+	# largest remaining off-screen allocation in this scene.
+	if OS.has_feature("web_android") or OS.has_feature("web_ios"):
+		_directional_light.shadow_enabled = false
 
 func _configure_static_nodes() -> void:
 	var supplies := GameBalance.source_supplies()

@@ -30,13 +30,14 @@ func render(map_data: MapData) -> void:
 		prop.queue_free()
 	_cache_item_ids()
 
+	var render_forest_props := not OS.has_feature("web_android") and not OS.has_feature("web_ios")
 	var rng := RandomNumberGenerator.new()
 	rng.seed = FOREST_PROP_SEED
 	for y in range(map_data.grid_size.y):
 		for x in range(map_data.grid_size.x):
 			var terrain: GameEnums.TerrainType = map_data.get_terrain(x, y)
 			_place_terrain_cell(x, y, terrain)
-			if terrain == GameEnums.TerrainType.FOREST and rng.randf() < FOREST_PROP_CHANCE:
+			if render_forest_props and terrain == GameEnums.TerrainType.FOREST and rng.randf() < FOREST_PROP_CHANCE:
 				_scatter_forest_prop(x, y, rng)
 
 func _place_terrain_cell(x: int, y: int, terrain: GameEnums.TerrainType) -> void:
