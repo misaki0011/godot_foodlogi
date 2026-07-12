@@ -24,8 +24,8 @@ rotation = Vector3(-0.95, 0.6, 0)
 shadow_enabled = true
 
 [node name="Camera3D" type="Camera3D" parent="."]
-position = Vector3(18, 26, 30)
-rotation = Vector3(-0.96, 0, 0)
+position = Vector3(38.2132, 21.2132, 32.2132)
+rotation = Vector3(-0.61548, 0.785398, 0)
 projection = 1
 size = 40.0
 near = 0.1
