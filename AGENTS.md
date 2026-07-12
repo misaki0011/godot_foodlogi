@@ -2,31 +2,33 @@
 
 ## Project Overview
 
-This is a godot project.
-Follow these instructions when editting this repository.
+This is a Godot project.
+Follow these instructions when editing this repository.
 
-## Testing & Validation
+## Commands
 
-verify that Godot scene files (`.tscn`, `.tres`) are syntactically correct and load without parsing errors, run the editor headlessly with the `--editor --quit` flags:
+Run commands from the repository root.
 
-```bash
-  /mnt/c/Users/harat_local/Desktop/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe --headless --editor --quit
-```
+### Build
 
-### GitHub Pull Request
-
-If this repository uses GitHub, use the GitHub CLI if available:
+Export the release Web build used by GitHub Pages:
 
 ```bash
-git push -u origin agent/<short-task-slug>
-gh pr create \
-  --base main \
-  --head agent/<short-task-slug> \
-  --title "<PR title>" \
-  --body "<PR description>"
+GODOT=/mnt/c/Users/harat_local/Desktop/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe
+mkdir -p build/web
+"$GODOT" --headless --export-release Web build/web/index.html
 ```
 
-If `gh` is not installed or not authenticated, push the branch and explain how to create the PR manually.
+### Test
+
+Verify that Godot resources, including `.tscn` and `.tres` files, load without
+parsing errors:
+
+```bash
+GODOT=/mnt/c/Users/harat_local/Desktop/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe
+"$GODOT" --headless --editor --quit
+"$GODOT" --headless --script res://scripts/tools/verify_main.gd
+```
 
 ### If Checks Fail
 
@@ -38,6 +40,55 @@ If a check fails:
 4. Do not open a PR/MR with failing checks unless the user explicitly asks.
 
 If the failure appears unrelated to the current changes, explain that clearly in the PR/MR description.
+
+## Git Workflow
+
+Agents must complete the Git workflow autonomously without asking for routine
+confirmation at each step:
+
+1. Before editing, create or switch to a focused branch named
+   `agent/<short-task-slug>`. Never make task commits directly on `main`.
+2. Preserve any existing user changes. Stage only files related to the current
+   task and never include unrelated modifications in the commit.
+3. Run the required build and test commands.
+4. Create a concise commit describing the completed change.
+5. Push the branch with upstream tracking.
+6. Open a pull request into `main` and report its URL.
+
+Use non-interactive commands. A typical publish sequence is:
+
+```bash
+git switch -c agent/<short-task-slug>
+git add <task-files>
+git commit -m "<concise change summary>"
+git push -u origin agent/<short-task-slug>
+gh pr create \
+  --base main \
+  --head agent/<short-task-slug> \
+  --title "<PR title>" \
+  --body "<PR description>"
+```
+
+If the task is already on an appropriate feature branch, continue using it
+instead of creating another branch. Do not amend or rewrite commits that were
+not created for the current task.
+
+If authentication, permissions, or unavailable tooling blocks a push or pull
+request, keep the local commit intact, report the exact failure, and provide the
+single command needed after the blocker is resolved.
+
+### Web Preview Rule
+
+Every pushed branch deploys to the shared GitHub Pages URL. Before merging a
+feature into `main`:
+
+1. Push the feature branch's latest commit.
+2. Wait for **Build web game** and **Deploy to GitHub Pages** to pass.
+3. Verify the game at `https://misaki0011.github.io/godot_foodlogi/`.
+4. Merge only after the browser check succeeds.
+
+The most recently pushed branch owns the shared preview URL. A push to `main`
+after merging restores the URL to the merged version.
 
 ### Main Branch Protection Assumption
 
