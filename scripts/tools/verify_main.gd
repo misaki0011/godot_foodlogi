@@ -25,7 +25,22 @@ func _report() -> void:
 
 	var used_cells := terrain.get_used_cells()
 	print("Terrain cells populated: %d (expected 216 for 18x12)" % used_cells.size())
-	print("Node markers spawned: %d (expected 10)" % markers.get_child_count())
+	print("Node markers spawned: %d (expected 9)" % markers.get_child_count())
+	assert(used_cells.size() == 216)
+	assert(markers.get_child_count() == 9)
+	assert(_main.get_node_or_null("RouteVisuals") != null)
+	assert(_main.get_node_or_null("RoutePreview") != null)
+	var starting_funds: float = _main.get("_state").funds
+	_main.call("_place_building", Vector2i(4, 4), "normal")
+	assert(_main.get("_state").placed_nodes.size() == 1)
+	assert(_main.get("_state").funds == starting_funds - 80.0)
+	var path: Array[Vector2i] = [Vector2i(2, 2), Vector2i(3, 2), Vector2i(4, 2), Vector2i(5, 2), Vector2i(6, 2), Vector2i(7, 2), Vector2i(7, 3)]
+	_main.set("_route_path", path)
+	_main.call("_finish_route")
+	assert(_main.get("_state").routes.size() == 1)
+	_main.call("_new_game")
+	assert(_main.get("_state").routes.is_empty())
+	assert(_main.get("_state").placed_nodes.is_empty())
 
 	var terrain_types_seen := {}
 	for cell in used_cells:

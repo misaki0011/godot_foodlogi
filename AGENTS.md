@@ -28,6 +28,7 @@ parsing errors:
 GODOT=/mnt/c/Users/harat_local/Desktop/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe
 "$GODOT" --headless --editor --quit
 "$GODOT" --headless --script res://scripts/tools/verify_main.gd
+"$GODOT" --headless --script res://scripts/tools/verify_mvp.gd
 ```
 
 ### If Checks Fail

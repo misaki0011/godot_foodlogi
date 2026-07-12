@@ -1033,7 +1033,7 @@ The first playable version should be small.
 
 One region with:
 
-- 3 food sources
+- 4 food sources (Farm, Bakery, Dairy, Harbor)
 - 5 settlements
 - 1 river or terrain obstacle
 - 1 city/town as a late objective
@@ -1076,6 +1076,26 @@ Average food freshness: 70%+
 Profit: positive for 3 consecutive days
 Waste: below 20%
 ```
+
+### MVP implementation values
+
+The first playable version uses a finite starting balance of 1,500. The player
+draws cardinal, tile-based route segments between any two nodes. Food is then
+assigned automatically across the network, preferring the path with the best
+predicted delivered freshness and using upkeep as the tie-breaker.
+
+Source supply per day is Farm (80 grain, 90 vegetables), Bakery (80 bread),
+Dairy (75 milk), and Harbor (55 seafood). Food value/decay per tile is Grain
+(3/0.5), Bread (5/1.5), Vegetables (6/2.5), Milk (8/4), and Seafood (10/6).
+
+Route construction costs 8 per tile before terrain modifiers. Dirt route upkeep
+is 2 per tile/day before terrain, route-level, and hub modifiers. Crossing a
+river automatically constructs a bridge for an additional 40. Basic upgrades
+are Dirt -> Paved -> Main routes and Small -> Regional hubs. Storage types are
+separate buildings rather than an upgrade chain.
+
+The first playable version has no save persistence, delivery animation,
+chapter tutorial sequence, Central Hub, source upgrades, or random events.
 
 ---
 

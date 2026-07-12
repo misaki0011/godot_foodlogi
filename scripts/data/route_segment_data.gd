@@ -10,3 +10,6 @@ extends Resource
 @export var terrain_profile: Array[GameEnums.TerrainType] = []
 @export var capacity: float
 @export var base_upkeep: float
+@export var tile_path: Array[Vector2i] = []
+@export var route_level: int = 0
+@export var build_cost: float

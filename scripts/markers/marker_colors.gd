@@ -36,4 +36,7 @@ static func color_for(node_data: NodeData) -> Color:
 	if node_data.linked_resource is HubData:
 		var hub: HubData = node_data.linked_resource
 		return HUB_TYPE_COLORS.get(hub.hub_type, NODE_TYPE_COLORS[GameEnums.NodeType.HUB])
+	if node_data.linked_resource is SettlementData:
+		var settlement: SettlementData = node_data.linked_resource
+		return SETTLEMENT_TYPE_COLORS.get(settlement.settlement_type, NODE_TYPE_COLORS[GameEnums.NodeType.SETTLEMENT])
 	return NODE_TYPE_COLORS.get(node_data.node_type, Color.WHITE)
