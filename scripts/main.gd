@@ -92,6 +92,10 @@ func _pointer_pressed(screen_position: Vector2) -> void:
 		return
 	match _tool:
 		"route":
+			if _route_drawing:
+				_append_path_to(cell)
+				_update_route_preview()
+				return
 			if _node_at(cell) == null:
 				_show_toast("Start a route on a source, settlement, storage, or hub.", true)
 				return
@@ -118,6 +122,10 @@ func _pointer_released(screen_position: Vector2) -> void:
 	var cell := _screen_to_cell(screen_position)
 	if _cell_in_bounds(cell):
 		_append_path_to(cell)
+	if _route_path.size() <= 1 or _node_at(_route_path.back()) == null:
+		_route_drawing = true
+		_update_route_preview()
+		return
 	_finish_route()
 
 func _append_path_to(target: Vector2i) -> void:
@@ -366,8 +374,8 @@ func _update_route_preview() -> void:
 	_clear_children(_preview_visuals)
 	_preview_text.visible = true
 	var validation := _validate_route(_route_path)
-	var color := PREVIEW_VALID if validation.valid else PREVIEW_INVALID
-	for i in range(1, _route_path.size()):
+	var color := PREVIEW_VALID if validation.valid or _route_path.size() == 1 else PREVIEW_INVALID
+	for i in range(_route_path.size()):
 		_add_tile_visual(_preview_visuals, _route_path[i], color, 0.20)
 	var cost := SimulationEngine.route_build_cost(_map_data, _route_path)
 	var terrain_profile: Array[GameEnums.TerrainType] = []
@@ -395,11 +403,22 @@ func _add_tile_visual(parent: Node3D, cell: Vector2i, color: Color, height: floa
 func _screen_to_cell(screen_position: Vector2) -> Vector2i:
 	var origin := _camera.project_ray_origin(screen_position)
 	var direction := _camera.project_ray_normal(screen_position)
-	var hit = Plane(Vector3.UP, 1.0).intersects_ray(origin, direction)
+	var hit = Plane(Vector3.UP, 2.0).intersects_ray(origin, direction)
 	if hit == null:
 		return Vector2i(-1, -1)
-	var cell := _terrain.local_to_map(_terrain.to_local(hit))
-	return Vector2i(cell.x, cell.z)
+	var local_hit := _terrain.to_local(hit)
+	var approximate := _terrain.local_to_map(local_hit)
+	var nearest := approximate
+	var nearest_distance := INF
+	for x_offset in range(-1, 2):
+		for z_offset in range(-1, 2):
+			var candidate := Vector3i(approximate.x + x_offset, 0, approximate.z + z_offset)
+			var center := _terrain.map_to_local(candidate)
+			var distance := Vector2(center.x, center.z).distance_squared_to(Vector2(local_hit.x, local_hit.z))
+			if distance < nearest_distance:
+				nearest_distance = distance
+				nearest = candidate
+	return Vector2i(nearest.x, nearest.z)
 
 func _cell_in_bounds(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.y >= 0 and cell.x < _map_data.grid_size.x and cell.y < _map_data.grid_size.y
@@ -492,9 +511,12 @@ func _update_ui() -> void:
 
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
+	layer.name = "UILayer"
 	add_child(layer)
 	var root := Control.new()
+	root.name = "GameUI"
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(root)
 
 	var top := PanelContainer.new()
@@ -576,6 +598,7 @@ func _build_ui() -> void:
 	_preview_text.offset_bottom = -14
 	_preview_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_preview_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_preview_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_preview_text.add_theme_stylebox_override("normal", _panel_style(Color("142027"), 0.9))
 	_preview_text.visible = false
 	root.add_child(_preview_text)
@@ -586,6 +609,7 @@ func _build_ui() -> void:
 	_toast.size = Vector2(440, 42)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toast.add_theme_stylebox_override("normal", _panel_style(Color("19312c"), 0.96))
 	_toast.visible = false
 	root.add_child(_toast)
