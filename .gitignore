@@ -25,6 +25,7 @@ test.mp3.import
 # Godot
 .godot/
 *.import
+build/
 
 # IDE & OS
 .vscode/
