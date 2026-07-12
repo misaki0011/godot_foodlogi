@@ -1,0 +1,41 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.mypy_cache/
+
+# Credentials & Environment
+.env
+token.pickle
+*.pickle
+key_youtubeupload/
+AGENTS.md
+
+# Media Files
+*.mp3
+*.wav
+*.mp4
+*.m4a
+*.flac
+output.avi
+*.avi
+test.mp3.import
+
+# Godot
+.godot/
+*.import
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.gemini/
+
+.youtube
+.key
+
+.claude/
