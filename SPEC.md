@@ -1,11 +1,42 @@
 # Food Logistics Puzzle Game - Design Spec
 
-**Version:** 0.1  
+**Version:** 0.3  
 **Working title:** Fresh Routes  
 **Genre:** Cozy logistics / routing puzzle / light management  
-**Target platform:** PC / Steam  
-**Core player actions:** Draw routes, place storage, place hubs  
+**Target platform:** PC / Steam (MVP prototype: browser)  
+**Core player actions:** Draw routes, place storage, let hubs form automatically  
 **Explicitly out of scope:** Vehicle management, cooking simulation, staff management, complex traffic simulation
+
+---
+
+## 0. Changelog
+
+### v0.2 → v0.3 — Routing and inspection playtest
+
+The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
+
+1. **Route placement is atomic when it creates a hub.** If a newly placed route would create a 3+ connection junction, the required Small Hub must form in the same action. If the player cannot afford the route plus hub, or the connected network is already at its 2-hub cap, the route placement is cancelled. No route tile is created and no money is deducted.
+2. **Only settlements are delivery destinations.** Food sources produce food but never receive deliveries. A route finder may start at the selected source and end at a settlement, but it may not pass through any other source or settlement as an intermediate shortcut.
+3. **Distribution remains demand-pull.** A source's full daily production does not automatically travel to its first hub. Only amounts assigned to settlement demand enter the network. Unassigned supply remains at the source and consumes no route capacity.
+4. **Hub hover information shows actual last-day flow.** Each hub reports its upkeep, adjacent-route discount, and the last delivery split by source, food, and outgoing direction or route. Percentages are calculated within each source-food amount routed through that hub.
+5. **Every settlement has a delivery-result popup.** Hovering a village, town, or city shows the last simulated day's requested, delivered, rejected, freshness, and supplying-source results. Clicking still opens the larger per-food checklist.
+6. **Pending-hub junction tiles are removed.** Because hub-requiring placement is atomic, the game no longer leaves an unaffordable or over-cap 3-way junction as a plain route with a dashed warning. The attempted placement is rejected instead.
+
+### v0.1 → v0.2 — MVP playtest
+
+The MVP was built and played. A few systems changed shape once they hit an actual grid — mostly to fix the "just connect everything, done" problem that a static, unlimited network allows. These are real deviations from v0.1, not just tuning:
+
+1. **Hubs form automatically, not by manual placement.** Any tile where a route meets 3+ connections — other routes, storage, hubs, a food source, or a settlement — auto-upgrades into a Small Hub and auto-charges its build cost. The player no longer selects a "place hub" tool. See §4.4.
+2. **Hubs are capped per connected road network.** Each connected network (routes physically joined together, including through the nodes they touch) can support at most **2 hubs**. A 3rd+ qualifying junction is still buildable, but stays a plain, capacity-limited route tile — it just never gets the hub bonus. This is the change that actually created the "one connected mega-network vs. several smaller ones" decision the original spec's Pillar 2.3 wanted. See §4.4.
+3. **Route capacity is the primary bottleneck, not upkeep alone.** Dirt/Paved/Main capacities were tightened (100/250/500 → 60/160/400) so that a settlement's combined demand routinely exceeds a single tile's throughput, forcing upgrades, parallel routes, or hubs rather than letting the player fully solve the map with one thin path. See §4.1.
+4. **Daily demand wobbles ±15–20%.** A network that exactly cleared capacity yesterday can get squeezed today. This keeps the puzzle live day over day instead of going static once "solved." See §12.
+5. **Win condition replaced with an endless efficiency-score chase.** Rather than a one-time "clear the region" checklist, the player now tracks a daily 0–100 grade score, an all-time best, and a rolling 7-day average. The goal becomes "make it cleaner," matching §18's Core Fun Test better than a binary finish line. See §12.
+6. **Strict one-source-one-food rule.** Farm originally produced both grain and vegetables. It was split into Farm (grain) and a new source, Garden (vegetables), so every source maps to exactly one food. See §4.7.
+7. **Congestion and junction status are persistent map markers, not just tooltips.** Tiles running at 90%+ or 100%+ of capacity show a "!" glyph after each simulated day; junctions waiting on hub funds or blocked by the network cap show a dashed marker. Hovering any of these still gives the full explanation. See §10.5.
+8. **Settlements are clickable for a per-food fulfillment checklist.** Tapping a settlement shows ✓ / ◐ / ✗ per requested food, with delivered/requested amounts and average freshness, pulled from the last simulated day.
+9. **Map grid enlarged to 21×14 (was 17×10)**, with 2 extra tiles of empty margin on every edge, to give the player room to build genuinely separate networks — which now matters because hub budget is per-network.
+
+Everything else in this document (freshness bands, storage roles, food set, satisfaction scoring) held up as originally scoped and is unchanged.
 
 ---
 
@@ -17,7 +48,7 @@ The game should feel like a clean, cozy logistics puzzle rather than a transport
 
 ### One-sentence pitch
 
-> Draw food routes across a cozy region, use storage to keep food fresh, and build hubs to feed villages, towns, and cities efficiently.
+> Draw food routes across a cozy region, use storage to keep food fresh, and form efficient hubs to feed villages, towns, and cities.
 
 ### Core fantasy
 
@@ -32,11 +63,11 @@ The player is not a driver, chef, or factory worker. The player is a regional fo
 The player only needs a few actions:
 
 1. Draw a route.
-2. Place storage on or near a route.
-3. Place a hub to organize and reduce network cost.
-4. Upgrade or remove route infrastructure.
+2. Place storage on an existing route.
+3. Create junctions that automatically form hubs.
+4. Upgrade or remove route and hub infrastructure.
 
-Depth comes from food freshness, storage choice, route length, hub placement, terrain, and settlement demand.
+Depth comes from food freshness, storage choice, route length, hub-forming junctions, terrain, and settlement demand.
 
 ### 2.2 Food freshness is the main pressure
 
@@ -102,7 +133,7 @@ The player then edits the network:
 - Draw new routes.
 - Reroute existing routes.
 - Add storage.
-- Add hubs.
+- Create hub-forming junctions.
 - Upgrade infrastructure.
 
 ### 3.2 Delivery simulation phase
@@ -199,11 +230,36 @@ Example:
 
 | Route level | Capacity/day | Upkeep multiplier |
 |---|---:|---:|
-| Dirt route | 100 food | 1.0x |
-| Paved route | 250 food | 1.6x |
-| Main route | 500 food | 2.5x |
+| Dirt route | 60 food | 1.0x |
+| Paved route | 160 food | 1.6x |
+| Main route | 400 food | 2.5x |
 
-Capacity creates meaningful hub and route upgrade decisions without needing vehicles.
+Capacity creates meaningful hub and route upgrade decisions without needing vehicles. In playtesting, capacity needed to be tight enough that a single settlement's combined demand could exceed one dirt tile's throughput — otherwise capacity never became a real constraint on a small map (see Changelog §0.3).
+
+### Transactional route placement (added in v0.3)
+
+A route-building click is evaluated before it changes the map. The game calculates the complete cost and topology result, including any Small Hub that the new tile would require.
+
+```text
+required_cost = route_tile_cost + optional_bridge_cost + optional_auto_hub_cost
+```
+
+The route is established only when all resulting rules are valid:
+
+- The tile is empty and adjacent to the existing network or a node.
+- The player can afford the complete required cost.
+- If the tile creates a 3+ connection junction, a Small Hub can form immediately.
+- The connected network will not exceed its 2-hub cap.
+
+If any check fails, the action is cancelled atomically:
+
+```text
+No route tile created.
+No hub created.
+No treasury deducted.
+```
+
+This prevents a visually valid branch from existing when the required hub could not be created.
 
 ---
 
@@ -399,35 +455,45 @@ Storage preserves freshness. It does not restore freshness.
 
 Hubs reduce route upkeep and make large networks efficient.
 
-A hub is not primarily for freshness. It is for network organization and cost reduction.
+A hub is not primarily for freshness. It is for network organization, flow visibility, capacity, and cost reduction.
 
 ### Hub purpose
 
 - Combine routes from multiple sources.
-- Split routes to multiple settlements.
-- Reduce upkeep on connected route segments.
-- Increase network capacity.
+- Split source food toward multiple settlements.
+- Reduce upkeep on adjacent route segments.
+- Increase junction flow capacity.
 - Encourage regional planning.
 
-### Basic hub rule
+### Automatic hub formation
 
-Route segments connected to a hub receive an upkeep discount, but the hub itself has daily upkeep.
+A Small Hub is required on any newly built route tile that would have 3 or more connections. Connections include adjacent routes, storage, hubs, food sources, and settlements.
+
+The hub and route placement are one atomic construction action:
+
+1. Preview the newly created junction.
+2. Determine the connected network and current hub count.
+3. Calculate route, bridge, and Small Hub construction cost.
+4. Build both the route and hub only if the complete action is valid.
+
+If the player cannot afford the complete action, the route is not placed. If the connected network is already at the hub cap, the route is not placed. There is no pending plain-route junction and no later automatic conversion.
 
 ```text
-hub_adjusted_route_upkeep = connected_route_upkeep * (1 - hub_discount)
+hub_adjusted_route_upkeep = adjacent_route_upkeep * (1 - hub_discount)
 net_savings = route_discount_savings - hub_daily_upkeep
 ```
 
-The UI should show net hub savings clearly.
+### Hub cap per connected network
 
-Example:
+Each connected road network can support at most **2 hubs**. A network includes all joined route, storage, and hub tiles. Nodes may connect tiles for delivery access, but source and settlement nodes are terminal endpoints for flow and cannot be used as transit shortcuts.
 
-```text
-Small Hub
-Route savings: 95/day
-Hub upkeep: 40/day
-Net savings: +55/day
-```
+- An attempted third hub-forming junction is rejected before construction.
+- The player receives a clear explanation that the network has reached its hub cap.
+- No construction cost is charged for the rejected action.
+- The player can reroute, keep networks separate, or remove an existing hub-bearing branch before trying again.
+- Existing networks created by older versions or imported data should be validated separately; the MVP does not need migration logic.
+
+This preserves the topology decision: keep networks physically separate to receive independent hub budgets, or merge them and accept a maximum of 2 hubs.
 
 ### Suggested hub levels
 
@@ -437,9 +503,36 @@ Net savings: +55/day
 | Regional Hub | 350 | 60 | 8 links | 25% | 600 food/day |
 | Central Hub | 800 | 140 | 14 links | 35% | 1,400 food/day |
 
+In the MVP, a hub always forms as a Small Hub. Regional Hub is reached by manually upgrading an existing Small Hub and paying the cost difference. Central Hub is out of MVP scope.
+
+### Hub last-delivery hover view (added in v0.3)
+
+Hovering a hub shows compact operational information based on the most recently simulated day.
+
+```text
+Small Hub
+Upkeep: 25/day
+Discount on adjacent routes: 15%
+
+Last delivery
+Farm: Grain 38 → North 15 (39%) · South 23 (61%)
+Bakery: Bread 20 → South 20 (100%)
+```
+
+Rules:
+
+- The source total is the amount that actually passed through this hub, not the source's full production.
+- Food is demand-pulled toward settlements; unused production remains at its source.
+- Each source-food line is grouped separately.
+- Outgoing branches use readable directions when unambiguous: North, South, East, or West.
+- When a direction is insufficient, show the next settlement or route label, such as `East → Town D`.
+- Percentages use the source-food total routed through that hub as the denominator and should sum to 100%, allowing for display rounding.
+- Rejected deliveries that consumed capacity may be shown with a warning marker or a separate rejected amount.
+- Before the first simulation, show `No deliveries routed through this hub yet.`
+
 ### Hub placement decision
 
-A hub should usually become worthwhile when it serves 3 or more routes or when it shortens several long routes.
+A hub should usually become worthwhile when it serves 3 or more connections or when it organizes several long routes. The player does not place it manually; the player chooses whether to create the junction that requires it.
 
 Direct route network:
 
@@ -459,7 +552,7 @@ Farm -> Hub -> Village A
             -> Town D
 ```
 
-The hub network should have lower upkeep if the hub is well placed.
+The hub network should have lower upkeep when the hub is well positioned, but the 2-hub cap and atomic formation rule prevent unlimited branching inside one connected network.
 
 ---
 
@@ -542,12 +635,15 @@ Examples:
 
 | Source | Produces |
 |---|---|
-| Farm | Grain, vegetables |
+| Farm | Grain |
+| Garden | Vegetables |
 | Bakery | Bread |
 | Dairy | Milk |
 | Harbor | Seafood |
 | Freezer Plant | Frozen food |
 | Orchard | Fruit |
+
+**One source, one food (added in v0.2).** Farm originally produced both grain and vegetables. In practice this made the source side of the network less legible — the player couldn't reason about "Farm's route" as carrying one thing. Farm was split into Farm (grain only) and a new source, Garden (vegetables only). Every source in the MVP now maps to exactly one food.
 
 ### Source properties
 
@@ -564,6 +660,34 @@ Suggested rule:
 ```text
 Food starts at 100% freshness unless the source has a special modifier.
 ```
+
+### Source routing role (clarified in v0.3)
+
+Food sources are production endpoints only. They are not delivery destinations, relay nodes, or shortcuts between two parts of a road network.
+
+Pathfinding rules:
+
+- A delivery path starts at exactly one selected source.
+- A delivery path ends at exactly one settlement.
+- Only settlements may be selected as destinations.
+- The path may not enter another source.
+- The path may not pass through another settlement before reaching its selected destination.
+- Routes, storage, and hubs may be used as intermediate path tiles.
+
+### Demand-pull distribution
+
+Daily production is available at the source, but only food assigned to settlement demand enters the network.
+
+Example:
+
+```text
+Farm production: 80 grain
+Connected settlement demand assigned today: 38 grain
+Grain entering the route network: 38
+Unused grain remaining at Farm: 42
+```
+
+The unused 42 does not consume route or hub capacity. A hub tooltip therefore reports `Grain 38`, not the source's production limit of 80.
 
 ---
 
@@ -611,6 +735,31 @@ bonus_freshness: 85
 overdelivery_tolerance: 15
 special_trait: prefers_fresh_vegetables
 ```
+
+### Delivery-result popup (added in v0.3)
+
+Every settlement—village, town, or city—shows a popup when hovered. It summarizes the most recently simulated day without requiring the player to open the full report.
+
+Suggested popup:
+
+```text
+Village A — Last delivery
+Grain: 18 / 20 · 91% fresh · from Farm
+Bread: 14 / 22 · 76% fresh · from Bakery
+Rejected: 2 bread below minimum freshness
+Status: Partial
+```
+
+The hover popup should show, per requested food:
+
+- Requested amount.
+- Accepted delivered amount.
+- Average delivered freshness.
+- Supplying source or sources.
+- Rejected amount and reason when applicable.
+- A readable status such as Complete, Partial, or Missing.
+
+Clicking the settlement opens the larger checklist with ✓ / ◐ / ✗ per food and any extra detail. Before the first simulation, show that no delivery result exists yet.
 
 ### Satisfaction scoring
 
@@ -930,6 +1079,8 @@ The main screen should show:
 - Food movement
 - Route congestion or capacity warnings
 - Freshness warnings
+- Hub last-delivery hover details
+- Settlement last-delivery hover popups
 
 ### 10.2 Route drawing UI
 
@@ -957,23 +1108,35 @@ Daily upkeep: 35
 Estimated net value: +62/day
 ```
 
-### 10.4 Hub placement UI
+### 10.4 Hub information UI
 
-When placing a hub, show expected savings.
+Because hubs form automatically, the MVP does not need a manual hub-placement panel. Before route construction, the route preview should warn when the action requires a hub and show the complete cost.
 
 ```text
-Small Hub Preview
+This junction requires a Small Hub
+Route: 8
+Small Hub: 150
+Total: 158
+Network hubs after build: 2 / 2
+```
 
-Connected routes: 4
-Route savings: 95/day
-Hub upkeep: 25/day
-Net savings: +70/day
-Capacity: 250 food/day
+If the action is unaffordable or would exceed the hub cap, show the reason and do not establish the route.
+
+After a day runs, hovering the hub shows:
+
+```text
+Small Hub
+Upkeep: 25/day
+Discount on adjacent routes: 15%
+
+Last delivery
+Farm: Grain 38 → North 15 (39%) · South 23 (61%)
+Bakery: Bread 20 → South 20 (100%)
 ```
 
 ### 10.5 Problem indicators
 
-Use simple icons:
+Full-game aspirational icons:
 
 | Icon | Meaning |
 |---|---|
@@ -984,6 +1147,29 @@ Use simple icons:
 | Network node | Hub overloaded |
 | Coin | High upkeep |
 | Trash | Food waste |
+
+MVP map indicators:
+
+| Marker | Meaning |
+|---|---|
+| Orange `!` circle | Tile ran at 90–99% of capacity on the last simulated day |
+| Red `!` circle | Tile reached capacity and capped deliveries on the last simulated day |
+| Invalid-placement highlight | The proposed route cannot be built because its required hub is unaffordable or the network is at the 2-hub cap |
+
+The v0.2 red and purple dashed pending-junction diamonds are removed in v0.3. Invalid hub-forming routes are rejected atomically instead of remaining on the map.
+
+### 10.6 Settlement delivery popup
+
+Hovering any settlement shows its last delivery result. Clicking it opens the full checklist. The popup must remain compact enough not to obscure the nearby route network and should be positioned inside the viewport.
+
+Minimum fields:
+
+```text
+Settlement name
+Food: delivered / requested · average freshness · source
+Rejected or missing amount
+Overall status
+```
 
 ---
 
@@ -1033,10 +1219,11 @@ The first playable version should be small.
 
 One region with:
 
-- 3 food sources
-- 5 settlements
-- 1 river or terrain obstacle
-- 1 city/town as a late objective
+- 21×14 tile grid (extended from an original 17×10 to give room for genuinely separate networks — see §0.9), with 2 tiles of empty margin on every edge around the playable layout.
+- 5 food sources (Farm, Garden, Bakery, Dairy, Harbor) — one food each, see §4.7.
+- 5 settlements (Village A, Village B, Village C, Town D, City E).
+- 1 river running down the map as a terrain obstacle; any route tile built on it auto-constructs a bridge.
+- City E is the late-game objective: highest demand, strictest minimum freshness (55%, vs. 35–45% for Villages/Town).
 
 ### MVP food
 
@@ -1048,27 +1235,33 @@ One region with:
 
 ### MVP buildings
 
-- Route
+- Route (Dirt / Paved / Main)
 - Normal Storage
 - Cool Storage
 - Freeze Storage
-- Small Hub
-- Regional Hub
+- Hub — forms automatically at 3-way junctions, always as a Small Hub (see §4.4). Regional Hub is a manual upgrade path from an existing Small Hub, not a placeable building in its own right.
 
 ### MVP systems
 
 - Route drawing
 - Route upkeep
+- Route capacity (tight enough to be a routine bottleneck, not an edge case — see §4.1)
+- Atomic automatic hub formation with a per-connected-network cap of 2 (see §4.4)
+- Settlement-only delivery destinations; sources and non-target settlements cannot be transit nodes
+- Demand-pull food assignment from sources to settlements
 - Freshness decay
 - Storage preservation
 - Hub discount
-- Settlement demand
+- Settlement demand, with ±15–20% daily wobble
+- Congestion markers and invalid-placement feedback on the map (see §10.5)
+- Hub last-delivery split tooltip on hover
+- Per-settlement delivery popup on hover and fulfillment checklist on click
 - Daily report
 - Basic upgrades
 
-### MVP win condition
+### MVP win condition (revised in v0.2)
 
-The player clears the region by maintaining:
+v0.1 scoped a one-time clear condition:
 
 ```text
 Average settlement happiness: 80%+
@@ -1076,6 +1269,46 @@ Average food freshness: 70%+
 Profit: positive for 3 consecutive days
 Waste: below 20%
 ```
+
+This was replaced with an **endless efficiency-score chase**. Each day produces a 0–100 score (weighted from freshness, happiness, waste, and profit) and a letter grade (S/A/B/C/D). The player tracks:
+
+- Today's grade
+- Best-ever grade and score
+- Rolling 7-day average score
+
+There is no finish line. The daily demand wobble (§0.4) means a network that scored well once isn't guaranteed to score well again, so there is always a "can I make this cleaner" pull, which is a closer match to §18's Core Fun Test than a checklist that, once cleared, has nothing left to optimize.
+
+### MVP implementation values
+
+The first playable version uses a finite starting balance of 1,500. The player
+draws cardinal, tile-based route segments outward from nodes or the existing
+network. Food is assigned automatically using a demand-pull model. Every flow
+starts at one food source and ends at one settlement, preferring the path with
+the best predicted delivered freshness and using upkeep as the tie-breaker,
+subject to route capacity. Other sources and all non-target settlements are
+blocked as intermediate path vertices.
+
+Source supply per day is Farm (80 grain), Garden (90 vegetables), Bakery (80
+bread), Dairy (75 milk), and Harbor (55 seafood). Food value/decay per tile is
+Grain (3/0.5), Bread (5/1.5), Vegetables (6/2.5), Milk (8/4), and Seafood
+(10/6). Settlement demand for each food wobbles ±15–20% per day.
+
+Route construction costs 8 per tile before terrain modifiers. Dirt route upkeep
+is 2 per tile/day before terrain, route-level, and hub modifiers. Route
+capacity is 60 (Dirt) / 160 (Paved) / 400 (Main) food/day. Crossing a river
+automatically constructs a bridge for an additional 40. Basic upgrades are
+Dirt -> Paved -> Main routes and (hub-upgrade only) Small -> Regional hubs.
+Storage types are separate buildings rather than an upgrade chain.
+
+A newly placed route tile that would have 3+ connections requires a Small Hub
+for 150 in the same construction transaction. The complete action is accepted
+only when the route, optional bridge, and required hub are affordable and the
+connected network remains within its 2-hub cap. Otherwise the route placement
+is cancelled with no map change and no treasury deduction (§4.4).
+
+The first playable version has no save persistence, delivery animation,
+chapter tutorial sequence, Central Hub, source upgrades, or random events. It
+does retain last-day flow records in memory for hub and settlement popups.
 
 ---
 
@@ -1180,7 +1413,22 @@ The player must feel rewarded for efficient network design.
 Good rule:
 
 ```text
-Every hub has a visible net savings indicator.
+Every hub shows its discount and upkeep on hover, and every hub tile
+shows what's actually splitting through it (which source, how much).
+```
+
+Since hubs auto-form, the visible reward comes from the complete-cost construction preview, the formation confirmation, and the last-delivery split shown on hover.
+
+### Hub cap should feel like a real constraint, not an annoyance
+
+Added in v0.2 and tightened in v0.3. A cap that is rarely reached does nothing, while a rejected build without a clear explanation feels arbitrary. The constraint should be strict but predictable, reversible, and free of accidental spending.
+
+Good rule (revised in v0.3):
+
+```text
+A route that would require a hub beyond the network's cap is rejected.
+The player sees the reason before or immediately after the attempted click,
+loses no money, and can reroute or keep networks separate.
 ```
 
 ---
@@ -1244,6 +1492,36 @@ route_discount: number
 daily_upkeep: number
 ```
 
+### HubDeliverySplit
+
+```yaml
+hub_id: string
+day: number
+source_id: string
+food_id: string
+amount_through_hub: number
+outgoing_splits:
+  - direction_or_route: string
+    amount: number
+    percentage: number
+    destination_ids: list
+rejected_amount: number
+```
+
+### SettlementDeliveryResult
+
+```yaml
+settlement_id: string
+day: number
+food_id: string
+requested: number
+delivered: number
+rejected: number
+average_freshness: number
+source_ids: list
+status: complete | partial | missing
+```
+
 ### SettlementDemand
 
 ```yaml
@@ -1259,18 +1537,22 @@ overdelivery_tolerance: number
 
 ## 17. Simulation Order
 
-Each day can simulate in this order:
+Each day simulates in this order:
 
 1. Generate settlement demand.
 2. Calculate available source supply.
-3. Assign food flows along player routes.
-4. Apply route capacity limits.
-5. Apply freshness loss along each route segment.
-6. Apply storage preservation effects when food passes storage.
-7. Apply hub upkeep discounts.
-8. Deliver food to settlements.
-9. Calculate income, upkeep, waste, and satisfaction.
-10. Show daily report.
+3. Create candidate flows whose start is a matching source and whose destination is a settlement requesting that food.
+4. Find paths while blocking every other source and every non-target settlement as intermediate vertices.
+5. Assign only the amount needed by settlement demand; unassigned production remains at the source.
+6. Apply route, storage, and hub capacity limits.
+7. Apply freshness loss along each path.
+8. Apply storage preservation effects when food passes storage.
+9. Record accepted and rejected deliveries.
+10. Aggregate each hub's incoming source-food totals and outgoing branch splits.
+11. Apply hub discounts and calculate route, storage, and hub upkeep.
+12. Calculate income, waste, profit, settlement satisfaction, and efficiency score.
+13. Store last-day hub and settlement delivery results for hover popups.
+14. Show the daily report.
 
 ---
 
@@ -1280,7 +1562,10 @@ The prototype is successful if the player naturally thinks:
 
 ```text
 This direct route works, but it is expensive.
-Maybe I should place a hub here.
+Maybe a hub will form here once I connect a third path.
+
+This new branch would require a third hub, so it cannot be built.
+Should I reroute it or keep this network separate?
 
 This milk arrives too spoiled.
 Maybe I should route it through Cool Storage.
@@ -1288,10 +1573,16 @@ Maybe I should route it through Cool Storage.
 Freeze Storage saves the seafood, but the upkeep is too high.
 Maybe I need a shorter route.
 
+The hub says Farm grain split 39% north and 61% south.
+Is that split using the route capacity the way I expected?
+
+Village A is missing bread even though the roads look connected.
+The popup should tell me whether the issue is supply, freshness, or capacity.
+
 My network works, but I can make it cleaner tomorrow.
 ```
 
-If the player has these thoughts, the core is working.
+The player should be able to understand the network from visible delivery results rather than guessing from connections alone. If hub splits and settlement popups lead directly to a useful redesign decision, the feedback system is working.
 
 ---
 
@@ -1304,7 +1595,7 @@ The three main decisions are:
 ```text
 Where should routes go?
 Where should storage be placed?
-Where should hubs organize the network?
+Where should hub-forming junctions organize the network?
 ```
 
 The main puzzle is:

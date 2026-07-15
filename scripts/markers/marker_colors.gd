@@ -1,39 +1,16 @@
 class_name MarkerColors
 
-const NODE_TYPE_COLORS := {
-	GameEnums.NodeType.SOURCE: Color(0.85, 0.65, 0.2),
-	GameEnums.NodeType.SETTLEMENT: Color(0.35, 0.8, 0.4),
-	GameEnums.NodeType.STORAGE: Color(0.3, 0.75, 0.85),
-	GameEnums.NodeType.HUB: Color(0.75, 0.35, 0.75),
-}
+## Matches fresh-routes-mvp.html's draw(): all sources share one color, all
+## settlements share another; only storage/hub sub-types get distinct tints.
 
-const STORAGE_TYPE_COLORS := {
-	GameEnums.StorageType.NORMAL: Color(0.82, 0.72, 0.55),
-	GameEnums.StorageType.COOL: Color(0.3, 0.75, 0.95),
-	GameEnums.StorageType.FREEZE: Color(0.85, 0.95, 1.0),
-}
+const SOURCE_COLOR := Color("8B6B3E")
+const SETTLEMENT_COLOR := Color("C4573A")
 
-const HUB_TYPE_COLORS := {
-	GameEnums.HubType.SMALL: Color(0.75, 0.35, 0.75),
-	GameEnums.HubType.REGIONAL: Color(0.55, 0.2, 0.75),
-	GameEnums.HubType.CENTRAL: Color(0.35, 0.05, 0.55),
-}
+static func node_color(node_data: NodeData) -> Color:
+	return SOURCE_COLOR if node_data.node_type == GameEnums.NodeType.SOURCE else SETTLEMENT_COLOR
 
-const SETTLEMENT_TYPE_COLORS := {
-	GameEnums.SettlementType.VILLAGE: Color(0.55, 0.85, 0.4),
-	GameEnums.SettlementType.TOWN: Color(0.95, 0.85, 0.3),
-	GameEnums.SettlementType.CITY: Color(0.95, 0.7, 0.15),
-	GameEnums.SettlementType.MOUNTAIN_VILLAGE: Color(0.6, 0.6, 0.65),
-	GameEnums.SettlementType.COASTAL_TOWN: Color(0.3, 0.6, 0.85),
-}
+static func storage_color(stype: GameEnums.StorageType) -> Color:
+	return GameBalance.STORAGE_TYPES[stype].color
 
-## Picks the most specific color available for a node: its linked
-## StorageData/HubData subtype color when present, else the node-type color.
-static func color_for(node_data: NodeData) -> Color:
-	if node_data.linked_resource is StorageData:
-		var storage: StorageData = node_data.linked_resource
-		return STORAGE_TYPE_COLORS.get(storage.storage_type, NODE_TYPE_COLORS[GameEnums.NodeType.STORAGE])
-	if node_data.linked_resource is HubData:
-		var hub: HubData = node_data.linked_resource
-		return HUB_TYPE_COLORS.get(hub.hub_type, NODE_TYPE_COLORS[GameEnums.NodeType.HUB])
-	return NODE_TYPE_COLORS.get(node_data.node_type, Color.WHITE)
+static func hub_color(htype: GameEnums.HubType) -> Color:
+	return GameBalance.HUB_TYPES[htype].color

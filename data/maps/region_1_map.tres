@@ -1,81 +1,127 @@
 [gd_resource type="Resource" script_class="MapData" format=3]
 
-[ext_resource type="Script" path="res://scripts/data/node_data.gd" id="1_vxexi"]
-[ext_resource type="Resource" path="res://data/nodes/hub_small_1.tres" id="2_xovoy"]
-[ext_resource type="Resource" path="res://data/nodes/storage_cool_1.tres" id="3_d5ptm"]
-[ext_resource type="Script" path="res://scripts/data/map_data.gd" id="4_aljhd"]
+[ext_resource type="Script" path="res://scripts/data/node_data.gd" id="1_ycuoh"]
+[ext_resource type="Script" path="res://scripts/data/map_data.gd" id="2_p2e7a"]
+
+[sub_resource type="Resource" id="Resource_vxexi"]
+script = ExtResource("1_ycuoh")
+node_id = "farm"
+grid_position = Vector2i(3, 4)
+display_name = "Farm"
+produces = {
+"grain": 80.0
+}
+
+[sub_resource type="Resource" id="Resource_xovoy"]
+script = ExtResource("1_ycuoh")
+node_id = "garden"
+grid_position = Vector2i(2, 6)
+display_name = "Garden"
+produces = {
+"vegetables": 90.0
+}
+
+[sub_resource type="Resource" id="Resource_d5ptm"]
+script = ExtResource("1_ycuoh")
+node_id = "bakery"
+grid_position = Vector2i(3, 9)
+display_name = "Bakery"
+produces = {
+"bread": 80.0
+}
+
+[sub_resource type="Resource" id="Resource_aljhd"]
+script = ExtResource("1_ycuoh")
+node_id = "dairy"
+grid_position = Vector2i(17, 4)
+display_name = "Dairy"
+produces = {
+"milk": 75.0
+}
 
 [sub_resource type="Resource" id="Resource_lq88y"]
-script = ExtResource("1_vxexi")
-node_id = "vegetable_farm"
-grid_position = Vector2i(2, 2)
-display_name = "Vegetable Farm"
+script = ExtResource("1_ycuoh")
+node_id = "harbor"
+grid_position = Vector2i(17, 9)
+display_name = "Harbor"
+produces = {
+"seafood": 55.0
+}
 
 [sub_resource type="Resource" id="Resource_pp5np"]
-script = ExtResource("1_vxexi")
-node_id = "bakery"
-grid_position = Vector2i(2, 5)
-display_name = "Bakery"
+script = ExtResource("1_ycuoh")
+node_id = "villageA"
+node_type = 1
+grid_position = Vector2i(6, 3)
+display_name = "Village A"
+kind = "Village"
+demand = {
+"bread": 20.0,
+"grain": 20.0
+}
+min_freshness = 35.0
+bonus_freshness = 80.0
 
 [sub_resource type="Resource" id="Resource_i5j61"]
-script = ExtResource("1_vxexi")
-node_id = "dairy_farm"
-grid_position = Vector2i(6, 9)
-display_name = "Dairy Farm"
+script = ExtResource("1_ycuoh")
+node_id = "villageB"
+node_type = 1
+grid_position = Vector2i(6, 10)
+display_name = "Village B"
+kind = "Village"
+demand = {
+"grain": 15.0,
+"vegetables": 25.0
+}
+min_freshness = 35.0
+bonus_freshness = 80.0
 
 [sub_resource type="Resource" id="Resource_1oktl"]
-script = ExtResource("1_vxexi")
-node_id = "small_hub"
-node_type = 3
-grid_position = Vector2i(5, 5)
-display_name = "Small Hub"
-linked_resource = ExtResource("2_xovoy")
+script = ExtResource("1_ycuoh")
+node_id = "villageC"
+node_type = 1
+grid_position = Vector2i(13, 3)
+display_name = "Village C"
+kind = "Village"
+demand = {
+"bread": 20.0,
+"vegetables": 20.0
+}
+min_freshness = 35.0
+bonus_freshness = 80.0
 
 [sub_resource type="Resource" id="Resource_kwn02"]
-script = ExtResource("1_vxexi")
-node_id = "village_a"
+script = ExtResource("1_ycuoh")
+node_id = "townD"
 node_type = 1
-grid_position = Vector2i(7, 3)
-display_name = "Village A"
+grid_position = Vector2i(13, 6)
+display_name = "Town D"
+kind = "Town"
+demand = {
+"bread": 25.0,
+"milk": 25.0,
+"vegetables": 30.0
+}
+min_freshness = 45.0
+bonus_freshness = 85.0
 
 [sub_resource type="Resource" id="Resource_q7vhy"]
-script = ExtResource("1_vxexi")
-node_id = "riverside_village"
+script = ExtResource("1_ycuoh")
+node_id = "cityE"
 node_type = 1
-grid_position = Vector2i(7, 8)
-display_name = "Riverside Village"
-
-[sub_resource type="Resource" id="Resource_q6pfg"]
-script = ExtResource("1_vxexi")
-node_id = "town_b"
-node_type = 1
-grid_position = Vector2i(11, 5)
-display_name = "Town B"
-
-[sub_resource type="Resource" id="Resource_yflqr"]
-script = ExtResource("1_vxexi")
-node_id = "cool_storage"
-node_type = 2
-grid_position = Vector2i(12, 4)
-display_name = "Cool Storage"
-linked_resource = ExtResource("3_d5ptm")
-
-[sub_resource type="Resource" id="Resource_5xlxx"]
-script = ExtResource("1_vxexi")
-node_id = "mountain_village"
-node_type = 1
-grid_position = Vector2i(14, 6)
-display_name = "Mountain Village"
-
-[sub_resource type="Resource" id="Resource_c4plc"]
-script = ExtResource("1_vxexi")
-node_id = "city_c"
-node_type = 1
-grid_position = Vector2i(16, 2)
-display_name = "City C"
+grid_position = Vector2i(15, 9)
+display_name = "City E"
+kind = "City (late objective)"
+demand = {
+"milk": 30.0,
+"seafood": 25.0,
+"vegetables": 35.0
+}
+min_freshness = 55.0
+bonus_freshness = 90.0
 
 [resource]
-script = ExtResource("4_aljhd")
-grid_size = Vector2i(18, 12)
-terrain_rows = PackedStringArray(".........R...SSSSS", ".........R...SSSSS", ".........R...SSSSS", ".........R...SSSSS", ".........R..MMMMMM", ".........R..MMMMMM", ".........R..MMMMMM", ".........R..MMMMMM", "FFFFF....R..MMMMMM", "FFFFF....R........", "FFFFF....R........", "FFFFF....R........")
-node_placements = Array[ExtResource("1_vxexi")]([SubResource("Resource_lq88y"), SubResource("Resource_pp5np"), SubResource("Resource_i5j61"), SubResource("Resource_1oktl"), SubResource("Resource_kwn02"), SubResource("Resource_q7vhy"), SubResource("Resource_q6pfg"), SubResource("Resource_yflqr"), SubResource("Resource_5xlxx"), SubResource("Resource_c4plc")])
+script = ExtResource("2_p2e7a")
+grid_size = Vector2i(21, 14)
+river_col = 10
+node_placements = Array[ExtResource("1_ycuoh")]([SubResource("Resource_vxexi"), SubResource("Resource_xovoy"), SubResource("Resource_d5ptm"), SubResource("Resource_aljhd"), SubResource("Resource_lq88y"), SubResource("Resource_pp5np"), SubResource("Resource_i5j61"), SubResource("Resource_1oktl"), SubResource("Resource_kwn02"), SubResource("Resource_q7vhy")])
