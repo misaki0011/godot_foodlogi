@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/markers/node_marker_base.tscn" id="1"]
-[ext_resource type="PackedScene" path="res://assets/Blocks/glTF/Block_Crate.gltf" id="2"]
+[ext_resource type="PackedScene" path="res://assets/Blocks/glTF/Block_Crate.glb" id="2"]
 
 [node name="SourceMarker" instance=ExtResource("1")]
 

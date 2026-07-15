@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/markers/node_marker_base.tscn" id="1"]
-[ext_resource type="PackedScene" path="res://assets/Environment/glTF/Chest_Closed.gltf" id="2"]
+[ext_resource type="PackedScene" path="res://assets/Environment/glTF/Chest_Closed.glb" id="2"]
 
 [node name="StorageMarker" instance=ExtResource("1")]
 

@@ -1,17 +1,25 @@
 class_name NodeMarker
 extends Node3D
 
-## Shared behavior for all node marker scenes. Per-type scenes provide
-## their own visual mesh(es) under a child named "Visual"; this script
-## just labels and tints them.
+## Shared behavior for all node/tile marker scenes. Per-type scenes provide
+## their own visual mesh(es) under a child named "Visual"; this script just
+## labels and tints them. Used both for fixed source/settlement nodes
+## (setup) and for player-built storage/hub grid tiles (apply_tint).
 
 @export var node_data: NodeData
 
 func setup(data: NodeData, tint: Color) -> void:
 	node_data = data
-	var label: Label3D = get_node_or_null("Label3D")
-	if label:
-		label.text = data.display_name
+	_apply(data.display_name, tint)
+
+func apply_tint(color: Color, label_text: String = "") -> void:
+	_apply(label_text, color)
+
+func _apply(label_text: String, tint: Color) -> void:
+	if label_text != "":
+		var label: Label3D = get_node_or_null("Label3D")
+		if label:
+			label.text = label_text
 	var visual := get_node_or_null("Visual")
 	if visual:
 		_tint_recursive(visual, tint)

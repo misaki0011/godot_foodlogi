@@ -1,7 +1,6 @@
 class_name GameEnums
 
-enum NodeType { SOURCE, SETTLEMENT, STORAGE, HUB }
+enum NodeType { SOURCE, SETTLEMENT }
 enum StorageType { NORMAL, COOL, FREEZE }
-enum HubType { SMALL, REGIONAL, CENTRAL }
-enum TerrainType { PLAINS, FOREST, MOUNTAIN, RIVER, SNOW }
-enum SettlementType { VILLAGE, TOWN, CITY, MOUNTAIN_VILLAGE, COASTAL_TOWN }
+enum HubType { SMALL, REGIONAL }
+enum TerrainType { PLAINS, RIVER }

@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fresh Routes — MVP</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Nunito+Sans:wght@400;600;700;800&display=swap');
+
+:root{
+  --bg-field:#E7EFD8;
+  --bg-field-dark:#DCE6C9;
+  --panel:#FBF6EA;
+  --panel-edge:#CDB48A;
+  --wood:#7A5B3F;
+  --wood-dark:#5A4029;
+  --ink:#3A3226;
+  --ink-soft:#6B6153;
+  --leaf:#5C8A5C;
+  --leaf-dark:#436b43;
+  --harvest:#D98E4A;
+  --sky:#5B8FA8;
+  --frost:#6E7FB8;
+  --rust:#C4573A;
+  --gold:#C9A227;
+  --river:#8FB9D8;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg-field-dark);font-family:'Nunito Sans',sans-serif;color:var(--ink);}
+h1,h2,h3,.display{font-family:'Fraunces',serif;}
+#app{display:flex;gap:14px;padding:16px;max-width:1300px;margin:0 auto;}
+.title-row{display:flex;align-items:baseline;justify-content:space-between;max-width:1300px;margin:0 auto;padding:14px 16px 0;}
+.title-row h1{font-size:26px;margin:0;font-weight:700;color:var(--wood-dark);letter-spacing:0.3px;}
+.title-row .tag{font-size:12.5px;color:var(--ink-soft);font-style:italic;}
+.badge{background:var(--gold);color:#3a2f0a;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;}
+
+/* ---- left: map ---- */
+#mapWrap{background:var(--wood);border-radius:14px;padding:10px;box-shadow:0 6px 0 var(--wood-dark), 0 10px 18px rgba(0,0,0,.25);}
+#mapInner{position:relative;border-radius:8px;overflow:hidden;border:3px solid var(--wood-dark);}
+canvas{display:block;background:var(--bg-field);}
+#hint{margin-top:8px;font-size:12.5px;color:#f1e6cf;min-height:16px;font-weight:600;}
+
+/* ---- right: panel ---- */
+#side{width:340px;display:flex;flex-direction:column;gap:10px;}
+.card{background:var(--panel);border:1px solid var(--panel-edge);border-radius:10px;padding:12px 14px;}
+.card h3{margin:0 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:.6px;color:var(--wood-dark);border-bottom:1px dashed var(--panel-edge);padding-bottom:6px;}
+.stat-row{display:flex;justify-content:space-between;font-size:13px;padding:2px 0;}
+.stat-row b{font-weight:800;}
+#balance{font-size:22px;font-weight:800;color:var(--leaf-dark);}
+
+.tool-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.tool-btn{border:1.5px solid var(--panel-edge);background:#fff;border-radius:8px;padding:7px 8px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;text-align:left;color:var(--ink);transition:transform .08s;line-height:1.25;}
+.tool-btn small{display:block;font-weight:600;color:var(--ink-soft);font-size:10.5px;}
+.tool-btn:hover{transform:translateY(-1px);}
+.tool-btn.active{background:var(--leaf);border-color:var(--leaf-dark);color:#fff;}
+.tool-btn.active small{color:#eafbea;}
+.tool-btn:disabled{opacity:.45;cursor:not-allowed;}
+.tool-section-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-soft);margin:8px 0 4px;font-weight:800;}
+
+#runDayBtn{width:100%;background:var(--harvest);border:none;color:#fff;font-family:inherit;font-weight:800;font-size:15px;padding:12px;border-radius:9px;cursor:pointer;box-shadow:0 3px 0 #a8672a;letter-spacing:.3px;}
+#runDayBtn:hover{filter:brightness(1.05);}
+#runDayBtn:active{transform:translateY(2px);box-shadow:0 1px 0 #a8672a;}
+
+.legend-item{display:flex;align-items:center;gap:7px;font-size:12px;padding:2px 0;}
+.swatch{width:13px;height:13px;border-radius:3px;flex:none;}
+
+/* ---- report modal ---- */
+#overlay{position:fixed;inset:0;background:rgba(40,32,20,.55);display:none;align-items:center;justify-content:center;z-index:50;}
+#reportCard{background:var(--panel);border-radius:14px;padding:26px 30px;width:440px;max-width:92vw;box-shadow:0 12px 30px rgba(0,0,0,.4);border:1px solid var(--panel-edge);max-height:88vh;overflow-y:auto;}
+#reportCard h2{margin:0 0 2px;color:var(--wood-dark);}
+#reportCard .sub{color:var(--ink-soft);font-size:12.5px;margin-bottom:14px;}
+.report-line{display:flex;justify-content:space-between;padding:4px 0;font-size:13.5px;border-bottom:1px solid #eee2c9;}
+.report-line.total{font-weight:800;font-size:15px;border-bottom:none;margin-top:6px;padding-top:8px;border-top:2px solid var(--panel-edge);}
+.grade-pill{display:inline-block;font-family:'Fraunces',serif;font-weight:700;font-size:17px;border-radius:8px;padding:2px 11px;color:#fff;}
+#closeReport{margin-top:16px;width:100%;background:var(--leaf);border:none;color:#fff;font-weight:800;padding:10px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:14px;}
+.win-banner{background:var(--gold);color:#3a2f0a;padding:10px;border-radius:8px;font-weight:800;text-align:center;margin-bottom:12px;font-size:13.5px;}
+
+/* tooltip */
+#tip{position:absolute;pointer-events:none;background:#2c2418;color:#f6efdb;font-size:11.5px;padding:7px 9px;border-radius:6px;line-height:1.5;max-width:210px;z-index:20;display:none;box-shadow:0 4px 10px rgba(0,0,0,.3);}
+#tip b{color:#ffd98a;}
+#tip .warn{color:#ff9d7a;font-weight:700;}
+
+::-webkit-scrollbar{width:8px;}
+::-webkit-scrollbar-thumb{background:var(--panel-edge);border-radius:4px;}
+</style>
+</head>
+<body>
+
+<div class="title-row">
+  <div>
+    <h1>Fresh Routes <span class="badge">MVP</span></h1>
+  </div>
+  <div class="tag">an endless network to keep making cleaner</div>
+</div>
+
+<div id="app">
+  <div id="mapWrap">
+    <div id="mapInner">
+      <canvas id="cv"></canvas>
+      <div id="tip"></div>
+    </div>
+    <div id="hint">Select a tool, then click the map. Routes must connect to a node or existing route.</div>
+  </div>
+
+  <div id="side">
+    <div class="card">
+      <h3>Treasury — Day <span id="dayNum">1</span></h3>
+      <div id="balance">§ 1500</div>
+    </div>
+
+    <div class="card">
+      <h3>Efficiency Chase</h3>
+      <div class="stat-row"><span>Best grade so far</span><b id="bestGradeVal">—</b></div>
+      <div class="stat-row"><span>Best day score</span><b id="bestScoreVal">—</b></div>
+      <div class="stat-row"><span>Last 7-day average</span><b id="avgScoreVal">—</b></div>
+    </div>
+
+    <div class="card">
+      <h3>Build</h3>
+      <div class="tool-section-label">Infrastructure</div>
+      <div class="tool-grid">
+        <button class="tool-btn" data-tool="route">Draw Route<small>§8/tile (+§40 bridge)</small></button>
+        <button class="tool-btn" data-tool="upgrade">Upgrade Route<small>Dirt→Paved→Main</small></button>
+      </div>
+      <div class="tool-section-label">Storage</div>
+      <div class="tool-grid">
+        <button class="tool-btn" data-tool="normal">Normal Storage<small>§80 · pause+70% guard</small></button>
+        <button class="tool-btn" data-tool="cool">Cool Storage<small>§180 · pause+35% guard</small></button>
+        <button class="tool-btn" data-tool="freeze">Freeze Storage<small>§400 · pause+10% guard</small></button>
+      </div>
+      <div class="tool-section-label">Hubs</div>
+      <div class="tool-grid" style="grid-template-columns:1fr;">
+        <div style="font-size:11.5px;color:var(--ink-soft);background:#fff;border:1.5px dashed var(--panel-edge);border-radius:8px;padding:7px 8px;">Hubs form automatically at 3-way forks (auto-charged, §150) — but each connected road network can only support 2 hubs.</div>
+        <button class="tool-btn" data-tool="hubRegional">Upgrade to Regional Hub<small>§200 · click an existing Small Hub</small></button>
+      </div>
+      <div class="tool-section-label">Other</div>
+      <div class="tool-grid">
+        <button class="tool-btn" data-tool="remove">Bulldoze<small>Remove a tile</small></button>
+        <button class="tool-btn" data-tool="inspect">Inspect<small>Hover for info</small></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Legend</h3>
+      <div class="legend-item"><div class="swatch" style="background:#8B6B3E"></div>Food source</div>
+      <div class="legend-item"><div class="swatch" style="background:#C4573A"></div>Settlement</div>
+      <div class="legend-item"><div class="swatch" style="background:#B99A6B"></div>Dirt route</div>
+      <div class="legend-item"><div class="swatch" style="background:#5B8FA8"></div>Cool storage</div>
+      <div class="legend-item"><div class="swatch" style="background:#6E7FB8"></div>Freeze storage</div>
+      <div class="legend-item"><div class="swatch" style="background:#D98E4A"></div>Hub (auto-forms at forks)</div>
+      <div class="legend-item"><div class="swatch" style="background:transparent;border:2px dashed #C4573A"></div>Junction needs a hub (low funds)</div>
+      <div class="legend-item"><div class="swatch" style="background:transparent;border:2px dashed #8B6B9C"></div>Junction over the 2-hub network cap</div>
+      <div class="legend-item"><div class="swatch" style="background:#D98E4A;border-radius:50%;"></div>! Tile near capacity (90%+, last run)</div>
+      <div class="legend-item"><div class="swatch" style="background:#C4573A;border-radius:50%;"></div>! Tile over capacity (last run — deliveries were capped)</div>
+      <div class="legend-item"><div class="swatch" style="background:#8FB9D8"></div>River (bridge needed)</div>
+    </div>
+
+    <button id="runDayBtn">Run the Day ▸</button>
+  </div>
+</div>
+
+<div id="overlay">
+  <div id="reportCard">
+    <div id="winBannerSlot"></div>
+    <h2>Daily Report</h2>
+    <div class="sub" id="reportSub">Day 1</div>
+    <div id="reportBody"></div>
+    <button id="closeReport">Continue to next day</button>
+  </div>
+</div>
+
+<div id="settlementOverlay" style="position:fixed;inset:0;background:rgba(40,32,20,.55);display:none;align-items:center;justify-content:center;z-index:55;">
+  <div style="background:var(--panel);border-radius:14px;padding:22px 26px;width:360px;max-width:90vw;box-shadow:0 12px 30px rgba(0,0,0,.4);border:1px solid var(--panel-edge);">
+    <h2 id="settlementTitle" style="margin:0 0 2px;color:var(--wood-dark);"></h2>
+    <div class="sub" id="settlementSub"></div>
+    <div id="settlementBody" style="margin-top:6px;"></div>
+    <button id="closeSettlement" style="margin-top:16px;width:100%;background:var(--sky);border:none;color:#fff;font-weight:800;padding:10px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:14px;">Close</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   FRESH ROUTES — MVP
+   Single-file cozy logistics puzzle prototype
+   ========================================================= */
+
+/* ---------- config ---------- */
+const COLS = 21, ROWS = 14, TILE = 46;
+const RIVER_COL = 10;
+
+const cv = document.getElementById('cv');
+cv.width = COLS*TILE; cv.height = ROWS*TILE;
+const ctx = cv.getContext('2d');
+
+const FOODS = {
+  grain:      { name:'Grain',      color:'#D9C36A', value:3,  decay:0.5, freezeOk:true,  freezePenalty:0 },
+  bread:      { name:'Bread',      color:'#C89A5B', value:5,  decay:1.5, freezeOk:true,  freezePenalty:4 },
+  vegetables: { name:'Vegetables', color:'#6FA85A', value:6,  decay:2.5, freezeOk:true,  freezePenalty:8 },
+  milk:       { name:'Milk',       color:'#EDEFE6', value:8,  decay:4,   freezeOk:true,  freezePenalty:10 },
+  seafood:    { name:'Seafood',    color:'#5B8FA8', value:10, decay:6,   freezeOk:true,  freezePenalty:0 },
+};
+
+const ROUTE_LEVELS = {
+  dirt:  { cap:60,  upkeepMult:1.0, upgradeCost:0,  next:'paved', label:'Dirt' },
+  paved: { cap:160, upkeepMult:1.6, upgradeCost:6,  next:'main',  label:'Paved' },
+  main:  { cap:400, upkeepMult:2.5, upgradeCost:12, next:null,    label:'Main' },
+};
+const BASE_ROUTE_BUILD = 8;
+const BASE_ROUTE_UPKEEP = 2;
+const BRIDGE_COST = 40;
+
+const STORAGE_TYPES = {
+  normal: { name:'Normal Storage', build:80,  upkeep:10, protection:4,  mult:0.70, color:'#8B7355' },
+  cool:   { name:'Cool Storage',   build:180, upkeep:35, protection:8,  mult:0.35, color:'#5B8FA8' },
+  freeze: { name:'Freeze Storage', build:400, upkeep:80, protection:14, mult:0.10, color:'#6E7FB8' },
+};
+
+const HUB_TYPES = {
+  hubSmall:    { name:'Small Hub',    build:150, upkeep:25, discount:0.15, color:'#D98E4A' },
+  hubRegional: { name:'Regional Hub', build:350, upkeep:60, discount:0.25, color:'#B9631E' },
+};
+
+const NODES = [
+  { id:'farm',    type:'source', x:3,  y:4, name:'Farm',    produces:{grain:80} },
+  { id:'garden',  type:'source', x:2,  y:6, name:'Garden',  produces:{vegetables:90} },
+  { id:'bakery',  type:'source', x:3,  y:9, name:'Bakery',  produces:{bread:80} },
+  { id:'dairy',   type:'source', x:17, y:4, name:'Dairy',   produces:{milk:75} },
+  { id:'harbor',  type:'source', x:17, y:9, name:'Harbor',  produces:{seafood:55} },
+
+  { id:'villageA', type:'settlement', x:6,  y:3, name:'Village A', kind:'Village',
+    demand:{bread:20, grain:20}, minFresh:35, bonusFresh:80 },
+  { id:'villageB', type:'settlement', x:6,  y:10, name:'Village B', kind:'Village',
+    demand:{vegetables:25, grain:15}, minFresh:35, bonusFresh:80 },
+  { id:'villageC', type:'settlement', x:13, y:3, name:'Village C', kind:'Village',
+    demand:{bread:20, vegetables:20}, minFresh:35, bonusFresh:80 },
+  { id:'townD', type:'settlement', x:13, y:6, name:'Town D', kind:'Town',
+    demand:{bread:25, vegetables:30, milk:25}, minFresh:45, bonusFresh:85 },
+  { id:'cityE', type:'settlement', x:15, y:9, name:'City E', kind:'City (late objective)',
+    demand:{milk:30, seafood:25, vegetables:35}, minFresh:55, bonusFresh:90 },
+];
+
+/* ---------- state ---------- */
+let balance = 1500;
+let day = 1;
+let bestScore = -Infinity;
+let bestGrade = null;
+let scoreHistory = []; // {day, score, grade, profit}
+let tool = null;
+let drawChain = null; // last placed tile during a route-drawing drag session
+
+// grid[y][x] = null (empty) | {kind:'route', level:'dirt'} | {kind:'storage', stype:'cool'} | {kind:'hub', htype:'hubSmall'}
+const grid = [];
+for (let y=0;y<ROWS;y++){ grid.push(new Array(COLS).fill(null)); }
+
+const nodeAt = {}; // "x,y" -> node
+NODES.forEach(n => nodeAt[n.x+','+n.y] = n);
+
+function isRiver(x,y){ return x===RIVER_COL; }
+function inBounds(x,y){ return x>=0 && x<COLS && y>=0 && y<ROWS; }
+function key(x,y){ return x+','+y; }
+
+/* ---------- drawing ---------- */
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // field
+  for (let y=0;y<ROWS;y++){
+    for (let x=0;x<COLS;x++){
+      ctx.fillStyle = ((x+y)%2===0) ? '#E7EFD8' : '#E1EAD1';
+      ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+    }
+  }
+  // river
+  for (let y=0;y<ROWS;y++){
+    ctx.fillStyle = '#8FB9D8';
+    ctx.fillRect(RIVER_COL*TILE,y*TILE,TILE,TILE);
+    ctx.strokeStyle='rgba(255,255,255,.35)';
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(RIVER_COL*TILE+8, y*TILE);
+    ctx.lineTo(RIVER_COL*TILE+8, y*TILE+TILE);
+    ctx.moveTo(RIVER_COL*TILE+TILE-8, y*TILE);
+    ctx.lineTo(RIVER_COL*TILE+TILE-8, y*TILE+TILE);
+    ctx.stroke();
+  }
+  // grid lines (subtle)
+  ctx.strokeStyle='rgba(120,110,80,.12)';
+  ctx.lineWidth=1;
+  for (let x=0;x<=COLS;x++){ ctx.beginPath(); ctx.moveTo(x*TILE,0); ctx.lineTo(x*TILE,ROWS*TILE); ctx.stroke(); }
+  for (let y=0;y<=ROWS;y++){ ctx.beginPath(); ctx.moveTo(0,y*TILE); ctx.lineTo(COLS*TILE,y*TILE); ctx.stroke(); }
+
+  // built tiles
+  for (let y=0;y<ROWS;y++){
+    for (let x=0;x<COLS;x++){
+      const cell = grid[y][x];
+      if (!cell) continue;
+      const cx = x*TILE, cy=y*TILE;
+      if (cell.kind==='route'){
+        const lvl = ROUTE_LEVELS[cell.level];
+        ctx.fillStyle = cell.level==='dirt' ? '#B99A6B' : cell.level==='paved' ? '#9C8F7A' : '#6E6252';
+        ctx.fillRect(cx+9,cy+9,TILE-18,TILE-18);
+        ctx.strokeStyle='rgba(0,0,0,.15)';
+        ctx.strokeRect(cx+9,cy+9,TILE-18,TILE-18);
+        if (cell.needsHub || cell.hubCapped){
+          ctx.save();
+          ctx.setLineDash([3,3]);
+          ctx.strokeStyle= cell.hubCapped ? '#8B6B9C' : '#C4573A';
+          ctx.lineWidth=2;
+          ctx.beginPath();
+          ctx.moveTo(cx+TILE/2, cy+4);
+          ctx.lineTo(cx+TILE-4, cy+TILE/2);
+          ctx.lineTo(cx+TILE/2, cy+TILE-4);
+          ctx.lineTo(cx+4, cy+TILE/2);
+          ctx.closePath(); ctx.stroke();
+          ctx.restore();
+        }
+      } else if (cell.kind==='storage'){
+        const st = STORAGE_TYPES[cell.stype];
+        ctx.fillStyle = st.color;
+        roundRect(cx+5,cy+5,TILE-10,TILE-10,7); ctx.fill();
+        ctx.fillStyle='#fff'; ctx.font='9px Nunito Sans, sans-serif'; ctx.textAlign='center';
+        ctx.fillText(cell.stype==='normal'?'NRM':cell.stype==='cool'?'COOL':'FRZ', cx+TILE/2, cy+TILE/2+3);
+      } else if (cell.kind==='hub'){
+        const ht = HUB_TYPES[cell.htype];
+        ctx.fillStyle = ht.color;
+        ctx.beginPath();
+        ctx.moveTo(cx+TILE/2, cy+5);
+        ctx.lineTo(cx+TILE-5, cy+TILE/2);
+        ctx.lineTo(cx+TILE/2, cy+TILE-5);
+        ctx.lineTo(cx+5, cy+TILE/2);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle='#fff'; ctx.font='8.5px Nunito Sans, sans-serif'; ctx.textAlign='center';
+        ctx.fillText(cell.htype==='hubSmall'?'HUB':'REG', cx+TILE/2, cy+TILE/2+3);
+      }
+    }
+  }
+
+  // last-run flow paths (visual feedback)
+  if (window.__lastFlows){
+    window.__lastFlows.forEach(f=>{
+      if (!f.path || f.path.length<2 || f.delivered<=0) return;
+      ctx.strokeStyle = FOODS[f.food].color;
+      ctx.globalAlpha=0.55;
+      ctx.lineWidth=3;
+      ctx.beginPath();
+      f.path.forEach((p,i)=>{
+        const cx=p[0]*TILE+TILE/2, cy=p[1]*TILE+TILE/2;
+        if (i===0) ctx.moveTo(cx,cy); else ctx.lineTo(cx,cy);
+      });
+      ctx.stroke();
+      ctx.globalAlpha=1;
+    });
+  }
+
+  // capacity congestion markers from the last run
+  if (window.__congestion){
+    window.__congestion.forEach(c=>{
+      const cx=c.x*TILE, cy=c.y*TILE;
+      ctx.beginPath();
+      ctx.arc(cx+TILE-10, cy+10, 7, 0, Math.PI*2);
+      ctx.fillStyle = c.over ? '#C4573A' : '#D98E4A';
+      ctx.fill();
+      ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.font='bold 10px Nunito Sans, sans-serif'; ctx.textAlign='center';
+      ctx.fillText('!', cx+TILE-10, cy+13.5);
+    });
+  }
+
+  // nodes
+  NODES.forEach(n=>{
+    const cx=n.x*TILE, cy=n.y*TILE;
+    ctx.fillStyle = n.type==='source' ? '#8B6B3E' : '#C4573A';
+    roundRect(cx+3,cy+3,TILE-6,TILE-6,9); ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=2;
+    roundRect(cx+3,cy+3,TILE-6,TILE-6,9); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.font='bold 9px Nunito Sans, sans-serif'; ctx.textAlign='center';
+    const label = n.type==='source' ? n.name.slice(0,4) : n.name.replace('Village ','V').replace('Town ','T').replace('City ','C');
+    ctx.fillText(label, cx+TILE/2, cy+TILE/2+3);
+  });
+
+  // hover highlight
+  if (window.__hover){
+    const [hx,hy]=window.__hover;
+    ctx.strokeStyle='#3A3226'; ctx.lineWidth=2;
+    ctx.strokeRect(hx*TILE+1,hy*TILE+1,TILE-2,TILE-2);
+  }
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+/* ---------- network graph helpers ---------- */
+function isBuilt(x,y){ return !!grid[y][x]; }
+function isConnectable(x,y){ return isBuilt(x,y) || !!nodeAt[key(x,y)]; }
+function neighbors(x,y){
+  return [[x+1,y],[x-1,y],[x,y+1],[x,y-1]].filter(([a,b])=>inBounds(a,b));
+}
+function adjacentToNetwork(x,y){
+  return neighbors(x,y).some(([a,b])=>isConnectable(a,b));
+}
+
+// Degree for junction/fork detection only counts other route/storage/hub
+// tiles — a node (source or settlement) is a dead end for delivery, not a
+// branch the road splits into, so touching one shouldn't count as a fork.
+// Degree for junction/fork detection: route/storage/hub tiles always count.
+// A settlement is a dead end (pure delivery sink) so it never counts.
+// A source, however, actively splits its outgoing flow across whatever
+// directions it feeds — so touching a source does count as a branch.
+// Degree for junction/fork detection: any adjacent route/storage/hub tile,
+// or any adjacent node (source or settlement) counts as a branch — a real
+// 3-way meeting point, whichever directions it connects.
+function tileDegree(x,y){
+  return neighbors(x,y).filter(([a,b])=>isConnectable(a,b)).length;
+}
+
+const HUB_CAP_PER_NETWORK = 2;
+
+// Group every built tile + node into connected-component ids using the same
+// adjacency the pathfinder uses, so "network" means "one connected road".
+function computeComponents(){
+  const adj = buildGraph();
+  const compOf = {};
+  let compId = 0;
+  Object.keys(adj).forEach(startKey=>{
+    if (compOf[startKey]!==undefined) return;
+    const queue=[startKey]; compOf[startKey]=compId;
+    while(queue.length){
+      const u=queue.shift();
+      (adj[u]||[]).forEach(v=>{
+        if (compOf[v]===undefined){ compOf[v]=compId; queue.push(v); }
+      });
+    }
+    compId++;
+  });
+  return compOf;
+}
+
+
+// If funds are short, or its connected road network already has HUB_CAP_PER_NETWORK hubs,
+// it stays a plain (capacity-limited) route and is flagged so the player
+// can see what it's waiting on.
+function checkAutoHubs(){
+  const compOf = computeComponents();
+  const hubCounts = {};
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    const cell = grid[y][x];
+    if (cell && cell.kind==='hub'){
+      const c = compOf[key(x,y)];
+      hubCounts[c] = (hubCounts[c]||0) + 1;
+    }
+  }
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    const cell = grid[y][x];
+    if (!cell || cell.kind!=='route') continue;
+    const degree = tileDegree(x,y);
+    if (degree>=3){
+      const comp = compOf[key(x,y)];
+      const count = hubCounts[comp] || 0;
+      if (count >= HUB_CAP_PER_NETWORK){
+        cell.needsHub = false;
+        if (!cell.hubCapped){
+          flashHint('⚠ Hub limit reached — this road already has '+HUB_CAP_PER_NETWORK+' hub'+(HUB_CAP_PER_NETWORK===1?'':'s')+'. This junction stays capacity-limited.', false);
+        }
+        cell.hubCapped = true;
+        continue;
+      }
+      cell.hubCapped = false;
+      const cost = HUB_TYPES.hubSmall.build;
+      if (balance >= cost){
+        balance -= cost;
+        grid[y][x] = { kind:'hub', htype:'hubSmall', auto:true };
+        hubCounts[comp] = count + 1;
+        flashHint('Junction formed — Small Hub auto-built for §'+cost+'.', true);
+      } else {
+        cell.needsHub = true;
+      }
+    } else {
+      if (cell.needsHub) cell.needsHub = false;
+      if (cell.hubCapped) cell.hubCapped = false;
+    }
+  }
+}
+
+/* build a graph node list: every built tile + every game node is a graph vertex */
+function buildGraph(){
+  const adj = {}; // key -> [key,...]
+  function addEdge(k1,k2){
+    (adj[k1]=adj[k1]||[]).push(k2);
+    (adj[k2]=adj[k2]||[]).push(k1);
+  }
+  // connect built tiles to each other
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    if (!isBuilt(x,y)) continue;
+    neighbors(x,y).forEach(([a,b])=>{
+      if (isConnectable(a,b)) addEdge(key(x,y), key(a,b));
+    });
+  }
+  // connect nodes to adjacent built tiles (node-to-node direct without a route doesn't count)
+  NODES.forEach(n=>{
+    neighbors(n.x,n.y).forEach(([a,b])=>{
+      if (isBuilt(a,b)) addEdge(key(n.x,n.y), key(a,b));
+    });
+  });
+  return adj;
+}
+
+// Dijkstra minimizing cumulative "decay weight" for a given food, tie-break upkeep
+function findPath(fromNode, toNode, foodId){
+  const adj = buildGraph();
+  const start = key(fromNode.x, fromNode.y), goal = key(toNode.x, toNode.y);
+  if (!adj[start] || !adj[goal]) return null;
+  const food = FOODS[foodId];
+  const dist = {}, prev = {}, visited = {};
+  dist[start] = 0;
+  const pq = [[0,start]];
+  while (pq.length){
+    pq.sort((a,b)=>a[0]-b[0]);
+    const [d,u] = pq.shift();
+    if (visited[u]) continue;
+    visited[u]=true;
+    if (u===goal) break;
+    (adj[u]||[]).forEach(v=>{
+      if (visited[v]) return;
+      // weight = decay proxy for crossing tile v (settlement/source endpoints cost 0 extra decay to pass through)
+      let w = food.decay;
+      const [vx,vy] = v.split(',').map(Number);
+      if (nodeAt[v]) w = 0.01; // passing through another node briefly (rare) - negligible
+      const nd = d + w;
+      if (dist[v]===undefined || nd < dist[v]){
+        dist[v]=nd; prev[v]=u; pq.push([nd,v]);
+      }
+    });
+  }
+  if (dist[goal]===undefined) return null;
+  const pathKeys=[]; let cur=goal;
+  while (cur){ pathKeys.push(cur); if (cur===start) break; cur=prev[cur]; }
+  pathKeys.reverse();
+  return pathKeys.map(k=>k.split(',').map(Number));
+}
+
+/* ---------- simulation ---------- */
+function tileCapacity(cell){
+  if (!cell) return Infinity;
+  if (cell.kind==='route') return ROUTE_LEVELS[cell.level].cap;
+  if (cell.kind==='hub') return cell.htype==='hubSmall' ? 250 : 600;
+  if (cell.kind==='storage') return STORAGE_TYPES[cell.stype].capacity || 99999;
+  return Infinity;
+}
+
+function simulateFreshness(path, foodId){
+  const food = FOODS[foodId];
+  let fresh = 100;
+  let protectionLeft = 0;
+  let protectionMult = 1;
+  let usedFreeze = false;
+  // path includes start & end node cell; only intermediate + end tiles cause decay (start node = 0 decay)
+  for (let i=1;i<path.length;i++){
+    const [x,y] = path[i];
+    const cell = grid[y][x];
+    let mult = 1;
+    if (protectionLeft>0){ mult = protectionMult; protectionLeft--; }
+    let decay = food.decay * mult;
+    if (cell && cell.kind==='storage'){
+      // pause while "in" storage tile itself (treat as 0 decay for this tile), then set protection for subsequent tiles
+      decay = 0;
+      const st = STORAGE_TYPES[cell.stype];
+      protectionLeft = st.protection;
+      protectionMult = st.mult;
+      if (cell.stype==='freeze') usedFreeze = true;
+    }
+    fresh -= decay;
+  }
+  if (usedFreeze && food.freezePenalty) fresh -= food.freezePenalty;
+  return Math.max(0, Math.min(100, fresh));
+}
+
+function pathUsesRiverBridgeAlready(){ /* bridges auto-built at construction time, no runtime effect */ }
+
+function freshnessMultiplier(f){
+  if (f>=90) return 1.25;
+  if (f>=60) return 1.00;
+  if (f>=40) return 0.60;
+  if (f>=1)  return 0.25;
+  return 0;
+}
+
+function runDay(){
+  const tileUsage = {}; // key -> amount used today (for capacity)
+  function capLeft(x,y){
+    const cell = grid[y][x];
+    const cap = tileCapacity(cell);
+    const used = tileUsage[key(x,y)] || 0;
+    return cap - used;
+  }
+  function consume(path, amt){
+    path.forEach(([x,y])=>{ tileUsage[key(x,y)] = (tileUsage[key(x,y)]||0) + amt; });
+  }
+
+  const supplyLeft = {};
+  NODES.filter(n=>n.type==='source').forEach(n=>{
+    Object.keys(n.produces).forEach(f=> supplyLeft[n.id+'|'+f] = n.produces[f]);
+  });
+
+  const flows = [];
+  let income=0, spoilageCost=0, deliveredTotal=0, requestedTotal=0;
+  let freshWeightedSum=0, freshWeightTotal=0;
+  let capacityBlocked=0;
+  const settlementScores = [];
+  const settlementFoodStatus = {}; // settlementId -> { foodId: {requested, delivered, rejected, fresh} }
+
+  NODES.filter(n=>n.type==='settlement').forEach(settlement=>{
+    let fulfilled=0, requested=0, freshSum=0, freshCount=0, rejected=0;
+    const foodStatus = {};
+    settlementFoodStatus[settlement.id] = foodStatus;
+    Object.keys(settlement.demand).forEach(foodId=>{
+      // daily demand wobbles ±20% so a network that just barely cleared capacity yesterday can get squeezed today
+      const wobble = 0.85 + Math.random()*0.4;
+      let need = Math.max(1, Math.round(settlement.demand[foodId] * wobble));
+      requested += need; requestedTotal += need;
+      foodStatus[foodId] = { requested:need, delivered:0, rejected:0, freshSum:0 };
+      const sources = NODES.filter(n=>n.type==='source' && n.produces[foodId]!==undefined);
+      // try each source that still has supply, best predicted path first (shortest decay path found individually)
+      const candidates = sources.map(src=>{
+        const path = findPath(src, settlement, foodId);
+        return path ? {src, path} : null;
+      }).filter(Boolean);
+      // sort by predicted freshness desc
+      candidates.forEach(c=> c.predicted = simulateFreshness(c.path, foodId));
+      candidates.sort((a,b)=> b.predicted - a.predicted);
+
+      for (const c of candidates){
+        if (need<=0) break;
+        const supKey = c.src.id+'|'+foodId;
+        let avail = supplyLeft[supKey] || 0;
+        if (avail<=0) continue;
+        // capacity along path
+        let pathCap = Math.min(...c.path.map(([x,y])=>capLeft(x,y)));
+        if (pathCap<=0) { capacityBlocked += Math.min(need, avail); continue; }
+        const amt = Math.min(need, avail, pathCap);
+        if (amt<=0) continue;
+        const fresh = simulateFreshness(c.path, foodId);
+        const mult = freshnessMultiplier(fresh);
+        const rejectedByStrictness = fresh < settlement.minFresh;
+        consume(c.path, amt);
+        supplyLeft[supKey] -= amt;
+        need -= amt;
+
+        if (rejectedByStrictness || mult===0){
+          rejected += amt;
+          foodStatus[foodId].rejected += amt;
+          spoilageCost += amt * FOODS[foodId].value * 0.5;
+          flows.push({food:foodId, path:c.path, delivered:0, rejected:amt, settlement:settlement.id, source:c.src.id});
+        } else {
+          fulfilled += amt;
+          deliveredTotal += amt;
+          foodStatus[foodId].delivered += amt;
+          foodStatus[foodId].freshSum += fresh*amt;
+          const amtIncome = amt * FOODS[foodId].value * mult;
+          income += amtIncome;
+          freshSum += fresh*amt; freshCount += amt;
+          freshWeightedSum += fresh*amt; freshWeightTotal += amt;
+          flows.push({food:foodId, path:c.path, delivered:amt, fresh, settlement:settlement.id, source:c.src.id});
+        }
+      }
+      if (need>0){ /* undelivered demand — counts as unmet, not spoiled */ }
+    });
+    const avgFresh = freshCount>0 ? freshSum/freshCount : 0;
+    const fulfillRate = requested>0 ? fulfilled/requested : 1;
+    const wasteRate = requested>0 ? rejected/requested : 0;
+    let sat = fulfillRate*60 + Math.min(1, avgFresh/settlement.bonusFresh)*40 - wasteRate*30;
+    sat = Math.max(0, Math.min(100, sat));
+    settlementScores.push({settlement, fulfillRate, avgFresh, wasteRate, sat});
+  });
+
+  // upkeep
+  let routeUpkeep=0, storageUpkeep=0, hubUpkeep=0;
+  const hubTiles = [];
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    const cell = grid[y][x];
+    if (!cell) continue;
+    if (cell.kind==='hub'){ hubTiles.push({x,y,cell}); hubUpkeep += HUB_TYPES[cell.htype].upkeep; }
+  }
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    const cell = grid[y][x];
+    if (!cell) continue;
+    if (cell.kind==='route'){
+      let up = BASE_ROUTE_UPKEEP * ROUTE_LEVELS[cell.level].upkeepMult;
+      const nearHub = hubTiles.some(h=> Math.abs(h.x-x)+Math.abs(h.y-y)===1 );
+      if (nearHub){
+        const h = hubTiles.find(h=> Math.abs(h.x-x)+Math.abs(h.y-y)===1 );
+        up *= (1 - HUB_TYPES[h.cell.htype].discount);
+      }
+      routeUpkeep += up;
+    } else if (cell.kind==='storage'){
+      storageUpkeep += STORAGE_TYPES[cell.stype].upkeep;
+    }
+  }
+
+  const totalUpkeep = routeUpkeep + storageUpkeep + hubUpkeep;
+  const profit = income - totalUpkeep - spoilageCost;
+  balance += profit;
+
+  const avgFreshnessOverall = freshWeightTotal>0 ? freshWeightedSum/freshWeightTotal : 0;
+  const wastePct = requestedTotal>0 ? (requestedTotal-deliveredTotal)/requestedTotal*100 : 0;
+  const avgHappiness = settlementScores.reduce((s,x)=>s+x.sat,0)/settlementScores.length;
+
+  let grade='D';
+  const gradeScore = (avgFreshnessOverall*0.35)+(avgHappiness*0.35)+((100-wastePct)*0.15)+(Math.min(100,Math.max(0,profit/10))*0.15);
+  if (gradeScore>=88) grade='S'; else if (gradeScore>=75) grade='A'; else if (gradeScore>=60) grade='B'; else if (gradeScore>=40) grade='C'; else grade='D';
+
+  const isPersonalBest = gradeScore > bestScore;
+  if (isPersonalBest){ bestScore = gradeScore; bestGrade = grade; }
+  scoreHistory.push({day, score:gradeScore, grade, profit});
+
+  window.__lastFlows = flows;
+  window.__lastSettlementStatus = settlementFoodStatus;
+  window.__congestion = [];
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    const cell = grid[y][x];
+    if (!cell) continue;
+    const cap = tileCapacity(cell);
+    if (!isFinite(cap)) continue;
+    const used = tileUsage[key(x,y)] || 0;
+    if (used >= cap*0.9) window.__congestion.push({x,y, over: used>=cap});
+  }
+
+  return {
+    income, routeUpkeep, storageUpkeep, hubUpkeep, totalUpkeep, spoilageCost, profit,
+    avgFreshnessOverall, wastePct, avgHappiness, grade, gradeScore, settlementScores,
+    capacityBlocked, isPersonalBest
+  };
+}
+
+/* ---------- UI wiring ---------- */
+const hintEl = document.getElementById('hint');
+const balEl = document.getElementById('balance');
+const dayEl = document.getElementById('dayNum');
+const bestGradeEl = document.getElementById('bestGradeVal');
+const bestScoreEl = document.getElementById('bestScoreVal');
+const avgScoreEl = document.getElementById('avgScoreVal');
+const GRADE_COLORS = {S:'#C9A227', A:'#5C8A5C', B:'#5B8FA8', C:'#D98E4A', D:'#C4573A'};
+
+function setTool(t){
+  tool = t;
+  document.querySelectorAll('.tool-btn').forEach(b=> b.classList.toggle('active', b.dataset.tool===t));
+  const hints = {
+    route: 'Click an empty tile adjacent to a node or existing route to extend your network.',
+    upgrade: 'Click a Dirt or Paved route tile to upgrade it.',
+    normal: 'Click an existing route tile to build Normal Storage there (good for grain, bread).',
+    cool: 'Click an existing route tile to build Cool Storage there (good for vegetables, milk).',
+    freeze: 'Click an existing route tile to build Freeze Storage there (good for seafood — some foods dislike freezing).',
+    hubRegional: 'Click an existing Small Hub (formed at a 3-way junction) to upgrade it to Regional for §200.',
+    remove: 'Click a built tile to bulldoze it (no refund).',
+    inspect: 'Hover any tile or node to see its stats.',
+  };
+  hintEl.textContent = hints[t] || 'Select a tool.';
+}
+document.querySelectorAll('.tool-btn').forEach(b=>{
+  b.addEventListener('click', ()=> setTool(b.dataset.tool));
+});
+setTool('route');
+
+function updateStats(){
+  checkAutoHubs();
+  balEl.textContent = '§ ' + Math.round(balance).toLocaleString();
+  dayEl.textContent = day;
+  if (bestGrade){
+    bestGradeEl.innerHTML = `<span class="grade-pill" style="background:${GRADE_COLORS[bestGrade]};font-size:12px;padding:1px 8px;">${bestGrade}</span>`;
+  } else {
+    bestGradeEl.textContent = '—';
+  }
+  bestScoreEl.textContent = bestScore>-Infinity ? Math.round(bestScore) : '—';
+  if (scoreHistory.length){
+    const recent = scoreHistory.slice(-7);
+    const avg = recent.reduce((s,h)=>s+h.score,0)/recent.length;
+    avgScoreEl.textContent = Math.round(avg);
+  } else {
+    avgScoreEl.textContent = '—';
+  }
+  draw();
+}
+
+cv.addEventListener('mousemove', (e)=>{
+  const rect = cv.getBoundingClientRect();
+  const x = Math.floor((e.clientX-rect.left)/TILE);
+  const y = Math.floor((e.clientY-rect.top)/TILE);
+  if (!inBounds(x,y)) { window.__hover=null; document.getElementById('tip').style.display='none'; draw(); return; }
+  window.__hover=[x,y];
+  showTip(x,y,e.clientX,e.clientY);
+  draw();
+});
+cv.addEventListener('mouseleave', ()=>{ document.getElementById('tip').style.display='none'; window.__hover=null; draw(); });
+
+// For a hub tile, sum last-run delivered food by originating source,
+// so the tooltip can show what's actually splitting through it.
+function hubSplitSummary(x,y){
+  const flows = window.__lastFlows || [];
+  const bySource = {};
+  let total = 0;
+  flows.forEach(f=>{
+    if (f.delivered<=0 || !f.path) return;
+    const onPath = f.path.some(([px,py])=>px===x && py===y);
+    if (!onPath) return;
+    bySource[f.source] = (bySource[f.source]||0) + f.delivered;
+    total += f.delivered;
+  });
+  return { bySource, total };
+}
+
+function showTip(x,y,clientX,clientY){
+  const tip = document.getElementById('tip');
+  const n = nodeAt[key(x,y)];
+  const cell = grid[y][x];
+  let html = null;
+  if (n){
+    if (n.type==='source'){
+      html = `<b>${n.name}</b><br>Produces: ${Object.entries(n.produces).map(([f,a])=>`${FOODS[f].name} (${a}/day)`).join(', ')}`;
+    } else {
+      html = `<b>${n.name}</b> — ${n.kind}<br>Wants: ${Object.entries(n.demand).map(([f,a])=>`${FOODS[f].name} ${a}`).join(', ')}<br>Min freshness: ${n.minFresh}% · Bonus at: ${n.bonusFresh}%+`;
+    }
+  } else if (cell){
+    if (cell.kind==='route'){
+      const lvl = ROUTE_LEVELS[cell.level];
+      html = `<b>${lvl.label} Route</b><br>Capacity: ${lvl.cap}/day<br>Upkeep ×${lvl.upkeepMult}`;
+      if (cell.needsHub){
+        html += `<br><span class="warn">⚠ 3-way junction — needs a §150 hub, funds too low</span>`;
+      } else if (cell.hubCapped){
+        html += `<br><span class="warn">⚠ 3-way junction — this road already has ${HUB_CAP_PER_NETWORK} hubs</span>`;
+      }
+    } else if (cell.kind==='storage'){
+      const st = STORAGE_TYPES[cell.stype];
+      html = `<b>${st.name}</b><br>Upkeep: §${st.upkeep}/day<br>Protects next ${st.protection} tiles at ${Math.round(st.mult*100)}% decay`;
+    } else if (cell.kind==='hub'){
+      const ht = HUB_TYPES[cell.htype];
+      html = `<b>${ht.name}</b><br>Upkeep: §${ht.upkeep}/day<br>Discounts adjacent routes ${Math.round(ht.discount*100)}%`;
+      const split = hubSplitSummary(x,y);
+      if (split.total>0){
+        const lines = Object.entries(split.bySource).map(([srcId,amt])=>{
+          const src = NODES.find(nd=>nd.id===srcId);
+          const pct = Math.round(amt/split.total*100);
+          return `${src?src.name:srcId}: ${Math.round(amt)} (${pct}%)`;
+        }).join('<br>');
+        html += `<br><br><b>Last run split (${Math.round(split.total)} total):</b><br>${lines}`;
+      } else {
+        html += `<br><br><i>No deliveries routed through here yet.</i>`;
+      }
+    }
+    if (window.__congestion){
+      const c = window.__congestion.find(c=>c.x===x && c.y===y);
+      if (c){
+        html += c.over
+          ? `<br><span class="warn">! Hit 100%+ capacity on the last run — deliveries were capped here</span>`
+          : `<br><span class="warn">! Ran 90%+ of capacity on the last run — close to a bottleneck</span>`;
+      }
+    }
+  } else if (isRiver(x,y)){
+    html = `<b>River</b><br>Building here requires a bridge (+§${BRIDGE_COST}).`;
+  }
+  if (!html){ tip.style.display='none'; return; }
+  const rect = document.getElementById('mapInner').getBoundingClientRect();
+  tip.innerHTML = html;
+  tip.style.display='block';
+  tip.style.left = (clientX-rect.left+14)+'px';
+  tip.style.top = (clientY-rect.top+10)+'px';
+}
+
+cv.addEventListener('click', (e)=>{
+  const rect = cv.getBoundingClientRect();
+  const x = Math.floor((e.clientX-rect.left)/TILE);
+  const y = Math.floor((e.clientY-rect.top)/TILE);
+  if (!inBounds(x,y)) return;
+  handleClick(x,y);
+});
+
+function flashHint(msg, ok){
+  hintEl.textContent = msg;
+  hintEl.style.color = ok ? '#c9f0c9' : '#ffb4a0';
+  setTimeout(()=>{ hintEl.style.color = '#f1e6cf'; }, 1400);
+}
+
+function handleClick(x,y){
+  const n = nodeAt[key(x,y)];
+  const cell = grid[y][x];
+
+  if (n && n.type==='settlement'){
+    showSettlementStatus(n);
+    return;
+  }
+
+  if (tool==='route'){
+    if (n) { flashHint('That tile is already a node.', false); return; }
+    if (cell) { flashHint('Already built here.', false); return; }
+    if (!adjacentToNetwork(x,y)) { flashHint('Route must connect to a node or existing route.', false); return; }
+    let cost = BASE_ROUTE_BUILD + (isRiver(x,y) ? BRIDGE_COST : 0);
+    if (balance < cost) { flashHint('Not enough treasury (§'+cost+' needed).', false); return; }
+    balance -= cost;
+    grid[y][x] = { kind:'route', level:'dirt' };
+    flashHint('Route built for §'+cost+'.', true);
+  }
+  else if (tool==='upgrade'){
+    if (!cell || cell.kind!=='route') { flashHint('Select a route tile to upgrade.', false); return; }
+    const lvl = ROUTE_LEVELS[cell.level];
+    if (!lvl.next) { flashHint('Already at maximum level (Main).', false); return; }
+    const cost = lvl.upgradeCost;
+    if (balance < cost) { flashHint('Not enough treasury (§'+cost+' needed).', false); return; }
+    balance -= cost;
+    cell.level = lvl.next;
+    flashHint('Upgraded to '+ROUTE_LEVELS[cell.level].label+' for §'+cost+'.', true);
+  }
+  else if (tool==='normal' || tool==='cool' || tool==='freeze'){
+    if (!cell || cell.kind!=='route') { flashHint('Storage must be built on an existing route tile.', false); return; }
+    const st = STORAGE_TYPES[tool];
+    if (balance < st.build) { flashHint('Not enough treasury (§'+st.build+' needed).', false); return; }
+    balance -= st.build;
+    grid[y][x] = { kind:'storage', stype:tool };
+    flashHint(st.name+' built for §'+st.build+'.', true);
+  }
+  else if (tool==='hubRegional'){
+    if (!cell || cell.kind!=='hub' || cell.htype!=='hubSmall') { flashHint('Select an existing Small Hub to upgrade.', false); return; }
+    const cost = HUB_TYPES.hubRegional.build - HUB_TYPES.hubSmall.build;
+    if (balance < cost) { flashHint('Not enough treasury (§'+cost+' needed).', false); return; }
+    balance -= cost;
+    cell.htype = 'hubRegional';
+    flashHint('Upgraded to Regional Hub for §'+cost+'.', true);
+  }
+  else if (tool==='remove'){
+    if (n) { flashHint('Cannot bulldoze a node.', false); return; }
+    if (!cell) { flashHint('Nothing to remove here.', false); return; }
+    grid[y][x] = null;
+    flashHint('Tile cleared.', true);
+  }
+  updateStats();
+}
+
+/* ---------- report ---------- */
+document.getElementById('runDayBtn').addEventListener('click', ()=>{
+  const r = runDay();
+  showReport(r);
+  updateStats();
+});
+document.getElementById('closeSettlement').addEventListener('click', ()=>{
+  document.getElementById('settlementOverlay').style.display='none';
+});
+
+function showSettlementStatus(n){
+  document.getElementById('settlementTitle').textContent = n.name;
+  document.getElementById('settlementSub').textContent = n.kind + ' · min freshness ' + n.minFresh + '% · bonus at ' + n.bonusFresh + '%+';
+  const status = window.__lastSettlementStatus && window.__lastSettlementStatus[n.id];
+  let html = '';
+  if (!status){
+    html = `<div style="font-size:13px;color:var(--ink-soft);padding:8px 0;">No deliveries yet — run a day to see what's getting through.</div>`;
+  } else {
+    Object.keys(n.demand).forEach(foodId=>{
+      const s = status[foodId] || {requested:n.demand[foodId], delivered:0, rejected:0, freshSum:0};
+      const done = s.delivered >= s.requested - 0.5;
+      const partial = !done && s.delivered > 0;
+      const icon = done ? '✓' : (partial ? '◐' : '✗');
+      const color = done ? '#5C8A5C' : (partial ? '#D98E4A' : '#C4573A');
+      const avgFresh = s.delivered>0 ? Math.round(s.freshSum/s.delivered) : null;
+      html += `<div class="report-line">
+        <span><b style="color:${color};font-size:15px;">${icon}</b> ${FOODS[foodId].name}</span>
+        <b>${Math.round(s.delivered)}/${Math.round(s.requested)}${avgFresh!==null ? ' · '+avgFresh+'% fresh' : ''}</b>
+      </div>`;
+      if (s.rejected>0){
+        html += `<div style="font-size:11px;color:#C4573A;padding:0 0 4px;">${Math.round(s.rejected)} arrived too spoiled to accept</div>`;
+      }
+    });
+  }
+  document.getElementById('settlementBody').innerHTML = html;
+  document.getElementById('settlementOverlay').style.display='flex';
+}
+
+
+document.getElementById('closeReport').addEventListener('click', ()=>{
+  document.getElementById('overlay').style.display='none';
+  day++;
+  updateStats();
+});
+
+function showReport(r){
+  document.getElementById('reportSub').textContent = 'Day ' + day;
+  let html = '';
+  const lines = [
+    ['Income', '§'+Math.round(r.income)],
+    ['Route upkeep', '−§'+Math.round(r.routeUpkeep)],
+    ['Storage upkeep', '−§'+Math.round(r.storageUpkeep)],
+    ['Hub upkeep', '−§'+Math.round(r.hubUpkeep)],
+    ['Spoilage cost', '−§'+Math.round(r.spoilageCost)],
+  ];
+  lines.forEach(([k,v])=>{ html += `<div class="report-line"><span>${k}</span><b>${v}</b></div>`; });
+  html += `<div class="report-line total"><span>Profit</span><b style="color:${r.profit>=0?'#436b43':'#C4573A'}">${r.profit>=0?'+':''}§${Math.round(r.profit)}</b></div>`;
+  html += `<div style="height:10px"></div>`;
+  html += `<div class="report-line"><span>Average freshness delivered</span><b>${Math.round(r.avgFreshnessOverall)}%</b></div>`;
+  html += `<div class="report-line"><span>Waste (unmet + rejected demand)</span><b>${Math.round(r.wastePct)}%</b></div>`;
+  if (r.capacityBlocked>0){
+    html += `<div class="report-line"><span style="color:#C4573A">⚠ Blocked by route capacity</span><b style="color:#C4573A">${Math.round(r.capacityBlocked)} food</b></div>`;
+  }
+  html += `<div class="report-line"><span>Settlement happiness</span><b>${Math.round(r.avgHappiness)}%</b></div>`;
+  html += `<div class="report-line"><span>Network efficiency grade</span><span class="grade-pill" style="background:${GRADE_COLORS[r.grade]}">${r.grade}</span></div>`;
+  html += `<div class="report-line"><span>Score (chase this)</span><b>${Math.round(r.gradeScore)} / 100</b></div>`;
+  html += `<div style="height:12px"></div><div style="font-size:11.5px;color:var(--ink-soft);font-weight:700;margin-bottom:4px;">Per-settlement</div>`;
+  r.settlementScores.forEach(s=>{
+    html += `<div class="report-line"><span>${s.settlement.name}</span><b>${Math.round(s.sat)}% happy · ${Math.round(s.avgFresh)}% fresh</b></div>`;
+  });
+  document.getElementById('reportBody').innerHTML = html;
+
+  const slot = document.getElementById('winBannerSlot');
+  if (r.isPersonalBest && day>1){
+    slot.innerHTML = `<div class="win-banner">🏆 New personal best score! Grade ${r.grade}, ${Math.round(r.gradeScore)}/100. Can you clean the network up further?</div>`;
+  } else if (r.capacityBlocked>0){
+    slot.innerHTML = `<div class="win-banner" style="background:#E9C29A;color:#5A3A1A;">Routes maxed out today — some deliveries couldn't get through. Consider a hub, an upgrade, or a second route through the bottleneck.</div>`;
+  } else {
+    slot.innerHTML = '';
+  }
+  document.getElementById('overlay').style.display='flex';
+}
+
+updateStats();
+</script>
+</body>
+</html>

@@ -1,15 +1,15 @@
 class_name NodeSpawner
 extends Node3D
 
-## Instantiates a marker scene per node type at each MapData.node_placements
-## entry, positioned via the GridMap's own map_to_local() so markers align
-## exactly to terrain cells without manual grid math.
+## Instantiates a marker scene per fixed source/settlement node, positioned
+## via the GridMap's own map_to_local() so markers align exactly to terrain
+## cells without manual grid math. Player-built route/storage/hub tiles are
+## rendered separately (see Main._render_grid) since they live in
+## GameState.grid, not MapData.node_placements.
 
 const MARKER_SCENES := {
 	GameEnums.NodeType.SOURCE: preload("res://scenes/markers/source_marker.tscn"),
 	GameEnums.NodeType.SETTLEMENT: preload("res://scenes/markers/settlement_marker.tscn"),
-	GameEnums.NodeType.STORAGE: preload("res://scenes/markers/storage_marker.tscn"),
-	GameEnums.NodeType.HUB: preload("res://scenes/markers/hub_marker.tscn"),
 }
 
 func spawn(map_data: MapData, gridmap: GridMap) -> void:
@@ -24,4 +24,4 @@ func spawn(map_data: MapData, gridmap: GridMap) -> void:
 		add_child(marker)
 		var cell := Vector3i(node_data.grid_position.x, 0, node_data.grid_position.y)
 		marker.position = gridmap.map_to_local(cell) + Vector3(0, 1.0, 0)
-		marker.setup(node_data, MarkerColors.color_for(node_data))
+		marker.setup(node_data, MarkerColors.node_color(node_data))
