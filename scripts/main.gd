@@ -664,13 +664,13 @@ func _build_map_controls(root: Control) -> void:
 	pan_grid.columns = 3
 	box.add_child(pan_grid)
 	pan_grid.add_child(_pan_spacer())
-	_add_pan_button(pan_grid, "▲", Vector2(0, 1))
+	_add_pan_button(pan_grid, "^", Vector2(0, 1))
 	pan_grid.add_child(_pan_spacer())
-	_add_pan_button(pan_grid, "◀", Vector2(-1, 0))
+	_add_pan_button(pan_grid, "<", Vector2(-1, 0))
 	pan_grid.add_child(_pan_spacer())
-	_add_pan_button(pan_grid, "▶", Vector2(1, 0))
+	_add_pan_button(pan_grid, ">", Vector2(1, 0))
 	pan_grid.add_child(_pan_spacer())
-	_add_pan_button(pan_grid, "▼", Vector2(0, -1))
+	_add_pan_button(pan_grid, "v", Vector2(0, -1))
 	pan_grid.add_child(_pan_spacer())
 
 func _pan_spacer() -> Control:
