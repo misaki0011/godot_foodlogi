@@ -3,7 +3,8 @@ extends SceneTree
 ## One-shot dev check (not part of the game): loads Main.tscn, lets it run
 ## _ready() for one frame, and asserts terrain + markers were populated and
 ## that clicking behaves like fresh-routes-mvp.html (single-tile placement,
-## settlement click opens the popup).
+## tapping a source/settlement shows its info tip instead of building or
+## opening a dialog).
 ## Run via: godot --headless --script res://scripts/tools/verify_main.gd
 
 var _main: Node
@@ -67,11 +68,12 @@ func _report() -> void:
 	assert(not state.grid.has(build_cell))
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
 
-	# Clicking a settlement always opens its delivery popup, regardless of tool.
-	var settlement_overlay: Control = _main.get("_settlement_overlay")
-	assert(not settlement_overlay.visible)
+	# Tapping a settlement (any tool) shows its info tip, not a dialog.
+	var tip_panel: PanelContainer = _main.get("_tip_panel")
+	assert(not tip_panel.visible)
 	_main.call("_handle_click", village_a.grid_position)
-	assert(settlement_overlay.visible, "Clicking a settlement must open its delivery popup")
+	assert(tip_panel.visible, "Tapping a settlement must show the info tip")
+	assert(state.grid.size() == 0, "Tapping a settlement must not attempt to build there")
 
 	var terrain_types_seen := {}
 	for cell in used_cells:
