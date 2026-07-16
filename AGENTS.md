@@ -3,44 +3,170 @@
 ## Project Overview
 
 This is a Godot project.
-Follow these instructions when editing this repository.
 
-## Commands
+Follow these instructions when editing this repository. Run all commands from the repository root.
 
-Run commands from the repository root.
+## Godot Environment
 
-### Build
+This project uses Godot 4.6.2.
+
+The installation script must install:
+
+* The Godot 4.6.2 editor binary.
+* The matching Godot 4.6.2 export templates.
+* A `godot` executable at `$HOME/.local/bin/godot`.
+
+Use the following command in all checks:
+
+```bash
+GODOT="${GODOT:-$HOME/.local/bin/godot}"
+```
+
+## Installation
+
+Install the required download tools before running the Godot installation script:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl unzip
+```
+
+Install Godot:
+
+```bash
+chmod +x scripts/install-godot.sh
+./scripts/install-godot.sh
+```
+
+Verify the installed version:
+
+```bash
+GODOT="${GODOT:-$HOME/.local/bin/godot}"
+"$GODOT" --version
+```
+
+The reported version must start with:
+
+```text
+4.6.2
+```
+
+Import the project resources:
+
+```bash
+GODOT="${GODOT:-$HOME/.local/bin/godot}"
+"$GODOT" --headless --path . --import
+```
+
+## Test
+
+Launch the main project headlessly for 600 frames:
+
+```bash
+GODOT="${GODOT:-$HOME/.local/bin/godot}"
+
+"$GODOT" \
+  --headless \
+  --path . \
+  --verbose \
+  --quit-after 600 \
+  --log-file godot-smoke-test.log
+```
+
+The command must complete successfully.
+
+Check the log for known runtime and script errors:
+
+```bash
+if grep -nE \
+  "SCRIPT ERROR|ERROR:|CRASH|Invalid call|Invalid access|Null instance|Previously freed" \
+  godot-smoke-test.log
+then
+  echo "Godot errors were found in godot-smoke-test.log"
+  exit 1
+else
+  echo "No known Godot error patterns were found."
+fi
+```
+
+Do not treat the smoke test as complete without reading both:
+
+* The command output.
+* `godot-smoke-test.log`.
+
+## Build
 
 Export the release Web build used by GitHub Pages:
 
 ```bash
-GODOT=/mnt/c/Users/harat_local/Desktop/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe
+GODOT="${GODOT:-$HOME/.local/bin/godot}"
+
+rm -rf build/web
 mkdir -p build/web
-"$GODOT" --headless --export-release Web build/web/index.html
+
+"$GODOT" \
+  --headless \
+  --path . \
+  --export-release "Web" \
+  build/web/index.html
 ```
 
-### Test
+The project must contain an export preset named exactly `Web` in `export_presets.cfg`.
 
-Verify that Godot resources, including `.tscn` and `.tres` files, load without
-parsing errors:
+The matching Godot export templates must also be installed.
+
+Verify the build output:
 
 ```bash
-GODOT=/mnt/c/Users/harat_local/Desktop/Godot_v4.6.2-stable_win64.exe/Godot_v4.6.2-stable_win64.exe
-"$GODOT" --headless --editor --quit
-"$GODOT" --headless --script res://scripts/tools/verify_main.gd
-"$GODOT" --headless --script res://scripts/tools/verify_mvp.gd
+test -f build/web/index.html
 ```
 
-### If Checks Fail
+## Required Checks
+
+Before opening a PR or MR, run:
+
+```bash
+GODOT="${GODOT:-$HOME/.local/bin/godot}"
+
+"$GODOT" --headless --path . --import
+
+"$GODOT" \
+  --headless \
+  --path . \
+  --verbose \
+  --quit-after 600 \
+  --log-file godot-smoke-test.log
+
+if grep -nE \
+  "SCRIPT ERROR|ERROR:|CRASH|Invalid call|Invalid access|Null instance|Previously freed" \
+  godot-smoke-test.log
+then
+  exit 1
+fi
+
+rm -rf build/web
+mkdir -p build/web
+
+"$GODOT" \
+  --headless \
+  --path . \
+  --export-release "Web" \
+  build/web/index.html
+
+test -f build/web/index.html
+```
+
+## If Checks Fail
 
 If a check fails:
 
-1. Read the error carefully.
-2. Fix the issue if it is related to the current task.
+1. Read the command output and relevant log files carefully.
+2. Fix the issue when it is related to the current task.
 3. Re-run the failing check.
-4. Do not open a PR/MR with failing checks unless the user explicitly asks.
+4. Do not open a PR or MR with failing checks unless the user explicitly requests it.
+5. If a failure is unrelated to the current changes, clearly describe it in the PR or MR description.
 
-If the failure appears unrelated to the current changes, explain that clearly in the PR/MR description.
+Do not claim that the task is complete unless the project was imported, launched, and successfully exported.
 
 ## Git Workflow
 
