@@ -355,7 +355,11 @@ func _render_food_need_bubbles() -> void:
 		var status = _state.last_settlement_status.get(n.node_id)
 		if status == null:
 			continue
-		var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 2.0, 0)
+		# NodeMarker puts the settlement pin's head at +2.1 and its name label
+		# at +2.6 (node_spawner.gd's +1.0 root offset plus node_marker_base.tscn's
+		# local offsets), so start above both -- otherwise this billboard sits
+		# inside the pin head and the two fuse into an unreadable blob.
+		var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
 		var stack := 0
 		for food_id in n.demand:
 			var s = status.get(food_id)
@@ -366,7 +370,7 @@ func _render_food_need_bubbles() -> void:
 				continue
 			var bubble: FoodNeedMarker = FOOD_NEED_SCENE.instantiate()
 			_grid_visuals.add_child(bubble)
-			bubble.position = base_pos + Vector3(0, stack * 0.55, 0)
+			bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
 			bubble.setup(foods[food_id], unmet)
 			stack += 1
 
