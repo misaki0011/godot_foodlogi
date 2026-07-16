@@ -116,8 +116,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		_handle_click(_screen_to_cell(event.position), event.position)
 	elif event is InputEventMouseMotion:
 		_update_tip(_screen_to_cell(event.position), event.position)
-	elif event is InputEventScreenTouch and event.pressed:
-		_handle_click(_screen_to_cell(event.position), event.position)
 
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
