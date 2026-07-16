@@ -9,6 +9,7 @@ extends Node3D
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
 const HUB_SCENE := preload("res://scenes/markers/hub_marker.tscn")
+const FOOD_NEED_SCENE := preload("res://scenes/markers/food_need_marker.tscn")
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
 const BRIDGE_COLOR := Color("8FB9D8")
@@ -340,6 +341,34 @@ func _render_grid() -> void:
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
+	_render_food_need_bubbles()
+
+## Speech-bubble indicator floated above any settlement still short on a
+## food after the last simulated day (SETT-02/LOOP-02 unmet demand =
+## requested - delivered), so a shortfall is visible without a click.
+func _render_food_need_bubbles() -> void:
+	var foods := GameBalance.food_types()
+	for pos in _nodes_by_pos:
+		var n: NodeData = _nodes_by_pos[pos]
+		if n.node_type != GameEnums.NodeType.SETTLEMENT:
+			continue
+		var status = _state.last_settlement_status.get(n.node_id)
+		if status == null:
+			continue
+		var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 2.0, 0)
+		var stack := 0
+		for food_id in n.demand:
+			var s = status.get(food_id)
+			if s == null:
+				continue
+			var unmet: float = s.requested - s.delivered
+			if unmet < 0.5:
+				continue
+			var bubble: FoodNeedMarker = FOOD_NEED_SCENE.instantiate()
+			_grid_visuals.add_child(bubble)
+			bubble.position = base_pos + Vector3(0, stack * 0.55, 0)
+			bubble.setup(foods[food_id], unmet)
+			stack += 1
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()
