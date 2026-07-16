@@ -1,6 +1,6 @@
 # Food Logistics Puzzle Game - Design Spec
 
-**Version:** 0.3  
+**Version:** 0.4  
 **Working title:** Fresh Routes  
 **Genre:** Cozy logistics / routing puzzle / light management  
 **Target platform:** PC / Steam (MVP prototype: browser)  
@@ -10,6 +10,13 @@
 ---
 
 ## 0. Changelog
+
+### v0.3 → v0.4 — Mobile/touch playtest support
+
+The Godot port needed to be testable from a phone browser, which has no hover and no keyboard. These changes supersede conflicting v0.3 text on settlement popups and hover-only info:
+
+1. **Sources and settlements show all info on tap, no dialog.** The two-tier design (hover popup + click-to-open full checklist) is replaced by a single tap/hover info tip: tapping (or hovering, on desktop) a source or settlement tile shows the same tip, and for settlements it includes the full last-delivery checklist that used to live in a separate popup. Tapping one of these tiles never attempts to build there, regardless of the active tool.
+2. **A top-left map panel adds touch zoom/pan controls.** Since a touchscreen can't scroll-wheel-zoom or hold a key to drag-pan, a fixed on-screen panel provides +/− zoom buttons and a 4-direction pan pad for exploring the map, usable by mouse or touch. See §10.7.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -736,11 +743,11 @@ overdelivery_tolerance: 15
 special_trait: prefers_fresh_vegetables
 ```
 
-### Delivery-result popup (added in v0.3)
+### Delivery-result info tip (added in v0.3, merged into a single tip in v0.4)
 
-Every settlement—village, town, or city—shows a popup when hovered. It summarizes the most recently simulated day without requiring the player to open the full report.
+Every settlement—village, town, or city—shows an info tip when hovered (desktop) or tapped (mobile). It summarizes the most recently simulated day's per-food ✓ / ◐ / ✗ checklist without requiring the player to open the full report or a separate dialog.
 
-Suggested popup:
+Suggested tip:
 
 ```text
 Village A — Last delivery
@@ -750,7 +757,7 @@ Rejected: 2 bread below minimum freshness
 Status: Partial
 ```
 
-The hover popup should show, per requested food:
+The tip should show, per requested food:
 
 - Requested amount.
 - Accepted delivered amount.
@@ -759,7 +766,7 @@ The hover popup should show, per requested food:
 - Rejected amount and reason when applicable.
 - A readable status such as Complete, Partial, or Missing.
 
-Clicking the settlement opens the larger checklist with ✓ / ◐ / ✗ per food and any extra detail. Before the first simulation, show that no delivery result exists yet.
+Before the first simulation, show that no delivery result exists yet. As of v0.4 there is no separate click-to-open checklist: hover and tap both show this same full tip, and tapping a settlement never attempts to build there.
 
 ### Satisfaction scoring
 
@@ -1080,7 +1087,8 @@ The main screen should show:
 - Route congestion or capacity warnings
 - Freshness warnings
 - Hub last-delivery hover details
-- Settlement last-delivery hover popups
+- Settlement last-delivery info on hover/tap
+- Top-left zoom/pan controls (§10.7)
 
 ### 10.2 Route drawing UI
 
@@ -1158,9 +1166,9 @@ MVP map indicators:
 
 The v0.2 red and purple dashed pending-junction diamonds are removed in v0.3. Invalid hub-forming routes are rejected atomically instead of remaining on the map.
 
-### 10.6 Settlement delivery popup
+### 10.6 Settlement delivery info
 
-Hovering any settlement shows its last delivery result. Clicking it opens the full checklist. The popup must remain compact enough not to obscure the nearby route network and should be positioned inside the viewport.
+Hovering (desktop) or tapping (mobile) any settlement shows its last delivery result as a single info tip -- there is no separate dialog to open. The tip must remain compact enough not to obscure the nearby route network and should be positioned inside the viewport.
 
 Minimum fields:
 
@@ -1170,6 +1178,15 @@ Food: delivered / requested · average freshness · source
 Rejected or missing amount
 Overall status
 ```
+
+### 10.7 Mobile / touch controls
+
+A fixed panel in the top-left corner of the screen provides map navigation that doesn't depend on a mouse wheel or keyboard, so the game can be played and tested from a phone browser:
+
+- **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
+- **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
+
+These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
 
 ---
 

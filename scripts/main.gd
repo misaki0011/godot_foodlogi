@@ -3,8 +3,9 @@ extends Node3D
 ## Fresh Routes -- 3D isometric port of fresh-routes-mvp.html. The world is
 ## a tile grid (see GameState.grid / SimulationEngine): clicking places one
 ## tile at a time per the active tool, hubs auto-form at 3-way junctions,
-## and hovering any tile or node shows a live info tooltip, matching the
-## HTML reference exactly. See SPEC.md v0.3.
+## and hovering (desktop) or tapping (mobile, no dialog) any tile or node
+## shows a live info tooltip. A top-left panel provides touch zoom/pan
+## controls for exploring the map on mobile. See SPEC.md v0.3.
 
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
@@ -14,6 +15,11 @@ const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), 
 const BRIDGE_COLOR := Color("8FB9D8")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}
 const STORAGE_TOOLS := {"normal": GameEnums.StorageType.NORMAL, "cool": GameEnums.StorageType.COOL, "freeze": GameEnums.StorageType.FREEZE}
+const ZOOM_MIN := 14.0
+const ZOOM_MAX := 60.0
+const ZOOM_SPEED := 24.0 # camera.size units/sec while a zoom button is held
+const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with zoom
+const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
 const TOOL_HINTS := {
 	"route": "Click an empty tile adjacent to a node or existing route to extend your network.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
@@ -50,10 +56,11 @@ var _report_overlay: Control
 var _report_sub: Label
 var _report_text: RichTextLabel
 var _report_banner: Label
-var _settlement_overlay: Control
-var _settlement_title: Label
-var _settlement_sub: Label
-var _settlement_body: RichTextLabel
+var _default_camera_size: float
+var _map_bounds_min: Vector2
+var _map_bounds_max: Vector2
+var _pan_dir := Vector2.ZERO
+var _zoom_dir := 0.0
 
 func _ready() -> void:
 	_apply_web_mobile_rendering_limits()
@@ -67,9 +74,33 @@ func _ready() -> void:
 	_grid_visuals = Node3D.new()
 	_grid_visuals.name = "GridVisuals"
 	add_child(_grid_visuals)
+	_default_camera_size = _camera.size
+	var min_corner: Vector3 = _terrain.map_to_local(Vector3i(0, 0, 0))
+	var max_corner: Vector3 = _terrain.map_to_local(Vector3i(_map_data.grid_size.x - 1, 0, _map_data.grid_size.y - 1))
+	_map_bounds_min = Vector2(min_corner.x, min_corner.z)
+	_map_bounds_max = Vector2(max_corner.x, max_corner.z)
 	_build_ui()
 	_set_tool("route")
 	_update_ui()
+
+func _process(delta: float) -> void:
+	if _report_overlay.visible:
+		_pan_dir = Vector2.ZERO
+		_zoom_dir = 0.0
+		return
+	if _zoom_dir != 0.0:
+		_camera.size = clampf(_camera.size + _zoom_dir * ZOOM_SPEED * delta, ZOOM_MIN, ZOOM_MAX)
+	if _pan_dir != Vector2.ZERO:
+		var right := _camera.global_transform.basis.x
+		var forward := -_camera.global_transform.basis.z
+		right.y = 0.0
+		forward.y = 0.0
+		var speed := PAN_SPEED * (_camera.size / _default_camera_size)
+		var offset := (right.normalized() * _pan_dir.x + forward.normalized() * _pan_dir.y) * speed * delta
+		var new_pos := _camera.position + offset
+		new_pos.x = clampf(new_pos.x, _map_bounds_min.x - PAN_MAP_MARGIN, _map_bounds_max.x + PAN_MAP_MARGIN)
+		new_pos.z = clampf(new_pos.z, _map_bounds_min.y - PAN_MAP_MARGIN, _map_bounds_max.y + PAN_MAP_MARGIN)
+		_camera.position = new_pos
 
 func _apply_web_mobile_rendering_limits() -> void:
 	# Mobile browsers have much smaller WebGL memory budgets than native apps.
@@ -79,25 +110,26 @@ func _apply_web_mobile_rendering_limits() -> void:
 		_directional_light.shadow_enabled = false
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _report_overlay.visible or _settlement_overlay.visible:
+	if _report_overlay.visible:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		_handle_click(_screen_to_cell(event.position))
+		_handle_click(_screen_to_cell(event.position), event.position)
 	elif event is InputEventMouseMotion:
 		_update_tip(_screen_to_cell(event.position), event.position)
-	elif event is InputEventScreenTouch and event.pressed:
-		_handle_click(_screen_to_cell(event.position))
 
-func _handle_click(cell: Vector2i) -> void:
+func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
 		return
 	var n := _node_at(cell)
-	if n and n.node_type == GameEnums.NodeType.SETTLEMENT:
-		_show_settlement_status(n)
+	if n:
+		# Sources and settlements are informational, not buildable -- tapping
+		# (mobile has no hover) shows the same info tip a mouse hover would.
+		_update_tip(cell, screen_position)
 		return
+	_tip_panel.visible = false
 	match _tool:
 		"route":
-			_do_build_route(cell, n)
+			_do_build_route(cell)
 		"upgrade":
 			_do_upgrade_route(cell)
 		"normal", "cool", "freeze":
@@ -105,13 +137,10 @@ func _handle_click(cell: Vector2i) -> void:
 		"hubRegional":
 			_do_upgrade_hub(cell)
 		"remove":
-			_do_bulldoze(cell, n)
+			_do_bulldoze(cell)
 	_after_action()
 
-func _do_build_route(cell: Vector2i, n: NodeData) -> void:
-	if n:
-		_show_toast("That tile is already a node.", true)
-		return
+func _do_build_route(cell: Vector2i) -> void:
 	if _state.grid.has(cell):
 		_show_toast("Already built here.", true)
 		return
@@ -170,10 +199,7 @@ func _do_upgrade_hub(cell: Vector2i) -> void:
 	cell_data.htype = GameEnums.HubType.REGIONAL
 	_show_toast("Upgraded to Regional Hub for §%d." % roundi(cost))
 
-func _do_bulldoze(cell: Vector2i, n: NodeData) -> void:
-	if n:
-		_show_toast("Cannot bulldoze a node.", true)
-		return
+func _do_bulldoze(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
 		_show_toast("Nothing to remove here.", true)
 		return
@@ -215,10 +241,7 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 				parts.append("%s (%d/day)" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
 			text = "[b]%s[/b]\nProduces: %s" % [n.display_name, ", ".join(parts)]
 		else:
-			var parts := []
-			for food_id in n.demand:
-				parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(n.demand[food_id])])
-			text = "[b]%s[/b] -- %s\nWants: %s\nMin freshness: %d%% · Bonus at: %d%%+" % [n.display_name, n.kind, ", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
+			text = _settlement_tip_text(n)
 	elif cell_data:
 		if cell_data.kind == "route":
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
@@ -256,30 +279,31 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 	_tip_panel.visible = true
 	_tip_panel.position = mouse_pos + Vector2(16, 12)
 
-## ---------- settlement popup ----------
+## ---------- settlement tip ----------
 
-func _show_settlement_status(n: NodeData) -> void:
-	_settlement_title.text = n.display_name
-	_settlement_sub.text = "%s · min freshness %d%% · bonus at %d%%+" % [n.kind, roundi(n.min_freshness), roundi(n.bonus_freshness)]
+func _settlement_tip_text(n: NodeData) -> String:
+	var parts := []
+	for food_id in n.demand:
+		parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(n.demand[food_id])])
+	var text := "[b]%s[/b] -- %s\nWants: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [n.display_name, n.kind, ", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
 	var status = _state.last_settlement_status.get(n.node_id)
-	var text := ""
 	if status == null:
-		text = "No deliveries yet -- run a day to see what's getting through."
-	else:
-		for food_id in n.demand:
-			var s = status.get(food_id, {"requested": n.demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
-			var done: bool = s.delivered >= s.requested - 0.5
-			var partial: bool = not done and s.delivered > 0.0
-			var icon := "✓" if done else ("◐" if partial else "✗")
-			var color := "#5C8A5C" if done else ("#D98E4A" if partial else "#C4573A")
-			var fresh_text := ""
-			if s.delivered > 0.0:
-				fresh_text = " · %d%% fresh" % roundi(s.fresh_sum / s.delivered)
-			text += "[color=%s]%s[/color] %s: %d/%d%s\n" % [color, icon, GameBalance.food_types()[food_id].display_name, roundi(s.delivered), roundi(s.requested), fresh_text]
-			if s.rejected > 0.0:
-				text += "  [color=#C4573A]%d arrived too spoiled to accept[/color]\n" % roundi(s.rejected)
-	_settlement_body.text = text
-	_settlement_overlay.visible = true
+		text += "\n[i]No deliveries yet -- run a day to see what's getting through.[/i]"
+		return text
+	text += "\n[b]Last delivery:[/b]\n"
+	for food_id in n.demand:
+		var s = status.get(food_id, {"requested": n.demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
+		var done: bool = s.delivered >= s.requested - 0.5
+		var partial: bool = not done and s.delivered > 0.0
+		var icon := "✓" if done else ("◐" if partial else "✗")
+		var color := "#5C8A5C" if done else ("#D98E4A" if partial else "#C4573A")
+		var fresh_text := ""
+		if s.delivered > 0.0:
+			fresh_text = " · %d%% fresh" % roundi(s.fresh_sum / s.delivered)
+		text += "[color=%s]%s[/color] %s: %d/%d%s\n" % [color, icon, GameBalance.food_types()[food_id].display_name, roundi(s.delivered), roundi(s.requested), fresh_text]
+		if s.rejected > 0.0:
+			text += "  [color=#C4573A]%d arrived too spoiled to accept[/color]\n" % roundi(s.rejected)
+	return text
 
 ## ---------- daily report ----------
 
@@ -568,6 +592,8 @@ func _build_ui() -> void:
 	_tip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_tip_panel.add_child(_tip_label)
 
+	_build_map_controls(root)
+
 	_report_overlay = ColorRect.new()
 	_report_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_report_overlay.color = Color(0.02, 0.04, 0.05, 0.78)
@@ -608,36 +634,59 @@ func _build_ui() -> void:
 	continue_button.pressed.connect(_close_report)
 	report_box.add_child(continue_button)
 
-	_settlement_overlay = ColorRect.new()
-	_settlement_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_settlement_overlay.color = Color(0.02, 0.04, 0.05, 0.78)
-	_settlement_overlay.visible = false
-	root.add_child(_settlement_overlay)
-	var settlement_center := CenterContainer.new()
-	settlement_center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_settlement_overlay.add_child(settlement_center)
-	var settlement_panel := PanelContainer.new()
-	settlement_panel.custom_minimum_size = Vector2(360, 0)
-	settlement_panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 1.0))
-	settlement_center.add_child(settlement_panel)
-	var settlement_box := VBoxContainer.new()
-	settlement_box.add_theme_constant_override("separation", 6)
-	settlement_panel.add_child(settlement_box)
-	_settlement_title = Label.new()
-	_settlement_title.add_theme_font_size_override("font_size", 22)
-	settlement_box.add_child(_settlement_title)
-	_settlement_sub = Label.new()
-	settlement_box.add_child(_settlement_sub)
-	_settlement_body = RichTextLabel.new()
-	_settlement_body.bbcode_enabled = true
-	_settlement_body.fit_content = true
-	_settlement_body.custom_minimum_size = Vector2(330, 0)
-	settlement_box.add_child(_settlement_body)
-	var close_settlement := Button.new()
-	close_settlement.text = "Close"
-	close_settlement.custom_minimum_size.y = 40
-	close_settlement.pressed.connect(func() -> void: _settlement_overlay.visible = false)
-	settlement_box.add_child(close_settlement)
+## ---------- map controls (zoom/pan, top-left) ----------
+
+func _build_map_controls(root: Control) -> void:
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	panel.offset_left = 12
+	panel.offset_top = 12
+	panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.9))
+	root.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	panel.add_child(box)
+	_add_section_title(box, "MAP")
+
+	var zoom_row := HBoxContainer.new()
+	zoom_row.add_theme_constant_override("separation", 4)
+	box.add_child(zoom_row)
+	var zoom_label := Label.new()
+	zoom_label.text = "Zoom"
+	zoom_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	zoom_row.add_child(zoom_label)
+	_add_hold_button(zoom_row, "−", func() -> void: _zoom_dir = 1.0, func() -> void: _zoom_dir = 0.0)
+	_add_hold_button(zoom_row, "+", func() -> void: _zoom_dir = -1.0, func() -> void: _zoom_dir = 0.0)
+
+	var pan_grid := GridContainer.new()
+	pan_grid.columns = 3
+	box.add_child(pan_grid)
+	pan_grid.add_child(_pan_spacer())
+	_add_pan_button(pan_grid, "^", Vector2(0, 1))
+	pan_grid.add_child(_pan_spacer())
+	_add_pan_button(pan_grid, "<", Vector2(-1, 0))
+	pan_grid.add_child(_pan_spacer())
+	_add_pan_button(pan_grid, ">", Vector2(1, 0))
+	pan_grid.add_child(_pan_spacer())
+	_add_pan_button(pan_grid, "v", Vector2(0, -1))
+	pan_grid.add_child(_pan_spacer())
+
+func _pan_spacer() -> Control:
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(34, 34)
+	return spacer
+
+func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
+	_add_hold_button(parent, text, func() -> void: _pan_dir += dir, func() -> void: _pan_dir -= dir)
+
+func _add_hold_button(parent: Container, text: String, on_press: Callable, on_release: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(34, 34)
+	button.button_down.connect(on_press)
+	button.button_up.connect(on_release)
+	parent.add_child(button)
+	return button
 
 func _add_section_title(parent: VBoxContainer, text: String) -> void:
 	var label := Label.new()
