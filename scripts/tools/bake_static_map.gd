@@ -87,7 +87,7 @@ func _run() -> void:
 		return
 
 	print("bake_static_map: baked terrain + markers into %s" % OUTPUT_SCENE_PATH)
-	get_editor_interface().get_resource_filesystem().scan()
+	EditorInterface.get_resource_filesystem().scan()
 
 func _claim_ownership(node: Node, owner: Node) -> void:
 	for child in node.get_children():
