@@ -53,8 +53,8 @@ PAVED_STONE = (176, 172, 164, 255)
 MAIN_BASE = (90, 80, 68, 255)
 MAIN_STRIPE = (223, 208, 168, 255)
 
-GRID_LINE_COLOR = (58, 66, 52, 255)
-GRID_LINE_THICKNESS = 0.05
+GRID_LINE_COLOR = (96, 100, 82, 255)
+GRID_LINE_THICKNESS = 0.03
 
 
 def _box(extents, translation, color) -> trimesh.Trimesh:
