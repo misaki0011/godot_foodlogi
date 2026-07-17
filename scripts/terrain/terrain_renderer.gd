@@ -2,11 +2,21 @@
 class_name TerrainRenderer
 extends GridMap
 
-## Renders a MapData's terrain grid into GridMap cells. The MeshLibrary is
-## built at runtime (see _build_mesh_library) straight from the block glTFs
-## in assets/Blocks/glTF, so those .glb files are the single source of
-## truth for what a terrain tile looks like -- there's no separate baked
-## .meshlib to keep in sync by hand whenever a block's art changes.
+## Renders a MapData's terrain grid. Each cell's actual visible geometry is
+## a directly-instanced child of the matching block glTF (assets/Blocks/glTF),
+## placed at this GridMap's own map_to_local() position with no scale --
+## every block glTF is authored at its real, final 2x2 world-space footprint
+## (matching cell_size exactly, see tools/asset_gen/generate_blocks.py), so
+## no transform beyond position is ever needed.
+##
+## GridMap itself is used only for its cell bookkeeping and coordinate math
+## (map_to_local/local_to_map, get_used_cells/get_cell_item) -- its own
+## automatic per-item cell_size scaling is never exercised, since the
+## MeshLibrary items here intentionally carry no mesh (see
+## _build_mesh_library). That scaling was the original suspected cause of a
+## visible seam between tiles; placing real, already-full-size meshes
+## directly removes it from the picture entirely rather than relying on the
+## scale math cancelling out correctly.
 ##
 ## fresh-routes-mvp.html only has two terrain kinds -- open plains and a
 ## single river column (bridges auto-build when a route crosses it) -- so
@@ -22,47 +32,33 @@ const TERRAIN_MESH_NAMES := {
 }
 
 var _item_ids_by_name: Dictionary = {}
+var _visuals: Node3D
 
 func render(map_data: MapData) -> void:
 	clear()
+	if _visuals:
+		_visuals.free()
+	_visuals = Node3D.new()
+	_visuals.name = "Visuals"
+	add_child(_visuals)
 	mesh_library = _build_mesh_library()
 	_cache_item_ids()
 	for y in range(map_data.grid_size.y):
 		for x in range(map_data.grid_size.x):
 			_place_terrain_cell(x, y, map_data.get_terrain(x, y))
 
-## Builds a MeshLibrary from the block glTFs' baked meshes so GridMap
-## placement (cell_size scaling, get_used_cells/get_cell_item, etc.) keeps
-## working exactly as it did with a hand-baked .meshlib resource.
+## Named-but-meshless items -- used only for GridMap's own cell bookkeeping
+## (get_used_cells/get_cell_item/get_item_name), not for rendering. See the
+## class doc comment for why the actual visible block is a separately
+## instanced child instead of a MeshLibrary-rendered cell.
 func _build_mesh_library() -> MeshLibrary:
 	var library := MeshLibrary.new()
 	var id := 0
-	for terrain in TERRAIN_BLOCK_SCENES:
-		var mesh := _extract_mesh(TERRAIN_BLOCK_SCENES[terrain])
-		if mesh == null:
-			push_warning("TerrainRenderer: '%s' glTF has no mesh" % TERRAIN_MESH_NAMES[terrain])
-			continue
+	for terrain in TERRAIN_MESH_NAMES:
 		library.create_item(id)
 		library.set_item_name(id, TERRAIN_MESH_NAMES[terrain])
-		library.set_item_mesh(id, mesh)
 		id += 1
 	return library
-
-func _extract_mesh(scene: PackedScene) -> Mesh:
-	var instance := scene.instantiate()
-	var mesh_instance := _find_mesh_instance(instance)
-	var mesh: Mesh = mesh_instance.mesh if mesh_instance else null
-	instance.free()
-	return mesh
-
-func _find_mesh_instance(node: Node) -> MeshInstance3D:
-	if node is MeshInstance3D:
-		return node
-	for child in node.get_children():
-		var found := _find_mesh_instance(child)
-		if found:
-			return found
-	return null
 
 func _place_terrain_cell(x: int, y: int, terrain: GameEnums.TerrainType) -> void:
 	var mesh_name: String = TERRAIN_MESH_NAMES.get(terrain, "Block_Grass")
@@ -70,7 +66,12 @@ func _place_terrain_cell(x: int, y: int, terrain: GameEnums.TerrainType) -> void
 	if item_id == -1:
 		push_warning("TerrainRenderer: no MeshLibrary item named '%s'" % mesh_name)
 		return
-	set_cell_item(Vector3i(x, 0, y), item_id)
+	var cell := Vector3i(x, 0, y)
+	set_cell_item(cell, item_id)
+	var scene: PackedScene = TERRAIN_BLOCK_SCENES.get(terrain, TERRAIN_BLOCK_SCENES[GameEnums.TerrainType.PLAINS])
+	var block: Node3D = scene.instantiate()
+	_visuals.add_child(block)
+	block.position = map_to_local(cell)
 
 func _cache_item_ids() -> void:
 	_item_ids_by_name.clear()

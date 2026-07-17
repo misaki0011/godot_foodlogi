@@ -406,10 +406,8 @@ func _add_route_block(pos: Vector3, level: String) -> void:
 	var block: Node3D = scene.instantiate()
 	_grid_visuals.add_child(block)
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
-	# The block's 1x1 local footprint is authored to match one terrain cell,
-	# same convention TerrainRenderer's GridMap scaling uses -- keep height
-	# as-authored (already in world-space meters) so only XZ gets stretched.
-	block.scale = Vector3(_terrain.cell_size.x, 1.0, _terrain.cell_size.z)
+	# No scale needed: the block's footprint is authored at the real 2x2
+	# world-space cell size already (see generate_blocks.py).
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()

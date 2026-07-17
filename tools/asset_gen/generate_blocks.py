@@ -6,11 +6,10 @@ prop here is procedurally rebuilt as a simple, low-poly, vertex-colored mesh
 Animal-Crossing-inspired look (a distinct capped/inset top layer plus small
 detail bumps) instead of a single flat-colored cube.
 
-Every block shares one convention: a 1.0 x 1.0 local footprint, matched to
-one GridMap cell (terrain blocks get GridMap's automatic cell_size scale;
-route-tile blocks get the same XZ scale applied explicitly in main.gd) so
-tiles sit flush against their neighbors with no visible gap. Each tile's top
-face has a thin border baked in at the true edge instead, so adjacent tiles'
+Every block is authored at its real, final 2.0 x 2.0 world-space footprint
+-- matching the GridMap's cell_size exactly -- so it can be placed with
+position alone and no scale transform anywhere in the pipeline. Each tile's
+top face has a thin border baked in at the true edge, so adjacent tiles'
 borders meet and read as a continuous grid line across the map.
 
 Every mesh gets an explicit matte (non-metallic, fully rough) material --
@@ -33,8 +32,7 @@ CHEST_LID = (94, 67, 45, 255)
 METAL_BAND = (150, 150, 158, 255)
 LATCH_GOLD = (201, 162, 39, 255)
 
-# Terrain (GridMap cell content, 1x1 local footprint -- GridMap scales this
-# up by its cell_size at placement time).
+# Terrain (2x2 world-space footprint, placed with position only, no scale).
 DIRT_SIDE = (150, 116, 74, 255)
 DIRT_BOTTOM = (117, 89, 56, 255)
 GRASS_CAP = (128, 197, 104, 255)
@@ -44,8 +42,8 @@ WATER_BOTTOM = (66, 111, 148, 255)
 WATER_CAP = (150, 215, 232, 255)
 WATER_RIPPLE = (203, 238, 245, 255)
 
-# Route tiles (main.gd applies the same XZ cell_size scale as terrain, but
-# keeps their authored height in final world-space meters).
+# Route tiles (2x2 world-space footprint too; height is a thin slab on
+# top, authored directly in world-space meters).
 DIRT_ROAD_BASE = (181, 148, 100, 255)
 DIRT_ROAD_PATH = (201, 172, 122, 255)
 PAVED_BASE = (142, 138, 132, 255)
@@ -108,7 +106,9 @@ def build_chest() -> trimesh.Trimesh:
 def build_grass_block() -> trimesh.Trimesh:
     """Chunky grass-over-dirt cube: a dirt base with a flush (same-size,
     non-overhanging) grass cap and four little corner tufts, plus a grid
-    border baked into the top edge.
+    border baked into the top edge. 2x2 world-space footprint (see module
+    docstring), so this is a straight 2x scale-up of every dimension from
+    the block's original 1x1 design -- same proportions, real size.
 
     The dirt base is a deep plinth (not just a shallow slab) on purpose:
     the game camera looks down at a fixed ~60 degree angle, not straight
@@ -119,17 +119,17 @@ def build_grass_block() -> trimesh.Trimesh:
     angle; the plinth needs to reach deep enough that there's no empty
     space left for that camera angle to see into."""
     parts = [
-        _box((1.0, 3.18, 1.0), (0, -1.41, 0), DIRT_SIDE),
-        _box((1.0, 0.06, 1.0), (0, -2.97, 0), DIRT_BOTTOM),
-        _box((1.0, 0.34, 1.0), (0, 0.33, 0), GRASS_CAP),
+        _box((2.0, 6.36, 2.0), (0, -2.82, 0), DIRT_SIDE),
+        _box((2.0, 0.12, 2.0), (0, -5.94, 0), DIRT_BOTTOM),
+        _box((2.0, 0.68, 2.0), (0, 0.66, 0), GRASS_CAP),
     ]
-    tuft = 0.16
+    tuft = 0.32
     for dx in (-1, 1):
         for dz in (-1, 1):
-            x = dx * 0.32
-            z = dz * 0.32
-            parts.append(_box((tuft, 0.12, tuft), (x, 0.55, z), GRASS_TUFT))
-    parts += _grid_border_parts(1.0, 0.502)
+            x = dx * 0.64
+            z = dz * 0.64
+            parts.append(_box((tuft, 0.24, tuft), (x, 1.10, z), GRASS_TUFT))
+    parts += _grid_border_parts(2.0, 1.004)
     return trimesh.util.concatenate(parts)
 
 
@@ -137,28 +137,28 @@ def build_river_block() -> trimesh.Trimesh:
     """Chunky water cube: a darker basin with a flush (same-size) bright
     cap, two pale ripple strips, and a grid border on top. Deep plinth for
     the same reason as build_grass_block()'s -- no gap-to-the-sky at the
-    camera's actual viewing angle."""
+    camera's actual viewing angle. Same 2x scale-up as build_grass_block()."""
     parts = [
-        _box((1.0, 3.18, 1.0), (0, -1.41, 0), WATER_SIDE),
-        _box((1.0, 0.06, 1.0), (0, -2.97, 0), WATER_BOTTOM),
-        _box((1.0, 0.3, 1.0), (0, 0.35, 0), WATER_CAP),
-        _box((0.6, 0.02, 0.1), (-0.15, 0.51, -0.2), WATER_RIPPLE),
-        _box((0.5, 0.02, 0.1), (0.18, 0.51, 0.22), WATER_RIPPLE),
+        _box((2.0, 6.36, 2.0), (0, -2.82, 0), WATER_SIDE),
+        _box((2.0, 0.12, 2.0), (0, -5.94, 0), WATER_BOTTOM),
+        _box((2.0, 0.6, 2.0), (0, 0.70, 0), WATER_CAP),
+        _box((1.2, 0.04, 0.2), (-0.3, 1.02, -0.4), WATER_RIPPLE),
+        _box((1.0, 0.04, 0.2), (0.36, 1.02, 0.44), WATER_RIPPLE),
     ]
-    parts += _grid_border_parts(1.0, 0.502)
+    parts += _grid_border_parts(2.0, 1.004)
     return trimesh.util.concatenate(parts)
 
 
 def build_dirt_road_block() -> trimesh.Trimesh:
     """A worn dirt path slab: a tan base with a lighter, slightly inset
-    tread strip down the middle, and a grid border on top. 1x1 local
-    footprint (main.gd scales it to fill a cell, same as terrain); height
-    stays authored directly in world-space meters."""
+    tread strip down the middle, and a grid border on top. 2x2 world-space
+    footprint, placed with position only, no scale; height stays authored
+    directly in world-space meters (unaffected by the footprint change)."""
     parts = [
-        _box((1.0, 0.22, 1.0), (0, 0, 0), DIRT_ROAD_BASE),
-        _box((0.74, 0.05, 1.0), (0, 0.135, 0), DIRT_ROAD_PATH),
+        _box((2.0, 0.22, 2.0), (0, 0, 0), DIRT_ROAD_BASE),
+        _box((1.48, 0.05, 2.0), (0, 0.135, 0), DIRT_ROAD_PATH),
     ]
-    parts += _grid_border_parts(1.0, 0.111)
+    parts += _grid_border_parts(2.0, 0.111)
     return trimesh.util.concatenate(parts)
 
 
@@ -166,15 +166,15 @@ def build_paved_road_block() -> trimesh.Trimesh:
     """A paved road slab: a grey base topped with four individually raised
     cobblestone pavers (small gaps between them) instead of a flat color,
     so it actually reads as *paving* rather than a generic grey box."""
-    parts = [_box((1.0, 0.22, 1.0), (0, 0, 0), PAVED_BASE)]
-    stone = 0.44
-    gap_offset = stone / 2 + 0.02
+    parts = [_box((2.0, 0.22, 2.0), (0, 0, 0), PAVED_BASE)]
+    stone = 0.88
+    gap_offset = stone / 2 + 0.04
     for dx in (-1, 1):
         for dz in (-1, 1):
             parts.append(
                 _box((stone, 0.08, stone), (dx * gap_offset, 0.15, dz * gap_offset), PAVED_STONE)
             )
-    parts += _grid_border_parts(1.0, 0.111)
+    parts += _grid_border_parts(2.0, 0.111)
     return trimesh.util.concatenate(parts)
 
 
@@ -182,10 +182,10 @@ def build_main_road_block() -> trimesh.Trimesh:
     """A major road slab: a dark base with a pale painted center line, for
     the most-upgraded route tier."""
     parts = [
-        _box((1.0, 0.24, 1.0), (0, 0, 0), MAIN_BASE),
-        _box((0.1, 0.03, 0.84), (0, 0.135, 0), MAIN_STRIPE),
+        _box((2.0, 0.24, 2.0), (0, 0, 0), MAIN_BASE),
+        _box((0.2, 0.03, 1.68), (0, 0.135, 0), MAIN_STRIPE),
     ]
-    parts += _grid_border_parts(1.0, 0.121)
+    parts += _grid_border_parts(2.0, 0.121)
     return trimesh.util.concatenate(parts)
 
 
