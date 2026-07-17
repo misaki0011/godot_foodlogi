@@ -108,10 +108,19 @@ def build_chest() -> trimesh.Trimesh:
 def build_grass_block() -> trimesh.Trimesh:
     """Chunky grass-over-dirt cube: a dirt base with a flush (same-size,
     non-overhanging) grass cap and four little corner tufts, plus a grid
-    border baked into the top edge."""
+    border baked into the top edge.
+
+    The dirt base is a deep plinth (not just a shallow slab) on purpose:
+    the game camera looks down at a fixed ~60 degree angle, not straight
+    down, so a shallow-based tile leaves a gap of empty space beneath its
+    visible front face before the next row's tile begins -- the camera
+    sees clean through to the sky background there. A shallow base looks
+    fine from directly above but shows a real gap at this camera's actual
+    angle; the plinth needs to reach deep enough that there's no empty
+    space left for that camera angle to see into."""
     parts = [
-        _box((1.0, 0.68, 1.0), (0, -0.16, 0), DIRT_SIDE),
-        _box((1.0, 0.06, 1.0), (0, -0.47, 0), DIRT_BOTTOM),
+        _box((1.0, 3.18, 1.0), (0, -1.41, 0), DIRT_SIDE),
+        _box((1.0, 0.06, 1.0), (0, -2.97, 0), DIRT_BOTTOM),
         _box((1.0, 0.34, 1.0), (0, 0.33, 0), GRASS_CAP),
     ]
     tuft = 0.16
@@ -126,10 +135,12 @@ def build_grass_block() -> trimesh.Trimesh:
 
 def build_river_block() -> trimesh.Trimesh:
     """Chunky water cube: a darker basin with a flush (same-size) bright
-    cap, two pale ripple strips, and a grid border on top."""
+    cap, two pale ripple strips, and a grid border on top. Deep plinth for
+    the same reason as build_grass_block()'s -- no gap-to-the-sky at the
+    camera's actual viewing angle."""
     parts = [
-        _box((1.0, 0.68, 1.0), (0, -0.16, 0), WATER_SIDE),
-        _box((1.0, 0.06, 1.0), (0, -0.47, 0), WATER_BOTTOM),
+        _box((1.0, 3.18, 1.0), (0, -1.41, 0), WATER_SIDE),
+        _box((1.0, 0.06, 1.0), (0, -2.97, 0), WATER_BOTTOM),
         _box((1.0, 0.3, 1.0), (0, 0.35, 0), WATER_CAP),
         _box((0.6, 0.02, 0.1), (-0.15, 0.51, -0.2), WATER_RIPPLE),
         _box((0.5, 0.02, 0.1), (0.18, 0.51, 0.22), WATER_RIPPLE),
