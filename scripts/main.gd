@@ -10,7 +10,7 @@ extends Node3D
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
 const HUB_SCENE := preload("res://scenes/markers/hub_marker.tscn")
-const FOOD_NEED_SCENE := preload("res://scenes/markers/food_need_marker.tscn")
+const FOOD_BUBBLE_SCENE := preload("res://scenes/markers/food_bubble_marker.tscn")
 
 const ROUTE_LEVEL_SCENES := {
 	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt.glb"),
@@ -379,10 +379,10 @@ func _render_food_need_bubbles() -> void:
 		var status = _state.last_settlement_status.get(n.node_id)
 		if status == null:
 			continue
-		# NodeMarker puts the settlement pin's head at +2.1 and its name label
-		# at +2.6 (node_spawner.gd's +1.0 root offset plus node_marker_base.tscn's
-		# local offsets), so start above both -- otherwise this billboard sits
-		# inside the pin head and the two fuse into an unreadable blob.
+		# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
+		# +1.0 root offset plus node_marker_base.tscn's local offset), so start
+		# above it -- otherwise this billboard sits inside the pin head and the
+		# two fuse into an unreadable blob.
 		var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
 		var stack := 0
 		for food_id in n.demand:
@@ -392,7 +392,7 @@ func _render_food_need_bubbles() -> void:
 			var unmet: float = s.requested - s.delivered
 			if unmet < 0.5:
 				continue
-			var bubble: FoodNeedMarker = FOOD_NEED_SCENE.instantiate()
+			var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 			_grid_visuals.add_child(bubble)
 			bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
 			bubble.setup(foods[food_id], unmet)

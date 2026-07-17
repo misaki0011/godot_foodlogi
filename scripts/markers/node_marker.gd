@@ -6,12 +6,17 @@ extends Node3D
 ## their own visual mesh(es) under a child named "Visual"; this script just
 ## labels and tints them. Used both for fixed source/settlement nodes
 ## (setup) and for player-built storage/hub grid tiles (apply_tint).
+##
+## Fixed source/settlement nodes get no name label (node_spawner.gd shows a
+## food-supply speech bubble over sources instead; settlements already get
+## shortfall bubbles from main.gd) -- storage/hub tiles still get one via
+## apply_tint, since they have no equivalent bubble.
 
 @export var node_data: NodeData
 
 func setup(data: NodeData, tint: Color) -> void:
 	node_data = data
-	_apply(data.display_name, tint)
+	_apply("", tint)
 
 func apply_tint(color: Color, label_text: String = "") -> void:
 	_apply(label_text, color)
