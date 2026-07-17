@@ -41,7 +41,6 @@ const TOOL_HINTS := {
 @onready var _terrain: TerrainRenderer = $TerrainMap
 @onready var _node_spawner: NodeSpawner = $NodeMarkers
 @onready var _camera: Camera3D = $Camera3D
-@onready var _directional_light: DirectionalLight3D = $DirectionalLight3D
 
 var _map_data: MapData
 var _state := GameState.new()
@@ -71,7 +70,6 @@ var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
 func _ready() -> void:
-	_apply_web_mobile_rendering_limits()
 	_map_data = load(REGION_MAP_PATH)
 	_state.balance = GameBalance.STARTING_FUNDS
 	for node in _map_data.node_placements:
@@ -109,13 +107,6 @@ func _process(delta: float) -> void:
 		new_pos.x = clampf(new_pos.x, _map_bounds_min.x - PAN_MAP_MARGIN, _map_bounds_max.x + PAN_MAP_MARGIN)
 		new_pos.z = clampf(new_pos.z, _map_bounds_min.y - PAN_MAP_MARGIN, _map_bounds_max.y + PAN_MAP_MARGIN)
 		_camera.position = new_pos
-
-func _apply_web_mobile_rendering_limits() -> void:
-	# Mobile browsers have much smaller WebGL memory budgets than native apps.
-	# High-DPI rendering is disabled in project settings, and shadows are the
-	# largest remaining off-screen allocation in this scene.
-	if OS.has_feature("web_android") or OS.has_feature("web_ios"):
-		_directional_light.shadow_enabled = false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _report_overlay.visible:
@@ -415,11 +406,15 @@ func _add_route_block(pos: Vector3, level: String) -> void:
 	var block: Node3D = scene.instantiate()
 	_grid_visuals.add_child(block)
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
+	# The block's 1x1 local footprint is authored to match one terrain cell,
+	# same convention TerrainRenderer's GridMap scaling uses -- keep height
+	# as-authored (already in world-space meters) so only XZ gets stretched.
+	block.scale = Vector3(_terrain.cell_size.x, 1.0, _terrain.cell_size.z)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
-	mesh.size = Vector3(1.55, height, 1.55)
+	mesh.size = Vector3(_terrain.cell_size.x, height, _terrain.cell_size.z)
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos + Vector3(0, height * 0.5, 0)
 	var material := StandardMaterial3D.new()
