@@ -1,0 +1,2951 @@
+[gd_scene format=4]
+
+[ext_resource type="Script" path="res://scripts/terrain/terrain_renderer.gd" id="1_jalop"]
+[ext_resource type="PackedScene" path="res://assets/Blocks/glTF/Block_Grass.glb" id="2_7h63w"]
+[ext_resource type="PackedScene" path="res://assets/Blocks/glTF/Block_Ice.glb" id="3_kd3eu"]
+[ext_resource type="Script" path="res://scripts/markers/node_spawner.gd" id="4_qddmj"]
+[ext_resource type="PackedScene" path="res://scenes/markers/source_marker.tscn" id="5_x42mn"]
+[ext_resource type="Script" path="res://scripts/markers/node_marker.gd" id="6_klls2"]
+[ext_resource type="Script" path="res://scripts/data/node_data.gd" id="7_6ctm5"]
+[ext_resource type="PackedScene" path="res://assets/Blocks/glTF/Block_Crate.glb" id="8_6yiy8"]
+[ext_resource type="PackedScene" path="res://scenes/markers/settlement_marker.tscn" id="9_on3i4"]
+
+[sub_resource type="Environment" id="Environment_nhp10"]
+background_mode = 1
+background_color = Color(0.55, 0.75, 0.85, 1)
+ambient_light_source = 2
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_energy = 0.6
+
+[sub_resource type="MeshLibrary" id="MeshLibrary_vn15x"]
+item/0/name = "Block_Grass"
+item/0/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+item/0/mesh_cast_shadow = 1
+item/0/shapes = []
+item/0/navigation_mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+item/0/navigation_layers = 1
+item/1/name = "Block_Ice"
+item/1/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+item/1/mesh_cast_shadow = 1
+item/1/shapes = []
+item/1/navigation_mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+item/1/navigation_layers = 1
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_sa4m5"]
+resource_name = "material_0"
+vertex_color_use_as_albedo = true
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_pjmy5"]
+_surfaces = [{
+"aabb": AABB(-1, -6, -1, 2, 7.2200003, 2),
+"format": 34359742465,
+"index_count": 396,
+"index_data": PackedByteArray("AAABAAUAAQAGAAUABQAGAAIAAAAFAAIABgASAAIAAgASAAQABAAAAAIAEgAGAAMAEgADAAQABgABAAMABAADAAAABAADAAAAAwABAAAAAwABAAAAEwADAAQAAAABABQAFQABAAMAEwAVAAMAAQAVABQAFgATAAQABAAAABYAFQATABYAAAAUABYAFAAVABYACAAXABgAFwAHABgACAAYABkAGAAHABkACQAXAAgABwAXAAkAGgAJAAgAGgAIABkAGwAHAAkAGwAJABoABwAbABkAGQAbABoAKwAdACwAHQAtACwAKwAsAB4ALAAtAB4AHAAdACsALQAdABwALgAcACsALgArAB4ALwAtABwALwAcAC4ALQAvAB4AHgAvAC4AMAAxADIAMQAhADIAMAAyAB8AMgAhAB8AMwAxADAAIQAxADMANAAzADAANAAwAB8AIAAhADMAIAAzADQAIQAgAB8AHwAgADQAIwA1ADYANQAiADYAIwA2ADcANgAiADcAJAA1ACMAIgA1ACQAOAAkACMAOAAjADcAJQAiACQAJQAkADgAIgAlADcANwAlADgAOQAnADoAJwA7ADoAOQA6ACgAOgA7ACgAJgAnADkAOwAnACYAPAAmADkAPAA5ACgAPQA7ACYAPQAmADwAOwA9ACgAKAA9ADwACwA+AAoAPgA/AAoAPwA+AEAAQAA+AAsAQQA/AEAAPwBBAA0ACgA/AA0AQQBAAAwADABAAAsADQBBAAwACwAKAA0ADAALAA0ACwAKAEIAQwALAEIAQgApAEMAQwBEAAsAKQBEAEMADgApAEIAKQAOAEQACgAOAEIARAAPAAsACwAPAAoADgAPAEQADwAOAAoADwAOAEUARgAPAEUARQAOAEcARgBFAEcADgAPABAAEAAPAEYASABGAEcASAAQAEYARwARAEgADgARAEcAEQAQAEgAEQAOABAAEQAQAAwADQARAAwAEQBJABAASQARAA0ASQAqABAASgBJAA0AKgBJAEoADABLAA0ADAAQAEsASwBKAA0AEAAqAEsASwAqAEoA"),
+"lods": [0.45045865, PackedByteArray("AAABAAUAAQAGAAUABQAGAAIAAAAFAAIABgASAAIAAgASAAQABAAAAAIAEgAGAAMAEgADAAQABgABAAMABAADAAAABAADAAAAAwABAAAAAwABAAAAEwADAAQAAAABABQAFQABAAMAEwAVAAMAAQAVABQAFgATAAQABAAAABYAFQATABYAAAAUABYAFAAVABYACAAXABgAFwAHABgACAAYABkAGAAHABkACQAXAAgABwAXAAkAGgAJAAgAGgAIABkAGwAHAAkAGwAJABoABwAbABkAGQAbABoAHAAdAB4AHgAdABwAHwAgACEAIQAgAB8AIgAjACQAJAAjACUAIwAiACUAJQAiACQAJgAnACgAKAAnACYACgALAAwACgApAAsAKQAPAAsACwAPAAoADgApAAoADgAPACkADwAOAAoACwAKAA0ACgAMAA0ADAALAA0ADAAqAA0AKgARAA0ADQARAAwADwAOABEAEAAqAAwADgAPABAAEQAqABAAEQAOABAAEQAQAA8AEQAQAAwA"), 2.8723738, PackedByteArray("AAABAAUAAQAGAAUABQAGAAIAAAAFAAIAAgAGAAMABgABAAMAAwABAAAAAwABAAAABAAAAAIAAgADAAQAAAABAAQAAQADAAQABAADAAAABAADAAAABwAIAAkABwAJAAgACgALAAwADAALAA0ACwAKAA0ACgAMAA0ACgAOAAsACwAPAAoADwAOAAoADgAPAAsADgAPABAADAAQAA0ADwAOABEADQARAAwAEQAQAA8AEAARAA0AEQAQAAwAEQAOABAA"), 5.4163556, PackedByteArray("AAABAAIAAgABAAMAAwABAAAAAwABAAAABAAAAAIAAgADAAQAAAABAAQAAQADAAQABAADAAAABAADAAAA")],
+"name": "material_0",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 76,
+"vertex_data": PackedByteArray("AACAvwAAwMAAAIA/AACAvwAAwMAAAIC/AACAP+xRuD4AAIA/AACAPwAAwMAAAIC/AACAPwAAwMAAAIA/AACAv+xRuD4AAIA/AACAv+xRuD4AAIC/AACAvwAAgD8AAIC/AACAvwrXoz4AAIA/AACAPwrXoz4AAIC/AACAv8HKgT8AAIA/AACAv8l2fj8AAIA/AACAP8l2fj8AAIA/AACAP8HKgT8AAIA/AACAv8HKgT8AAIC/AACAv8l2fj8AAIC/AACAP8l2fj8AAIC/AACAP8HKgT8AAIC/AACAP+xRuD4AAIC/AACAP/YovMAAAIC/AACAv/YovMAAAIA/AACAv/YovMAAAIC/AACAP/YovMAAAIA/AACAvwrXoz4AAIC/AACAvwAAgD8AAIA/AACAPwAAgD8AAIA/AACAPwrXoz4AAIA/AACAPwAAgD8AAIC/j8L1vkjhej/NzEy/zcxMv0jhej/NzEy/j8L1vvYonD+PwvW+j8L1vvYonD/NzEw/j8L1vvYonD+PwvU+zcxMv/YonD+PwvU+j8L1PvYonD/NzEy/j8L1Pkjhej+PwvW+zcxMP0jhej/NzEy/zcxMP/YonD/NzEy/zcxMP0jhej+PwvU+j8L1Pkjhej+PwvU+zcxMP/YonD/NzEw/7FF4v8HKgT8AAIC/7FF4P8l2fj8AAIC/zcxMv0jhej+PwvW+zcxMv/YonD+PwvW+zcxMv/YonD/NzEy/j8L1vkjhej+PwvW+j8L1vvYonD/NzEy/zcxMv0jhej/NzEw/zcxMv0jhej+PwvU+zcxMv/YonD/NzEw/j8L1vkjhej+PwvU+j8L1vkjhej/NzEw/j8L1Pkjhej/NzEy/j8L1PvYonD+PwvW+zcxMP/YonD+PwvW+zcxMP0jhej+PwvW+j8L1Pkjhej/NzEw/j8L1PvYonD/NzEw/j8L1PvYonD+PwvU+zcxMP0jhej/NzEw/zcxMP/YonD+PwvU+AACAv8l2fj/sUXg/AACAv8HKgT/sUXg/AACAP8l2fj/sUXg/AACAP8HKgT/sUXg/7FF4v8HKgT8AAIA/7FF4v8l2fj8AAIA/7FF4v8l2fj8AAIC/AACAv8HKgT/sUXi/AACAv8l2fj/sUXi/AACAP8HKgT/sUXi/AACAP8l2fj/sUXi/7FF4P8HKgT8AAIC/7FF4P8HKgT8AAIA/7FF4P8l2fj8AAIA/")
+}]
+blend_shape_mode = 0
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_4qhvh"]
+resource_name = "Block_Grass_geometry_0"
+_surfaces = [{
+"aabb": AABB(-1, -6, -1, 2, 7.2200003, 2),
+"attribute_data": PackedByteArray("lnRK/5Z0Sv+WdEr/lnRK/5Z0Sv91WTj/dVk4/3VZOP91WTj/lnRK/5Z0Sv+AxWj/gMVo/4DFaP9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/lnRK/3VZOP91WTj/dVk4/3VZOP+AxWj/gMVo/4DFaP+AxWj/gMVo/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9gZFL/YGRS/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9orVT/aK1U/2itVP9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/w=="),
+"format": 34359742473,
+"index_count": 396,
+"index_data": PackedByteArray("AAABAAkAAQAKAAkAAAAJAAIACQAKAAIAAwABAAAACgABAAMABAADAAAABAAAAAIAHgAKAAMAHgADAAQACgAeAAIAAgAeAAQABwAGAB8ABgAgAB8ABwAfACEAHwAgACEABQAGAAcAIAAGAAUACAAFAAcACAAHACEAIgAgAAUAIgAFAAgAIAAiACEAIQAiAAgADAAjACQAIwALACQADAAkACUAJAALACUADQAjAAwACwAjAA0AJgANAAwAJgAMACUAJwALAA0AJwANACYACwAnACUAJQAnACYANwApADgAKQA5ADgANwA4ACoAOAA5ACoAKAApADcAOQApACgAOgAoADcAOgA3ACoAOwA5ACgAOwAoADoAOQA7ACoAKgA7ADoAPAA9AD4APQAtAD4APAA+ACsAPgAtACsAPwA9ADwALQA9AD8AQAA/ADwAQAA8ACsALAAtAD8ALAA/AEAALQAsACsAKwAsAEAALwBBAEIAQQAuAEIALwBCAEMAQgAuAEMAMABBAC8ALgBBADAARAAwAC8ARAAvAEMAMQAuADAAMQAwAEQALgAxAEMAQwAxAEQARQAzAEYAMwBHAEYARQBGADQARgBHADQAMgAzAEUARwAzADIASAAyAEUASABFADQASQBHADIASQAyAEgARwBJADQANABJAEgADwBKAA4ASgBLAA4ADwAOABEADgBLABEATABKAA8ASwBKAEwAEABMAA8AEAAPABEATQBLAEwATQBMABAASwBNABEAEQBNABAATgATAE8AEwASAE8ATgBPAFAATwASAFAAFAATAE4AEgATABQAUQAUAE4AUQBOAFAAFQASABQAFQAUAFEAEgAVAFAAUAAVAFEAUgA1AFMANQBUAFMAUgBTABgAUwBUABgAFwA1AFIAVAA1ABcAFgAXAFIAFgBSABgAGQBUABcAGQAXABYAVAAZABgAGAAZABYAGgAbABwAGwAdABwAGgAcAFUAHAAdAFUAVgAbABoAHQAbAFYAVwBWABoAVwAaAFUANgAdAFYANgBWAFcAHQA2AFUAVQA2AFcA"),
+"lods": [0.45045865, PackedByteArray("AAABAAkAAQAKAAkAAAAJAAIACQAKAAIAAwABAAAACgABAAMABAADAAAABAAAAAIAHgAKAAMAHgADAAQACgAeAAIAAgAeAAQABwAGAB8ABgAgAB8ABwAfACEAHwAgACEABQAGAAcAIAAGAAUACAAFAAcACAAHACEAIgAgAAUAIgAFAAgAIAAiACEAIQAiAAgADAAjACQAIwALACQADAAkACUAJAALACUADQAjAAwACwAjAA0AJgANAAwAJgAMACUAJwALAA0AJwANACYACwAnACUAJQAnACYAKAApACoAKgApACgAKwAsAC0ALQAsACsALgAvADAAMAAvADEALwAuADEAMQAuADAAMgAzADQANAAzADIADgAPABAAEAAPABEADwAOABEADgAQABEAEgATABQAFQAUABMAFQASABQAEwASABUAFgA1ABgANQAZABgAGAAZABYAGQA1ABcAFwA1ABYAGQAXABYAGgAbABwANgAbABoAHAA2ABoAHQAbADYAGwAdABwAHQA2ABwA"), 2.8723738, PackedByteArray("AAABAAkAAQAKAAkAAAAJAAIACQAKAAIACgABAAMAAwABAAAAAgAKAAMABAADAAAAAgADAAQABAAAAAIABQAGAAcABwAGAAgABgAFAAgACAAFAAcACwAMAA0ACwANAAwADgAPABAAEAAPABEADwAOABEADgAQABEAEgATABQAFQAUABMAFQASABQAEwASABUAFgAXABgAFwAZABgAGAAZABYAGQAXABYAGgAbABwAGwAdABwAHAAdABoAHQAbABoA"), 5.4163556, PackedByteArray("AAABAAIAAgABAAMAAwABAAAABAAAAAIABAADAAAAAgADAAQABQAGAAcABwAGAAgABgAFAAgACAAFAAcA")],
+"material": SubResource("StandardMaterial3D_sa4m5"),
+"name": "material_0",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 88,
+"vertex_data": PackedByteArray("AACAvwAAwMAAAIA/AACAvwAAwMAAAIC/AACAP+xRuD4AAIA/AACAPwAAwMAAAIC/AACAPwAAwMAAAIA/AACAPwAAwMAAAIC/AACAvwAAwMAAAIC/AACAvwAAwMAAAIA/AACAPwAAwMAAAIA/AACAv+xRuD4AAIA/AACAv+xRuD4AAIC/AACAvwAAgD8AAIC/AACAvwrXoz4AAIA/AACAPwrXoz4AAIC/AACAv8HKgT8AAIA/AACAv8l2fj8AAIA/AACAP8l2fj8AAIA/AACAP8HKgT8AAIA/AACAv8HKgT8AAIC/AACAv8l2fj8AAIC/AACAP8l2fj8AAIC/AACAP8HKgT8AAIC/AACAP8l2fj8AAIA/AACAP8l2fj8AAIC/AACAP8HKgT8AAIA/AACAP8HKgT8AAIC/AACAv8l2fj8AAIA/AACAv8l2fj8AAIC/AACAv8HKgT8AAIA/AACAv8HKgT8AAIC/AACAP+xRuD4AAIC/AACAv/YovMAAAIA/AACAv/YovMAAAIC/AACAP/YovMAAAIA/AACAP/YovMAAAIC/AACAvwrXoz4AAIC/AACAvwAAgD8AAIA/AACAPwAAgD8AAIA/AACAPwrXoz4AAIA/AACAPwAAgD8AAIC/j8L1vkjhej/NzEy/zcxMv0jhej/NzEy/j8L1vvYonD+PwvW+j8L1vvYonD/NzEw/j8L1vvYonD+PwvU+zcxMv/YonD+PwvU+j8L1PvYonD/NzEy/j8L1Pkjhej+PwvW+zcxMP0jhej/NzEy/zcxMP/YonD/NzEy/zcxMP0jhej+PwvU+j8L1Pkjhej+PwvU+zcxMP/YonD/NzEw/7FF4P8l2fj8AAIC/7FF4v8HKgT8AAIC/zcxMv0jhej+PwvW+zcxMv/YonD+PwvW+zcxMv/YonD/NzEy/j8L1vkjhej+PwvW+j8L1vvYonD/NzEy/zcxMv0jhej/NzEw/zcxMv0jhej+PwvU+zcxMv/YonD/NzEw/j8L1vkjhej+PwvU+j8L1vkjhej/NzEw/j8L1Pkjhej/NzEy/j8L1PvYonD+PwvW+zcxMP/YonD+PwvW+zcxMP0jhej+PwvW+j8L1Pkjhej/NzEw/j8L1PvYonD/NzEw/j8L1PvYonD+PwvU+zcxMP0jhej/NzEw/zcxMP/YonD+PwvU+AACAv8l2fj/sUXg/AACAv8HKgT/sUXg/AACAP8l2fj/sUXg/AACAP8HKgT/sUXg/AACAv8l2fj/sUXi/AACAv8HKgT/sUXi/AACAP8HKgT/sUXi/AACAP8l2fj/sUXi/7FF4P8l2fj8AAIA/7FF4P8HKgT8AAIA/7FF4P8HKgT8AAIC/7FF4v8HKgT8AAIA/7FF4v8l2fj8AAIC/7FF4v8l2fj8AAIA/")
+}]
+blend_shape_mode = 0
+shadow_mesh = SubResource("ArrayMesh_pjmy5")
+metadata/extras = {
+"shape": "extents"
+}
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_yt3l2"]
+resource_name = "material_0"
+vertex_color_use_as_albedo = true
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_1ok85"]
+_surfaces = [{
+"aabb": AABB(-1, -6, -1, 2, 7.04, 2),
+"format": 34359742465,
+"index_count": 324,
+"index_data": PackedByteArray("AAABAAUAAQAGAAUABQAGAAIAAAAFAAIABgAQAAIAAgAQAAQABAAAAAIAEAAGAAMAEAADAAQABgABAAMABAADAAAABAADAAAAAwABAAAAAwABAAAAIgADAAQAAAABACMAEgABAAMAIgASAAMAAQASACMAEQAiAAQABAAAABEAEgAiABEAAAAjABEAIwASABEACAATABQAEwAHABQACAAUABUAFAAHABUACQATAAgABwATAAkAFgAJAAgAFgAIABUAFwAHAAkAFwAJABYABwAXABUAFQAXABYAGgAkACUAJAAZACUAGgAlABsAJQAZABsAGAAkABoAGQAkABgAJgAYABoAJgAaABsAJwAZABgAJwAYACYAGQAnABsAGwAnACYAKAApACoAKQAeACoAKAAqABwAKgAeABwAKwApACgAHgApACsALAArACgALAAoABwAHQAeACsAHQArACwAHgAdABwAHAAdACwACgAtAAsALQAuAAsALgAtAC8ALwAtAAoAMAAuAC8ALgAwAB8ACwAuAB8AMAAvADEAMQAvAAoAHwAwADEACgALAB8AMQAKAB8ACgALADIAMwAKADIAMgA0ADMAMwA1AAoANAA1ADMADwA0ADIANAAPADUACwAPADIANQANAAoACgANAAsADwANADUADQAPAAsADQAPADYANwANADYANgAPADgANwA2ADgADwANAA4ADgANADcAOQA3ADgAOQAOADcAOAAMADkADwAMADgADAAOADkADAAPAA4ADAAOADEAHwAMADEADAAgAA4AIAAMAB8AIAA6AA4AIQAgAB8AOgAgACEAMQA7AB8AMQAOADsAOwAhAB8ADgA6ADsAOwA6ACEA"),
+"lods": [0.49913502, PackedByteArray("AAABAAUAAQAGAAUABQAGAAIAAAAFAAIABgAQAAIAAgAQAAQABAAAAAIAEAAGAAMAEAADAAQABgABAAMABAADAAAABAADAAAAAwABAAAAAwABAAAABAAAABEAEQADAAQAAQASAAAAAAASABEAEgABAAMAEgADABEACAATABQAEwAHABQACAAUABUAFAAHABUACQATAAgABwATAAkAFgAJAAgAFgAIABUAFwAHAAkAFwAJABYABwAXABUAFQAXABYAGAAZABoAGgAZABsAGQAYABsAGwAYABoAHAAdAB4AHgAdABwACgALAB8AHwALAAoACwANAAoACgANAAsADwANAAsADQAPAAsADwANAA4ADQAPAAwADAAPAA4ADgANAAwADAAOAB8AIAAMAB8ADAAgAA4AIQAgAB8ADgAgACEAHwAOACEA"), 2.8305204, PackedByteArray("AAABAAUAAQAGAAUABQAGAAIAAAAFAAIAAgAGAAMABgABAAMAAwABAAAAAwABAAAABAAAAAIAAgADAAQAAAABAAQAAQADAAQABAADAAAABAADAAAABwAIAAkABwAJAAgACgALAAwADAALAAoACwANAAoACgANAAsADgANAAwADAAPAA4ADwANAA4ADQAPAAwADQAPAAsADwANAAsA"), 5.2813215, PackedByteArray("AAABAAIAAgABAAMAAwABAAAAAwABAAAABAAAAAIAAgADAAQAAAABAAQAAQADAAQABAADAAAABAADAAAA")],
+"name": "material_0",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 60,
+"vertex_data": PackedByteArray("AACAvwAAwMAAAIA/AACAvwAAwMAAAIC/AACAP+xRuD4AAIA/AACAPwAAwMAAAIC/AACAPwAAwMAAAIA/AACAv+xRuD4AAIA/AACAv+xRuD4AAIC/AACAvwAAgD8AAIC/AACAv83MzD4AAIA/AACAP83MzD4AAIC/AACAv8l2fj8AAIA/AACAv8HKgT8AAIA/AACAP8HKgT8AAIC/AACAv8l2fj8AAIC/AACAP8l2fj8AAIC/AACAv8HKgT8AAIC/AACAP+xRuD4AAIC/AACAP/YovMAAAIA/AACAv/YovMAAAIC/AACAv83MzD4AAIC/AACAvwAAgD8AAIA/AACAPwAAgD8AAIA/AACAP83MzD4AAIA/AACAPwAAgD8AAIC/mpmZPgAAgD8AAAC/ZmZmv7gehT8AAAC/ZmZmvwAAgD+amZm+mpmZPrgehT+amZm+9ihcP7gehT9xPQo/9ihcP7gehT97FK4+KVwPvrgehT97FK4+AACAP8HKgT8AAIA/7FF4P8HKgT8AAIC/7FF4P8HKgT8AAIA/AACAP/YovMAAAIC/AACAv/YovMAAAIA/ZmZmvwAAgD8AAAC/ZmZmv7gehT+amZm+mpmZPgAAgD+amZm+mpmZPrgehT8AAAC/KVwPvgAAgD9xPQo/KVwPvgAAgD97FK4+KVwPvrgehT9xPQo/9ihcPwAAgD97FK4+9ihcPwAAgD9xPQo/AACAv8l2fj/sUXg/AACAv8HKgT/sUXg/AACAP8l2fj/sUXg/AACAP8HKgT/sUXg/AACAP8l2fj8AAIA/7FF4v8HKgT8AAIA/7FF4v8l2fj8AAIA/7FF4v8HKgT8AAIC/7FF4v8l2fj8AAIC/AACAv8HKgT/sUXi/AACAv8l2fj/sUXi/AACAP8HKgT/sUXi/AACAP8l2fj/sUXi/7FF4P8l2fj8AAIC/7FF4P8l2fj8AAIA/")
+}]
+blend_shape_mode = 0
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_4u8xk"]
+resource_name = "Block_Ice_geometry_0"
+_surfaces = [{
+"aabb": AABB(-1, -6, -1, 2, 7.04, 2),
+"attribute_data": PackedByteArray("Voqw/1aKsP9WirD/Voqw/1aKsP9Cb5T/Qm+U/0JvlP9Cb5T/Voqw/1aKsP+W1+j/ltfo/5bX6P9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/1aKsP9Cb5T/Qm+U/5bX6P+W1+j/ltfo/5bX6P+W1+j/y+71/8vu9f/L7vX/y+71/8vu9f/L7vX/y+71/2BkUv9gZFL/YGRS/2BkUv9gZFL/Qm+U/0JvlP/L7vX/y+71/8vu9f/L7vX/y+71/8vu9f/L7vX/y+71/8vu9f9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/YGRS/2BkUv9gZFL/"),
+"format": 34359742473,
+"index_count": 324,
+"index_data": PackedByteArray("AAABAAkAAQAKAAkAAAAJAAIACQAKAAIAAwABAAAACgABAAMABAADAAAABAAAAAIAGQAKAAMAGQADAAQACgAZAAIAAgAZAAQABwAGAC0ABgAaAC0ABwAtABsALQAaABsABQAGAAcAGgAGAAUACAAFAAcACAAHABsALgAaAAUALgAFAAgAGgAuABsAGwAuAAgADAAcAB0AHAALAB0ADAAdAB4AHQALAB4ADQAcAAwACwAcAA0AHwANAAwAHwAMAB4AIAALAA0AIAANAB8ACwAgAB4AHgAgAB8AIwAvADAALwAiADAAIwAwACQAMAAiACQAIQAvACMAIgAvACEAMQAhACMAMQAjACQAMgAiACEAMgAhADEAIgAyACQAJAAyADEAMwA0ADUANAAnADUAMwA1ACUANQAnACUANgA0ADMAJwA0ADYANwA2ADMANwAzACUAJgAnADYAJgA2ADcAJwAmACUAJQAmADcADgA4AA8AOAA5AA8ADgAPACgADwA5ACgAOgA4AA4AOQA4ADoAOwA6AA4AOwAOACgAPAA5ADoAPAA6ADsAOQA8ACgAKAA8ADsAPQASAD4AEgARAD4APQA+AD8APgARAD8AEwASAD0AEQASABMAQAATAD0AQAA9AD8AFAARABMAFAATAEAAEQAUAD8APwAUAEAAQQBCACoAQgArACoAQQAqACwAKgArACwAKQBCAEEAKwBCACkAQwApAEEAQwBBACwAEAArACkAEAApAEMAKwAQACwALAAQAEMAFQAWABcAFgAYABcAFQAXAEQAFwAYAEQARQAWABUAGAAWAEUARgBFABUARgAVAEQARwAYAEUARwBFAEYAGABHAEQARABHAEYA"),
+"lods": [0.49913502, PackedByteArray("AAABAAkAAQAKAAkAAAAJAAIACQAKAAIAAwABAAAACgABAAMABAADAAAABAAAAAIAGQAKAAMAGQADAAQACgAZAAIAAgAZAAQABQAGAAcABgAaAAcAGgAGAAUABwAaABsAGgAFABsACAAFAAcAGwAFAAgACAAHABsADAAcAB0AHAALAB0ADAAdAB4AHQALAB4ADQAcAAwACwAcAA0AHwANAAwAHwAMAB4AIAALAA0AIAANAB8ACwAgAB4AHgAgAB8AIQAiACMAIwAiACQAIgAhACQAJAAhACMAJQAmACcAJwAmACUADgAPACgAKAAPAA4AEAApACgAKAApACoAEAArACkAKQArACoAKwAQACwAKgArACwAEQASABMAEwASABQAEgARABQAFAARABMAFQAWABcAFwAWABUAGAAWABcAFgAYABcA"), 2.8305204, PackedByteArray("AAABAAkAAQAKAAkAAAAJAAIACQAKAAIACgABAAMAAwABAAAAAgAKAAMABAADAAAAAgADAAQABAAAAAIABQAGAAcABwAGAAgABgAFAAgACAAFAAcACwAMAA0ACwANAAwADgAPABAAEAAPAA4AEQASABMAEwASABQAEgARABQAFAARABMAFQAWABcAFwAWABUAGAAWABcAFgAYABcA"), 5.2813215, PackedByteArray("AAABAAIAAgABAAMAAwABAAAABAAAAAIABAADAAAAAgADAAQABQAGAAcABwAGAAgABgAFAAgACAAFAAcA")],
+"material": SubResource("StandardMaterial3D_yt3l2"),
+"name": "material_0",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 72,
+"vertex_data": PackedByteArray("AACAvwAAwMAAAIA/AACAvwAAwMAAAIC/AACAP+xRuD4AAIA/AACAPwAAwMAAAIC/AACAPwAAwMAAAIA/AACAPwAAwMAAAIC/AACAvwAAwMAAAIC/AACAvwAAwMAAAIA/AACAPwAAwMAAAIA/AACAv+xRuD4AAIA/AACAv+xRuD4AAIC/AACAvwAAgD8AAIC/AACAv83MzD4AAIA/AACAP83MzD4AAIC/AACAv8l2fj8AAIA/AACAv8HKgT8AAIA/AACAP8HKgT8AAIC/AACAv8HKgT8AAIC/AACAv8l2fj8AAIC/AACAP8l2fj8AAIC/AACAP8HKgT8AAIC/AACAv8l2fj8AAIA/AACAv8l2fj8AAIC/AACAv8HKgT8AAIA/AACAv8HKgT8AAIC/AACAP+xRuD4AAIC/AACAv/YovMAAAIC/AACAP/YovMAAAIA/AACAv83MzD4AAIC/AACAvwAAgD8AAIA/AACAPwAAgD8AAIA/AACAP83MzD4AAIA/AACAPwAAgD8AAIC/mpmZPgAAgD8AAAC/ZmZmv7gehT8AAAC/ZmZmvwAAgD+amZm+mpmZPrgehT+amZm+9ihcP7gehT9xPQo/9ihcP7gehT97FK4+KVwPvrgehT97FK4+AACAP8HKgT8AAIA/AACAP8l2fj8AAIC/7FF4P8HKgT8AAIA/7FF4P8HKgT8AAIC/AACAP8HKgT8AAIA/AACAv/YovMAAAIA/AACAP/YovMAAAIC/ZmZmvwAAgD8AAAC/ZmZmv7gehT+amZm+mpmZPgAAgD+amZm+mpmZPrgehT8AAAC/KVwPvgAAgD9xPQo/KVwPvgAAgD97FK4+KVwPvrgehT9xPQo/9ihcPwAAgD97FK4+9ihcPwAAgD9xPQo/AACAv8l2fj/sUXg/AACAv8HKgT/sUXg/AACAP8l2fj/sUXg/AACAP8l2fj8AAIA/AACAP8HKgT/sUXg/AACAv8l2fj/sUXi/AACAv8HKgT/sUXi/AACAP8HKgT/sUXi/AACAP8l2fj/sUXi/7FF4P8l2fj8AAIA/7FF4P8l2fj8AAIC/AACAP8l2fj8AAIA/7FF4v8HKgT8AAIA/7FF4v8l2fj8AAIC/7FF4v8l2fj8AAIA/7FF4v8HKgT8AAIC/")
+}]
+blend_shape_mode = 0
+shadow_mesh = SubResource("ArrayMesh_1ok85")
+metadata/extras = {
+"shape": "extents"
+}
+
+[sub_resource type="Resource" id="Resource_vxexi"]
+script = ExtResource("7_6ctm5")
+node_id = "farm"
+grid_position = Vector2i(3, 4)
+display_name = "Farm"
+produces = {
+"grain": 80.0
+}
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_anbji"]
+albedo_color = Color(0.54509807, 0.41960785, 0.24313726, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_q1yxq"]
+resource_name = "material_0"
+vertex_color_use_as_albedo = true
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_4jdnf"]
+_surfaces = [{
+"aabb": AABB(-0.51, -0.51, -0.51, 1.02, 1.02, 1.02),
+"format": 34359742465,
+"index_count": 216,
+"index_data": PackedByteArray("AAABAAIAAQADAAIAAAACAAQAAgADAAQABQABAAAAAwABAAUADQAFAAAADQAAAAQADgADAAUADgAFAA0AAwAOAAQABAAOAA0AEAAeAA8AHgAfAA8AEAAPABIADwAfABIAIAAeABAAHwAeACAAEQAgABAAEQAQABIAIQAfACAAIQAgABEAHwAhABIAEgAhABEAFAAiACMAIgATACMAFAAjACQAIwATACQAFQAiABQAEwAiABUAJQAVABQAJQAUACQAFgATABUAFgAVACUAEwAWACQAJAAWACUAJgAYACcAGAAXACcAJgAnABkAJwAXABkAKAAYACYAFwAYACgAKQAoACYAKQAmABkAKgAXACgAKgAoACkAFwAqABkAGQAqACkAGwArACwAKwAaACwAGwAsAB0ALAAaAB0ALQArABsAGgArAC0AHAAtABsAHAAbAB0ALgAaAC0ALgAtABwAGgAuAB0AHQAuABwABgAHAAgABwAJAAgABgAIAAoACAAJAAoACwAHAAYACQAHAAsALwALAAYALwAGAAoADAAJAAsADAALAC8ACQAMAAoACgAMAC8A"),
+"lods": [0.4800695, PackedByteArray("AAABAAIAAQADAAIAAAACAAQAAgADAAQABQABAAAAAwABAAUADQAFAAAADQAAAAQADgADAAUADgAFAA0AAwAOAAQABAAOAA0ADwAQABEAEQAQABIAEAAPABIAEgAPABEAEwAUABUAFQAUABYAFAATABYAFgATABUAFwAYABkAGAAXABkAGgAbABwAHAAbAB0AGwAaAB0AHQAaABwABgAHAAgABwAJAAgABgAIAAoACAAJAAoACwAHAAYACQAHAAsACgALAAYADAAJAAsACQAMAAoADAALAAoA"), 0.7201042, PackedByteArray("AAABAAIAAQADAAIAAAACAAQAAgADAAQABQABAAAAAwABAAUABQAAAAQABAADAAUABgAHAAgABwAJAAgABgAIAAoACAAJAAoACwAHAAYACQAHAAsACgALAAYADAAJAAsACQAMAAoADAALAAoA")],
+"name": "material_0",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 48,
+"vertex_data": PackedByteArray("AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAA/AAAAvwAAAD8AAAC/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAC/XI8Cvylcj71cjwI/XI8Cvylcj71cjwK/XI8Cvylcjz1cjwI/XI8Cvylcjz1cjwK/XI8CPylcjz1cjwI/XI8CPylcj71cjwK/XI8CPylcjz1cjwK/AAAAPwAAAL8AAAA/AAAAPwAAAD8AAAC/AAAAv1yPAj89Cte+AAAAv1yPAr89Cte+PQrXvlyPAr89Cte+PQrXvlyPAj89Cte+AAAAv1yPAj89Ctc+AAAAv1yPAr8AAAA/PQrXvlyPAr89Ctc+PQrXvlyPAj89Ctc+PQrXPlyPAj8AAAC/PQrXPlyPAr8AAAC/AAAAP1yPAj89Cte+PQrXPlyPAj89Ctc+PQrXPlyPAr8AAAA/AAAAP1yPAr8AAAA/AAAAP1yPAj8AAAA/AAAAv1yPAr8AAAC/AAAAv1yPAj8AAAC/PQrXvlyPAr8AAAC/PQrXvlyPAj8AAAC/AAAAv1yPAr89Ctc+AAAAv1yPAj8AAAA/PQrXvlyPAj8AAAA/PQrXvlyPAr8AAAA/PQrXPlyPAr89Cte+PQrXPlyPAj89Cte+AAAAP1yPAr8AAAC/AAAAP1yPAr89Cte+AAAAP1yPAj8AAAC/PQrXPlyPAr89Ctc+PQrXPlyPAj8AAAA/AAAAP1yPAr89Ctc+AAAAP1yPAj89Ctc+XI8CPylcj71cjwI/")
+}]
+blend_shape_mode = 0
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_bd1t6"]
+resource_name = "Block_Crate_geometry_0"
+_surfaces = [{
+"aabb": AABB(-0.51, -0.51, -0.51, 1.02, 1.02, 1.02),
+"attribute_data": PackedByteArray("qHpO/6h6Tv+oek7/qHpO/6h6Tv+oek7/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/6h6Tv+oek7/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/a0oq/2tKKv9rSir/"),
+"format": 34359742473,
+"index_count": 216,
+"index_data": PackedByteArray("AAABAAIAAQADAAIAAAACAAQAAgADAAQABQABAAAAAwABAAUADQAFAAAADQAAAAQADgADAAUADgAFAA0AAwAOAAQABAAOAA0AEAAeAA8AHgAfAA8AEAAPABIADwAfABIAIAAeABAAHwAeACAAEQAgABAAEQAQABIAIQAfACAAIQAgABEAHwAhABIAEgAhABEAFAAiACMAIgATACMAFAAjACQAIwATACQAFQAiABQAEwAiABUAJQAVABQAJQAUACQAFgATABUAFgAVACUAEwAWACQAJAAWACUAJgAYACcAGAAXACcAJgAnABkAJwAXABkAKAAYACYAFwAYACgAKQAoACYAKQAmABkAKgAXACgAKgAoACkAFwAqABkAGQAqACkAGwArACwAKwAaACwAGwAsAB0ALAAaAB0ALQArABsAGgArAC0AHAAtABsAHAAbAB0ALgAaAC0ALgAtABwAGgAuAB0AHQAuABwABgAHAAgABwAJAAgABgAIAAoACAAJAAoACwAHAAYACQAHAAsALwALAAYALwAGAAoADAAJAAsADAALAC8ACQAMAAoACgAMAC8A"),
+"lods": [0.4800695, PackedByteArray("AAABAAIAAQADAAIAAAACAAQAAgADAAQABQABAAAAAwABAAUADQAFAAAADQAAAAQADgADAAUADgAFAA0AAwAOAAQABAAOAA0ADwAQABEAEQAQABIAEAAPABIAEgAPABEAEwAUABUAFQAUABYAFAATABYAFgATABUAFwAYABkAGAAXABkAGgAbABwAHAAbAB0AGwAaAB0AHQAaABwABgAHAAgABwAJAAgABgAIAAoACAAJAAoACwAHAAYACQAHAAsACgALAAYADAAJAAsACQAMAAoADAALAAoA"), 0.7201042, PackedByteArray("AAABAAIAAQADAAIAAAACAAQAAgADAAQABQABAAAAAwABAAUABQAAAAQABAADAAUABgAHAAgABwAJAAgABgAIAAoACAAJAAoACwAHAAYACQAHAAsACgALAAYADAAJAAsACQAMAAoADAALAAoA")],
+"material": SubResource("StandardMaterial3D_q1yxq"),
+"name": "material_0",
+"primitive": 3,
+"uv_scale": Vector4(0, 0, 0, 0),
+"vertex_count": 48,
+"vertex_data": PackedByteArray("AAAAvwAAAL8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAA/AAAAvwAAAD8AAAC/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAC/XI8Cvylcj71cjwI/XI8Cvylcj71cjwK/XI8Cvylcjz1cjwI/XI8Cvylcjz1cjwK/XI8CPylcjz1cjwI/XI8CPylcj71cjwK/XI8CPylcjz1cjwK/AAAAPwAAAL8AAAA/AAAAPwAAAD8AAAC/AAAAv1yPAj89Cte+AAAAv1yPAr89Cte+PQrXvlyPAr89Cte+PQrXvlyPAj89Cte+AAAAv1yPAj89Ctc+AAAAv1yPAr8AAAA/PQrXvlyPAr89Ctc+PQrXvlyPAj89Ctc+PQrXPlyPAj8AAAC/PQrXPlyPAr8AAAC/AAAAP1yPAj89Cte+PQrXPlyPAj89Ctc+PQrXPlyPAr8AAAA/AAAAP1yPAr8AAAA/AAAAP1yPAj8AAAA/AAAAv1yPAr8AAAC/AAAAv1yPAj8AAAC/PQrXvlyPAr8AAAC/PQrXvlyPAj8AAAC/AAAAv1yPAr89Ctc+AAAAv1yPAj8AAAA/PQrXvlyPAj8AAAA/PQrXvlyPAr8AAAA/PQrXPlyPAr89Cte+PQrXPlyPAj89Cte+AAAAP1yPAr8AAAC/AAAAP1yPAr89Cte+AAAAP1yPAj8AAAC/PQrXPlyPAr89Ctc+PQrXPlyPAj8AAAA/AAAAP1yPAr89Ctc+AAAAP1yPAj89Ctc+XI8CPylcj71cjwI/")
+}]
+blend_shape_mode = 0
+shadow_mesh = SubResource("ArrayMesh_4jdnf")
+metadata/extras = {
+"shape": "extents"
+}
+
+[sub_resource type="Resource" id="Resource_xovoy"]
+script = ExtResource("7_6ctm5")
+node_id = "garden"
+grid_position = Vector2i(2, 6)
+display_name = "Garden"
+produces = {
+"vegetables": 90.0
+}
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_euxj6"]
+albedo_color = Color(0.54509807, 0.41960785, 0.24313726, 1)
+
+[sub_resource type="Resource" id="Resource_d5ptm"]
+script = ExtResource("7_6ctm5")
+node_id = "bakery"
+grid_position = Vector2i(3, 9)
+display_name = "Bakery"
+produces = {
+"bread": 80.0
+}
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_pwr6m"]
+albedo_color = Color(0.54509807, 0.41960785, 0.24313726, 1)
+
+[sub_resource type="Resource" id="Resource_aljhd"]
+script = ExtResource("7_6ctm5")
+node_id = "dairy"
+grid_position = Vector2i(17, 4)
+display_name = "Dairy"
+produces = {
+"milk": 75.0
+}
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_20and"]
+albedo_color = Color(0.54509807, 0.41960785, 0.24313726, 1)
+
+[sub_resource type="Resource" id="Resource_lq88y"]
+script = ExtResource("7_6ctm5")
+node_id = "harbor"
+grid_position = Vector2i(17, 9)
+display_name = "Harbor"
+produces = {
+"seafood": 55.0
+}
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_w3hvu"]
+albedo_color = Color(0.54509807, 0.41960785, 0.24313726, 1)
+
+[sub_resource type="Resource" id="Resource_pp5np"]
+script = ExtResource("7_6ctm5")
+node_id = "villageA"
+node_type = 1
+grid_position = Vector2i(6, 3)
+display_name = "Village A"
+kind = "Village"
+demand = {
+"bread": 20.0,
+"grain": 20.0
+}
+min_freshness = 35.0
+bonus_freshness = 80.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_iih0v"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="CylinderMesh" id="1"]
+top_radius = 0.06
+bottom_radius = 0.06
+height = 1.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_h8krf"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="SphereMesh" id="2"]
+radius = 0.22
+height = 0.44
+
+[sub_resource type="Resource" id="Resource_i5j61"]
+script = ExtResource("7_6ctm5")
+node_id = "villageB"
+node_type = 1
+grid_position = Vector2i(6, 10)
+display_name = "Village B"
+kind = "Village"
+demand = {
+"grain": 15.0,
+"vegetables": 25.0
+}
+min_freshness = 35.0
+bonus_freshness = 80.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_go7qi"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_6tbhh"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="Resource" id="Resource_1oktl"]
+script = ExtResource("7_6ctm5")
+node_id = "villageC"
+node_type = 1
+grid_position = Vector2i(13, 3)
+display_name = "Village C"
+kind = "Village"
+demand = {
+"bread": 20.0,
+"vegetables": 20.0
+}
+min_freshness = 35.0
+bonus_freshness = 80.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_pmsde"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xxlnh"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="Resource" id="Resource_kwn02"]
+script = ExtResource("7_6ctm5")
+node_id = "townD"
+node_type = 1
+grid_position = Vector2i(13, 6)
+display_name = "Town D"
+kind = "Town"
+demand = {
+"bread": 25.0,
+"milk": 25.0,
+"vegetables": 30.0
+}
+min_freshness = 45.0
+bonus_freshness = 85.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_aatdh"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xlttg"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="Resource" id="Resource_q7vhy"]
+script = ExtResource("7_6ctm5")
+node_id = "cityE"
+node_type = 1
+grid_position = Vector2i(15, 9)
+display_name = "City E"
+kind = "City (late objective)"
+demand = {
+"milk": 30.0,
+"seafood": 25.0,
+"vegetables": 35.0
+}
+min_freshness = 55.0
+bonus_freshness = 90.0
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vh1um"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xeaf3"]
+albedo_color = Color(0.76862746, 0.34117648, 0.22745098, 1)
+
+[node name="MapPreview" type="Node3D" unique_id=546342986]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=629392541]
+environment = SubResource("Environment_nhp10")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=624277094]
+transform = Transform3D(0.8253356, -0.45928895, 0.328443, 0, 0.5816831, 0.8134155, -0.5646425, -0.6713408, 0.4800838, 10, 20, 10)
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=418761433]
+transform = Transform3D(1, 0, 0, 0, 0.49999955, 0.8660257, 0, -0.8660257, 0.49999955, 21.833, 36.641, 34.833)
+projection = 1
+current = true
+size = 34.0
+near = 0.1
+far = 200.0
+
+[node name="TerrainMap" type="GridMap" parent="." unique_id=2070969737]
+mesh_library = SubResource("MeshLibrary_vn15x")
+data = {
+"cells": PackedInt32Array(0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0, 7, 0, 0, 8, 0, 0, 9, 0, 0, 10, 0, 1, 11, 0, 0, 12, 0, 0, 13, 0, 0, 14, 0, 0, 15, 0, 0, 16, 0, 0, 17, 0, 0, 18, 0, 0, 19, 0, 0, 20, 0, 0, 0, 1, 0, 1, 1, 0, 2, 1, 0, 3, 1, 0, 4, 1, 0, 5, 1, 0, 6, 1, 0, 7, 1, 0, 8, 1, 0, 9, 1, 0, 10, 1, 1, 11, 1, 0, 12, 1, 0, 13, 1, 0, 14, 1, 0, 15, 1, 0, 16, 1, 0, 17, 1, 0, 18, 1, 0, 19, 1, 0, 20, 1, 0, 0, 2, 0, 1, 2, 0, 2, 2, 0, 3, 2, 0, 4, 2, 0, 5, 2, 0, 6, 2, 0, 7, 2, 0, 8, 2, 0, 9, 2, 0, 10, 2, 1, 11, 2, 0, 12, 2, 0, 13, 2, 0, 14, 2, 0, 15, 2, 0, 16, 2, 0, 17, 2, 0, 18, 2, 0, 19, 2, 0, 20, 2, 0, 0, 3, 0, 1, 3, 0, 2, 3, 0, 3, 3, 0, 4, 3, 0, 5, 3, 0, 6, 3, 0, 7, 3, 0, 8, 3, 0, 9, 3, 0, 10, 3, 1, 11, 3, 0, 12, 3, 0, 13, 3, 0, 14, 3, 0, 15, 3, 0, 16, 3, 0, 17, 3, 0, 18, 3, 0, 19, 3, 0, 20, 3, 0, 0, 4, 0, 1, 4, 0, 2, 4, 0, 3, 4, 0, 4, 4, 0, 5, 4, 0, 6, 4, 0, 7, 4, 0, 8, 4, 0, 9, 4, 0, 10, 4, 1, 11, 4, 0, 12, 4, 0, 13, 4, 0, 14, 4, 0, 15, 4, 0, 16, 4, 0, 17, 4, 0, 18, 4, 0, 19, 4, 0, 20, 4, 0, 0, 5, 0, 1, 5, 0, 2, 5, 0, 3, 5, 0, 4, 5, 0, 5, 5, 0, 6, 5, 0, 7, 5, 0, 8, 5, 0, 9, 5, 0, 10, 5, 1, 11, 5, 0, 12, 5, 0, 13, 5, 0, 14, 5, 0, 15, 5, 0, 16, 5, 0, 17, 5, 0, 18, 5, 0, 19, 5, 0, 20, 5, 0, 0, 6, 0, 1, 6, 0, 2, 6, 0, 3, 6, 0, 4, 6, 0, 5, 6, 0, 6, 6, 0, 7, 6, 0, 8, 6, 0, 9, 6, 0, 10, 6, 1, 11, 6, 0, 12, 6, 0, 13, 6, 0, 14, 6, 0, 15, 6, 0, 16, 6, 0, 17, 6, 0, 18, 6, 0, 19, 6, 0, 20, 6, 0, 0, 7, 0, 1, 7, 0, 2, 7, 0, 3, 7, 0, 4, 7, 0, 5, 7, 0, 6, 7, 0, 7, 7, 0, 8, 7, 0, 9, 7, 0, 10, 7, 1, 11, 7, 0, 12, 7, 0, 13, 7, 0, 14, 7, 0, 15, 7, 0, 16, 7, 0, 17, 7, 0, 18, 7, 0, 19, 7, 0, 20, 7, 0, 0, 8, 0, 1, 8, 0, 2, 8, 0, 3, 8, 0, 4, 8, 0, 5, 8, 0, 6, 8, 0, 7, 8, 0, 8, 8, 0, 9, 8, 0, 10, 8, 1, 11, 8, 0, 12, 8, 0, 13, 8, 0, 14, 8, 0, 15, 8, 0, 16, 8, 0, 17, 8, 0, 18, 8, 0, 19, 8, 0, 20, 8, 0, 0, 9, 0, 1, 9, 0, 2, 9, 0, 3, 9, 0, 4, 9, 0, 5, 9, 0, 6, 9, 0, 7, 9, 0, 8, 9, 0, 9, 9, 0, 10, 9, 1, 11, 9, 0, 12, 9, 0, 13, 9, 0, 14, 9, 0, 15, 9, 0, 16, 9, 0, 17, 9, 0, 18, 9, 0, 19, 9, 0, 20, 9, 0, 0, 10, 0, 1, 10, 0, 2, 10, 0, 3, 10, 0, 4, 10, 0, 5, 10, 0, 6, 10, 0, 7, 10, 0, 8, 10, 0, 9, 10, 0, 10, 10, 1, 11, 10, 0, 12, 10, 0, 13, 10, 0, 14, 10, 0, 15, 10, 0, 16, 10, 0, 17, 10, 0, 18, 10, 0, 19, 10, 0, 20, 10, 0, 0, 11, 0, 1, 11, 0, 2, 11, 0, 3, 11, 0, 4, 11, 0, 5, 11, 0, 6, 11, 0, 7, 11, 0, 8, 11, 0, 9, 11, 0, 10, 11, 1, 11, 11, 0, 12, 11, 0, 13, 11, 0, 14, 11, 0, 15, 11, 0, 16, 11, 0, 17, 11, 0, 18, 11, 0, 19, 11, 0, 20, 11, 0, 0, 12, 0, 1, 12, 0, 2, 12, 0, 3, 12, 0, 4, 12, 0, 5, 12, 0, 6, 12, 0, 7, 12, 0, 8, 12, 0, 9, 12, 0, 10, 12, 1, 11, 12, 0, 12, 12, 0, 13, 12, 0, 14, 12, 0, 15, 12, 0, 16, 12, 0, 17, 12, 0, 18, 12, 0, 19, 12, 0, 20, 12, 0, 0, 13, 0, 1, 13, 0, 2, 13, 0, 3, 13, 0, 4, 13, 0, 5, 13, 0, 6, 13, 0, 7, 13, 0, 8, 13, 0, 9, 13, 0, 10, 13, 1, 11, 13, 0, 12, 13, 0, 13, 13, 0, 14, 13, 0, 15, 13, 0, 16, 13, 0, 17, 13, 0, 18, 13, 0, 19, 13, 0, 20, 13, 0)
+}
+script = ExtResource("1_jalop")
+
+[node name="Visuals" type="Node3D" parent="TerrainMap" unique_id=156783511]
+
+[node name="Block_Grass" type="Node3D" parent="TerrainMap/Visuals" unique_id=1255435220 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/Block_Grass" unique_id=162098194]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/Block_Grass/world" unique_id=137498524]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@2" type="Node3D" parent="TerrainMap/Visuals" unique_id=1442254434 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@2" unique_id=1829592094]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@2/world" unique_id=1594923281]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@3" type="Node3D" parent="TerrainMap/Visuals" unique_id=294743865 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@3" unique_id=721583864]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@3/world" unique_id=1881415912]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@4" type="Node3D" parent="TerrainMap/Visuals" unique_id=1358096317 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@4" unique_id=1184581339]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@4/world" unique_id=1832533353]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@5" type="Node3D" parent="TerrainMap/Visuals" unique_id=1143245561 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@5" unique_id=1313710983]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@5/world" unique_id=1987729842]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@6" type="Node3D" parent="TerrainMap/Visuals" unique_id=1750053392 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@6" unique_id=565946245]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@6/world" unique_id=1745776175]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@7" type="Node3D" parent="TerrainMap/Visuals" unique_id=2122363005 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@7" unique_id=920546729]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@7/world" unique_id=1853857520]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@8" type="Node3D" parent="TerrainMap/Visuals" unique_id=600142365 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@8" unique_id=1069227610]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@8/world" unique_id=1356784212]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@9" type="Node3D" parent="TerrainMap/Visuals" unique_id=1043940210 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@9" unique_id=1420981571]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@9/world" unique_id=1953620215]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@10" type="Node3D" parent="TerrainMap/Visuals" unique_id=122797354 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@10" unique_id=1866026010]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@10/world" unique_id=2024620601]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="Block_Ice" type="Node3D" parent="TerrainMap/Visuals" unique_id=2050276411 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/Block_Ice" unique_id=2113484125]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/Block_Ice/world" unique_id=369699566]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@11" type="Node3D" parent="TerrainMap/Visuals" unique_id=1419553126 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@11" unique_id=936233029]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@11/world" unique_id=11357978]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@12" type="Node3D" parent="TerrainMap/Visuals" unique_id=1051439571 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@12" unique_id=1306507293]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@12/world" unique_id=942939695]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@13" type="Node3D" parent="TerrainMap/Visuals" unique_id=1735410567 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@13" unique_id=1527886065]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@13/world" unique_id=132367046]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@14" type="Node3D" parent="TerrainMap/Visuals" unique_id=94778166 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@14" unique_id=1649520700]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@14/world" unique_id=750139304]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@15" type="Node3D" parent="TerrainMap/Visuals" unique_id=692478476 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@15" unique_id=638572029]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@15/world" unique_id=795300809]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@16" type="Node3D" parent="TerrainMap/Visuals" unique_id=1450658395 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@16" unique_id=1547030608]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@16/world" unique_id=1326827810]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@17" type="Node3D" parent="TerrainMap/Visuals" unique_id=1198974523 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@17" unique_id=1051102995]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@17/world" unique_id=157364075]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@18" type="Node3D" parent="TerrainMap/Visuals" unique_id=1329120616 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@18" unique_id=481614296]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@18/world" unique_id=905011771]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@19" type="Node3D" parent="TerrainMap/Visuals" unique_id=573394575 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@19" unique_id=1165034428]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@19/world" unique_id=984671718]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@20" type="Node3D" parent="TerrainMap/Visuals" unique_id=1752979799 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 1)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@20" unique_id=587290289]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@20/world" unique_id=832603635]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@21" type="Node3D" parent="TerrainMap/Visuals" unique_id=1991017912 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@21" unique_id=1190324477]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@21/world" unique_id=1677238389]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@22" type="Node3D" parent="TerrainMap/Visuals" unique_id=595729968 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@22" unique_id=139292020]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@22/world" unique_id=57837723]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@23" type="Node3D" parent="TerrainMap/Visuals" unique_id=381285058 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@23" unique_id=1212815090]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@23/world" unique_id=859632064]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@24" type="Node3D" parent="TerrainMap/Visuals" unique_id=685991512 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@24" unique_id=1173118569]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@24/world" unique_id=1676078625]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@25" type="Node3D" parent="TerrainMap/Visuals" unique_id=1616863055 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@25" unique_id=1850591771]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@25/world" unique_id=1395575155]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@26" type="Node3D" parent="TerrainMap/Visuals" unique_id=1977680283 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@26" unique_id=2018518790]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@26/world" unique_id=1123190713]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@27" type="Node3D" parent="TerrainMap/Visuals" unique_id=1064251767 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@27" unique_id=981515592]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@27/world" unique_id=1446873959]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@28" type="Node3D" parent="TerrainMap/Visuals" unique_id=566545524 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@28" unique_id=1621407321]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@28/world" unique_id=1213552111]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@29" type="Node3D" parent="TerrainMap/Visuals" unique_id=1012827833 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@29" unique_id=1495477111]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@29/world" unique_id=190075594]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@30" type="Node3D" parent="TerrainMap/Visuals" unique_id=2079727505 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@30" unique_id=97785624]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@30/world" unique_id=1555027066]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@31" type="Node3D" parent="TerrainMap/Visuals" unique_id=10876838 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@31" unique_id=727033928]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@31/world" unique_id=834877367]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@32" type="Node3D" parent="TerrainMap/Visuals" unique_id=1959036031 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@32" unique_id=2088797607]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@32/world" unique_id=1646457601]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@33" type="Node3D" parent="TerrainMap/Visuals" unique_id=774933311 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@33" unique_id=1174200337]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@33/world" unique_id=546114161]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@34" type="Node3D" parent="TerrainMap/Visuals" unique_id=1479180353 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@34" unique_id=338830501]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@34/world" unique_id=1407462474]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@35" type="Node3D" parent="TerrainMap/Visuals" unique_id=581797266 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@35" unique_id=1586775334]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@35/world" unique_id=752691106]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@36" type="Node3D" parent="TerrainMap/Visuals" unique_id=197470257 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@36" unique_id=910209637]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@36/world" unique_id=385144872]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@37" type="Node3D" parent="TerrainMap/Visuals" unique_id=1132772481 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@37" unique_id=1036233903]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@37/world" unique_id=729461457]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@38" type="Node3D" parent="TerrainMap/Visuals" unique_id=366317833 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@38" unique_id=1134404457]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@38/world" unique_id=1676001479]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@39" type="Node3D" parent="TerrainMap/Visuals" unique_id=1107592667 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@39" unique_id=1592782971]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@39/world" unique_id=1919744385]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@40" type="Node3D" parent="TerrainMap/Visuals" unique_id=1957511007 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@40" unique_id=1652075098]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@40/world" unique_id=1941233531]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@41" type="Node3D" parent="TerrainMap/Visuals" unique_id=1354078202 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 3)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@41" unique_id=8194821]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@41/world" unique_id=1120044655]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@42" type="Node3D" parent="TerrainMap/Visuals" unique_id=1373440388 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@42" unique_id=138432043]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@42/world" unique_id=282853591]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@43" type="Node3D" parent="TerrainMap/Visuals" unique_id=1200655056 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@43" unique_id=759733953]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@43/world" unique_id=1509649357]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@44" type="Node3D" parent="TerrainMap/Visuals" unique_id=1909497721 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@44" unique_id=218243927]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@44/world" unique_id=1876240958]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@45" type="Node3D" parent="TerrainMap/Visuals" unique_id=935779244 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@45" unique_id=659082866]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@45/world" unique_id=787066238]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@46" type="Node3D" parent="TerrainMap/Visuals" unique_id=64717797 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@46" unique_id=1466812623]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@46/world" unique_id=836351396]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@47" type="Node3D" parent="TerrainMap/Visuals" unique_id=1667051908 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@47" unique_id=1704649439]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@47/world" unique_id=2029538076]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@48" type="Node3D" parent="TerrainMap/Visuals" unique_id=2111500451 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@48" unique_id=209777540]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@48/world" unique_id=183217843]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@49" type="Node3D" parent="TerrainMap/Visuals" unique_id=1570587302 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@49" unique_id=791256909]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@49/world" unique_id=368983422]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@50" type="Node3D" parent="TerrainMap/Visuals" unique_id=1420954988 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@50" unique_id=129773530]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@50/world" unique_id=1395119264]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@51" type="Node3D" parent="TerrainMap/Visuals" unique_id=1511621555 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@51" unique_id=1081648423]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@51/world" unique_id=619982775]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@52" type="Node3D" parent="TerrainMap/Visuals" unique_id=2100056102 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@52" unique_id=590234048]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@52/world" unique_id=1321573719]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@53" type="Node3D" parent="TerrainMap/Visuals" unique_id=1663360339 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@53" unique_id=1511289220]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@53/world" unique_id=564185072]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@54" type="Node3D" parent="TerrainMap/Visuals" unique_id=1871875092 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@54" unique_id=124887385]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@54/world" unique_id=1588067138]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@55" type="Node3D" parent="TerrainMap/Visuals" unique_id=1561303758 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@55" unique_id=1009470043]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@55/world" unique_id=175430637]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@56" type="Node3D" parent="TerrainMap/Visuals" unique_id=699288989 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@56" unique_id=1368884209]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@56/world" unique_id=365131959]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@57" type="Node3D" parent="TerrainMap/Visuals" unique_id=215926493 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@57" unique_id=915398063]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@57/world" unique_id=1584104204]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@58" type="Node3D" parent="TerrainMap/Visuals" unique_id=561087811 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@58" unique_id=141919124]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@58/world" unique_id=974368069]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@59" type="Node3D" parent="TerrainMap/Visuals" unique_id=241382109 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@59" unique_id=682435874]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@59/world" unique_id=1140350630]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@60" type="Node3D" parent="TerrainMap/Visuals" unique_id=1187011202 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@60" unique_id=828618443]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@60/world" unique_id=1889759382]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@61" type="Node3D" parent="TerrainMap/Visuals" unique_id=65940550 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@61" unique_id=795974601]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@61/world" unique_id=92406586]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@62" type="Node3D" parent="TerrainMap/Visuals" unique_id=269893204 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 5)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@62" unique_id=89586867]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@62/world" unique_id=1736588629]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@63" type="Node3D" parent="TerrainMap/Visuals" unique_id=646361518 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@63" unique_id=705360057]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@63/world" unique_id=1638028475]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@64" type="Node3D" parent="TerrainMap/Visuals" unique_id=2077876440 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@64" unique_id=1905590868]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@64/world" unique_id=1589164087]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@65" type="Node3D" parent="TerrainMap/Visuals" unique_id=689774249 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@65" unique_id=751198834]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@65/world" unique_id=986178730]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@66" type="Node3D" parent="TerrainMap/Visuals" unique_id=1748054043 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@66" unique_id=1238536497]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@66/world" unique_id=380392510]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@67" type="Node3D" parent="TerrainMap/Visuals" unique_id=60741829 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@67" unique_id=366693454]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@67/world" unique_id=1151199940]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@68" type="Node3D" parent="TerrainMap/Visuals" unique_id=1368320167 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@68" unique_id=1538762695]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@68/world" unique_id=625872093]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@69" type="Node3D" parent="TerrainMap/Visuals" unique_id=58357042 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@69" unique_id=1674340126]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@69/world" unique_id=381458837]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@70" type="Node3D" parent="TerrainMap/Visuals" unique_id=2012218545 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@70" unique_id=513267672]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@70/world" unique_id=1990870207]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@71" type="Node3D" parent="TerrainMap/Visuals" unique_id=1560731027 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@71" unique_id=1040926892]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@71/world" unique_id=1753176681]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@72" type="Node3D" parent="TerrainMap/Visuals" unique_id=242049691 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@72" unique_id=2023431825]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@72/world" unique_id=1814447242]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@73" type="Node3D" parent="TerrainMap/Visuals" unique_id=592780815 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@73" unique_id=1871723127]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@73/world" unique_id=813215227]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@74" type="Node3D" parent="TerrainMap/Visuals" unique_id=440323774 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@74" unique_id=222277763]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@74/world" unique_id=941012740]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@75" type="Node3D" parent="TerrainMap/Visuals" unique_id=473018845 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@75" unique_id=128642081]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@75/world" unique_id=766845019]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@76" type="Node3D" parent="TerrainMap/Visuals" unique_id=349131994 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@76" unique_id=739467208]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@76/world" unique_id=1090213741]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@77" type="Node3D" parent="TerrainMap/Visuals" unique_id=1956675045 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@77" unique_id=1854656948]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@77/world" unique_id=563536599]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@78" type="Node3D" parent="TerrainMap/Visuals" unique_id=1405522613 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@78" unique_id=1740700293]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@78/world" unique_id=1465887121]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@79" type="Node3D" parent="TerrainMap/Visuals" unique_id=944847930 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@79" unique_id=1701388743]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@79/world" unique_id=607000261]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@80" type="Node3D" parent="TerrainMap/Visuals" unique_id=1507012566 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@80" unique_id=806579416]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@80/world" unique_id=1537811958]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@81" type="Node3D" parent="TerrainMap/Visuals" unique_id=1873493153 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@81" unique_id=91316434]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@81/world" unique_id=1106833842]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@82" type="Node3D" parent="TerrainMap/Visuals" unique_id=1270004806 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@82" unique_id=309822941]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@82/world" unique_id=1561953429]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@83" type="Node3D" parent="TerrainMap/Visuals" unique_id=2018806128 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 7)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@83" unique_id=1531736596]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@83/world" unique_id=1853660156]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@84" type="Node3D" parent="TerrainMap/Visuals" unique_id=1174661339 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@84" unique_id=35907412]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@84/world" unique_id=401239679]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@85" type="Node3D" parent="TerrainMap/Visuals" unique_id=181129270 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@85" unique_id=581845987]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@85/world" unique_id=1352021674]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@86" type="Node3D" parent="TerrainMap/Visuals" unique_id=1316010786 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@86" unique_id=1014341483]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@86/world" unique_id=1952246292]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@87" type="Node3D" parent="TerrainMap/Visuals" unique_id=1179551461 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@87" unique_id=96002190]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@87/world" unique_id=1971178759]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@88" type="Node3D" parent="TerrainMap/Visuals" unique_id=764732851 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@88" unique_id=1090144279]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@88/world" unique_id=489676957]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@89" type="Node3D" parent="TerrainMap/Visuals" unique_id=772383777 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@89" unique_id=206952616]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@89/world" unique_id=872524559]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@90" type="Node3D" parent="TerrainMap/Visuals" unique_id=1271294998 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@90" unique_id=909844839]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@90/world" unique_id=719978019]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@91" type="Node3D" parent="TerrainMap/Visuals" unique_id=280649841 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@91" unique_id=852227042]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@91/world" unique_id=1029378889]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@92" type="Node3D" parent="TerrainMap/Visuals" unique_id=1708145639 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@92" unique_id=1459145056]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@92/world" unique_id=1134183941]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@93" type="Node3D" parent="TerrainMap/Visuals" unique_id=1814823736 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@93" unique_id=590896465]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@93/world" unique_id=1388840187]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@94" type="Node3D" parent="TerrainMap/Visuals" unique_id=2101036620 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@94" unique_id=117339243]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@94/world" unique_id=1512836232]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@95" type="Node3D" parent="TerrainMap/Visuals" unique_id=727117784 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@95" unique_id=871391609]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@95/world" unique_id=4819471]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@96" type="Node3D" parent="TerrainMap/Visuals" unique_id=1548494307 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@96" unique_id=99498818]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@96/world" unique_id=580223803]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@97" type="Node3D" parent="TerrainMap/Visuals" unique_id=920100326 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@97" unique_id=1028856366]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@97/world" unique_id=443848557]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@98" type="Node3D" parent="TerrainMap/Visuals" unique_id=771652014 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@98" unique_id=290310037]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@98/world" unique_id=1670943762]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@99" type="Node3D" parent="TerrainMap/Visuals" unique_id=1322245572 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@99" unique_id=1088240804]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@99/world" unique_id=530424889]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@100" type="Node3D" parent="TerrainMap/Visuals" unique_id=931643806 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@100" unique_id=1695565262]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@100/world" unique_id=197163824]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@101" type="Node3D" parent="TerrainMap/Visuals" unique_id=340306653 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@101" unique_id=288206127]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@101/world" unique_id=914795542]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@102" type="Node3D" parent="TerrainMap/Visuals" unique_id=729240116 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@102" unique_id=1980457809]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@102/world" unique_id=1732977315]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@103" type="Node3D" parent="TerrainMap/Visuals" unique_id=312203437 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@103" unique_id=16155358]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@103/world" unique_id=1796674310]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@104" type="Node3D" parent="TerrainMap/Visuals" unique_id=1156487555 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 9)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@104" unique_id=1466017837]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@104/world" unique_id=636471245]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@105" type="Node3D" parent="TerrainMap/Visuals" unique_id=1812789287 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@105" unique_id=994424079]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@105/world" unique_id=219505837]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@106" type="Node3D" parent="TerrainMap/Visuals" unique_id=1190330740 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@106" unique_id=1343028065]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@106/world" unique_id=1716891712]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@107" type="Node3D" parent="TerrainMap/Visuals" unique_id=1331847208 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@107" unique_id=1815489376]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@107/world" unique_id=1543054271]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@108" type="Node3D" parent="TerrainMap/Visuals" unique_id=927965459 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@108" unique_id=556350738]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@108/world" unique_id=936317722]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@109" type="Node3D" parent="TerrainMap/Visuals" unique_id=766206094 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@109" unique_id=916257221]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@109/world" unique_id=377805369]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@110" type="Node3D" parent="TerrainMap/Visuals" unique_id=1672384013 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@110" unique_id=568159361]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@110/world" unique_id=617117713]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@111" type="Node3D" parent="TerrainMap/Visuals" unique_id=782176464 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@111" unique_id=1810469108]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@111/world" unique_id=1114845604]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@112" type="Node3D" parent="TerrainMap/Visuals" unique_id=315844952 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@112" unique_id=1460709189]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@112/world" unique_id=156009574]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@113" type="Node3D" parent="TerrainMap/Visuals" unique_id=236879796 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@113" unique_id=1556513695]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@113/world" unique_id=48208201]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@114" type="Node3D" parent="TerrainMap/Visuals" unique_id=1834181326 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@114" unique_id=3008699]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@114/world" unique_id=894387473]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@115" type="Node3D" parent="TerrainMap/Visuals" unique_id=1190471105 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@115" unique_id=193448984]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@115/world" unique_id=1469660444]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@116" type="Node3D" parent="TerrainMap/Visuals" unique_id=1765650144 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@116" unique_id=180153157]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@116/world" unique_id=1642926787]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@117" type="Node3D" parent="TerrainMap/Visuals" unique_id=1939338308 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@117" unique_id=2103530927]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@117/world" unique_id=2097741678]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@118" type="Node3D" parent="TerrainMap/Visuals" unique_id=2101199718 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@118" unique_id=1243788573]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@118/world" unique_id=1911237142]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@119" type="Node3D" parent="TerrainMap/Visuals" unique_id=1555353785 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@119" unique_id=1086521758]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@119/world" unique_id=931215782]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@120" type="Node3D" parent="TerrainMap/Visuals" unique_id=769958410 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@120" unique_id=2004691529]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@120/world" unique_id=824168311]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@121" type="Node3D" parent="TerrainMap/Visuals" unique_id=91769538 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@121" unique_id=1391263760]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@121/world" unique_id=1896810021]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@122" type="Node3D" parent="TerrainMap/Visuals" unique_id=1941482651 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@122" unique_id=1422176921]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@122/world" unique_id=1927627544]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@123" type="Node3D" parent="TerrainMap/Visuals" unique_id=1304551537 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@123" unique_id=646907744]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@123/world" unique_id=665462774]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@124" type="Node3D" parent="TerrainMap/Visuals" unique_id=1849672815 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@124" unique_id=1705851955]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@124/world" unique_id=368315332]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@125" type="Node3D" parent="TerrainMap/Visuals" unique_id=1429789503 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 11)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@125" unique_id=1882499135]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@125/world" unique_id=1016381858]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@126" type="Node3D" parent="TerrainMap/Visuals" unique_id=856459221 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@126" unique_id=145985251]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@126/world" unique_id=1665176614]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@127" type="Node3D" parent="TerrainMap/Visuals" unique_id=717863358 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@127" unique_id=543314620]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@127/world" unique_id=1178724683]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@128" type="Node3D" parent="TerrainMap/Visuals" unique_id=1686813079 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@128" unique_id=1076968368]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@128/world" unique_id=2066088779]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@129" type="Node3D" parent="TerrainMap/Visuals" unique_id=1896214779 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@129" unique_id=53387057]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@129/world" unique_id=2027000434]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@130" type="Node3D" parent="TerrainMap/Visuals" unique_id=1344670412 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@130" unique_id=1617805902]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@130/world" unique_id=432659957]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@131" type="Node3D" parent="TerrainMap/Visuals" unique_id=1902917661 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@131" unique_id=1925689260]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@131/world" unique_id=1360274637]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@132" type="Node3D" parent="TerrainMap/Visuals" unique_id=1768903684 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@132" unique_id=252938871]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@132/world" unique_id=1756798191]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@133" type="Node3D" parent="TerrainMap/Visuals" unique_id=724354511 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@133" unique_id=226151744]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@133/world" unique_id=1626642619]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@134" type="Node3D" parent="TerrainMap/Visuals" unique_id=69872747 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@134" unique_id=731777836]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@134/world" unique_id=1425892078]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@135" type="Node3D" parent="TerrainMap/Visuals" unique_id=1360965995 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@135" unique_id=1480729132]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@135/world" unique_id=1780870636]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@136" type="Node3D" parent="TerrainMap/Visuals" unique_id=377608718 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@136" unique_id=654055793]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@136/world" unique_id=1322147376]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@137" type="Node3D" parent="TerrainMap/Visuals" unique_id=902550985 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@137" unique_id=1875501763]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@137/world" unique_id=1205172323]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@138" type="Node3D" parent="TerrainMap/Visuals" unique_id=309039007 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@138" unique_id=210454937]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@138/world" unique_id=1697333516]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@139" type="Node3D" parent="TerrainMap/Visuals" unique_id=1207375284 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@139" unique_id=1895355121]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@139/world" unique_id=1223269276]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@140" type="Node3D" parent="TerrainMap/Visuals" unique_id=813780477 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@140" unique_id=527550218]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@140/world" unique_id=1690511639]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@141" type="Node3D" parent="TerrainMap/Visuals" unique_id=624325027 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@141" unique_id=1301803031]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@141/world" unique_id=329473493]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@142" type="Node3D" parent="TerrainMap/Visuals" unique_id=1271847856 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@142" unique_id=714980958]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@142/world" unique_id=1414590303]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@143" type="Node3D" parent="TerrainMap/Visuals" unique_id=727932463 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@143" unique_id=1251481843]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@143/world" unique_id=700694643]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@144" type="Node3D" parent="TerrainMap/Visuals" unique_id=712536119 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@144" unique_id=1333663911]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@144/world" unique_id=1927381017]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@145" type="Node3D" parent="TerrainMap/Visuals" unique_id=107559116 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@145" unique_id=322613513]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@145/world" unique_id=548881046]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@146" type="Node3D" parent="TerrainMap/Visuals" unique_id=1459636116 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 13)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@146" unique_id=1820668253]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@146/world" unique_id=1173793775]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@147" type="Node3D" parent="TerrainMap/Visuals" unique_id=475328180 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@147" unique_id=84536097]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@147/world" unique_id=569796437]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@148" type="Node3D" parent="TerrainMap/Visuals" unique_id=938750553 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@148" unique_id=1650695908]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@148/world" unique_id=85366791]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@149" type="Node3D" parent="TerrainMap/Visuals" unique_id=501680379 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@149" unique_id=1008993820]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@149/world" unique_id=670173214]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@150" type="Node3D" parent="TerrainMap/Visuals" unique_id=715328220 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@150" unique_id=2135718838]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@150/world" unique_id=758931830]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@151" type="Node3D" parent="TerrainMap/Visuals" unique_id=586388202 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@151" unique_id=1010126869]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@151/world" unique_id=342492881]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@152" type="Node3D" parent="TerrainMap/Visuals" unique_id=395635531 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@152" unique_id=2087572181]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@152/world" unique_id=1548132141]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@153" type="Node3D" parent="TerrainMap/Visuals" unique_id=566545871 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@153" unique_id=474803728]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@153/world" unique_id=1171216316]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@154" type="Node3D" parent="TerrainMap/Visuals" unique_id=1674880350 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@154" unique_id=1203098625]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@154/world" unique_id=777332420]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@155" type="Node3D" parent="TerrainMap/Visuals" unique_id=1837407469 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@155" unique_id=2120177537]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@155/world" unique_id=387487015]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@156" type="Node3D" parent="TerrainMap/Visuals" unique_id=1889009456 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@156" unique_id=398089488]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@156/world" unique_id=1616098598]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@157" type="Node3D" parent="TerrainMap/Visuals" unique_id=291451924 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@157" unique_id=1352977893]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@157/world" unique_id=239938180]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@158" type="Node3D" parent="TerrainMap/Visuals" unique_id=473877378 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@158" unique_id=675076928]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@158/world" unique_id=567235741]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@159" type="Node3D" parent="TerrainMap/Visuals" unique_id=1556994951 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@159" unique_id=458418625]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@159/world" unique_id=1608209685]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@160" type="Node3D" parent="TerrainMap/Visuals" unique_id=1339197103 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@160" unique_id=2134136452]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@160/world" unique_id=566639216]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@161" type="Node3D" parent="TerrainMap/Visuals" unique_id=1156315807 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@161" unique_id=1574460806]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@161/world" unique_id=677657670]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@162" type="Node3D" parent="TerrainMap/Visuals" unique_id=38162860 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@162" unique_id=887166736]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@162/world" unique_id=1080754543]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@163" type="Node3D" parent="TerrainMap/Visuals" unique_id=1884099103 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@163" unique_id=1354535592]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@163/world" unique_id=229704018]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@164" type="Node3D" parent="TerrainMap/Visuals" unique_id=679338067 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@164" unique_id=282613992]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@164/world" unique_id=1505943116]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@165" type="Node3D" parent="TerrainMap/Visuals" unique_id=1017347804 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@165" unique_id=633836543]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@165/world" unique_id=805713326]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@166" type="Node3D" parent="TerrainMap/Visuals" unique_id=1934366927 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@166" unique_id=1536985169]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@166/world" unique_id=2130749755]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@167" type="Node3D" parent="TerrainMap/Visuals" unique_id=2010558037 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 15)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@167" unique_id=1068678351]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@167/world" unique_id=1370063954]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@168" type="Node3D" parent="TerrainMap/Visuals" unique_id=1783814242 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@168" unique_id=838064503]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@168/world" unique_id=538016123]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@169" type="Node3D" parent="TerrainMap/Visuals" unique_id=225297942 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@169" unique_id=2073039871]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@169/world" unique_id=1599282316]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@170" type="Node3D" parent="TerrainMap/Visuals" unique_id=911395798 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@170" unique_id=777214086]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@170/world" unique_id=1322147258]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@171" type="Node3D" parent="TerrainMap/Visuals" unique_id=671025869 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@171" unique_id=1566174148]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@171/world" unique_id=740124898]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@172" type="Node3D" parent="TerrainMap/Visuals" unique_id=1883967115 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@172" unique_id=954226128]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@172/world" unique_id=1771047575]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@173" type="Node3D" parent="TerrainMap/Visuals" unique_id=417077360 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@173" unique_id=1007321026]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@173/world" unique_id=1771786078]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@174" type="Node3D" parent="TerrainMap/Visuals" unique_id=545273986 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@174" unique_id=841323267]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@174/world" unique_id=1086692495]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@175" type="Node3D" parent="TerrainMap/Visuals" unique_id=161313521 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@175" unique_id=2014578932]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@175/world" unique_id=1371853444]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@176" type="Node3D" parent="TerrainMap/Visuals" unique_id=680209702 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@176" unique_id=1583382841]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@176/world" unique_id=1177100738]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@177" type="Node3D" parent="TerrainMap/Visuals" unique_id=2047451656 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@177" unique_id=818774491]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@177/world" unique_id=1693373214]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@178" type="Node3D" parent="TerrainMap/Visuals" unique_id=317599644 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@178" unique_id=1069948245]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@178/world" unique_id=1110345470]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@179" type="Node3D" parent="TerrainMap/Visuals" unique_id=156016797 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@179" unique_id=1752952013]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@179/world" unique_id=111669232]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@180" type="Node3D" parent="TerrainMap/Visuals" unique_id=717547554 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@180" unique_id=244604048]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@180/world" unique_id=1092496188]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@181" type="Node3D" parent="TerrainMap/Visuals" unique_id=1270145797 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@181" unique_id=147706510]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@181/world" unique_id=345269009]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@182" type="Node3D" parent="TerrainMap/Visuals" unique_id=186660751 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@182" unique_id=1921499673]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@182/world" unique_id=454800265]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@183" type="Node3D" parent="TerrainMap/Visuals" unique_id=1904011070 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@183" unique_id=795251085]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@183/world" unique_id=668394834]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@184" type="Node3D" parent="TerrainMap/Visuals" unique_id=1015455601 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@184" unique_id=1315783656]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@184/world" unique_id=1314787420]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@185" type="Node3D" parent="TerrainMap/Visuals" unique_id=593363514 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@185" unique_id=1991473153]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@185/world" unique_id=2017107677]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@186" type="Node3D" parent="TerrainMap/Visuals" unique_id=1948424570 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@186" unique_id=138921391]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@186/world" unique_id=2075125688]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@187" type="Node3D" parent="TerrainMap/Visuals" unique_id=480774992 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@187" unique_id=1792768047]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@187/world" unique_id=395035192]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@188" type="Node3D" parent="TerrainMap/Visuals" unique_id=1393420591 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 17)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@188" unique_id=744419493]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@188/world" unique_id=266079378]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@189" type="Node3D" parent="TerrainMap/Visuals" unique_id=762526398 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@189" unique_id=711625221]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@189/world" unique_id=262260960]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@190" type="Node3D" parent="TerrainMap/Visuals" unique_id=170039953 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@190" unique_id=2009870583]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@190/world" unique_id=747727150]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@191" type="Node3D" parent="TerrainMap/Visuals" unique_id=1673559369 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@191" unique_id=485093954]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@191/world" unique_id=696635068]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@192" type="Node3D" parent="TerrainMap/Visuals" unique_id=999993158 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@192" unique_id=162952985]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@192/world" unique_id=106066131]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@193" type="Node3D" parent="TerrainMap/Visuals" unique_id=1532302852 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@193" unique_id=580099481]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@193/world" unique_id=1888403780]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@194" type="Node3D" parent="TerrainMap/Visuals" unique_id=275878049 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@194" unique_id=1662582543]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@194/world" unique_id=2136412564]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@195" type="Node3D" parent="TerrainMap/Visuals" unique_id=1176589046 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@195" unique_id=1829881926]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@195/world" unique_id=1663391651]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@196" type="Node3D" parent="TerrainMap/Visuals" unique_id=1766860622 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@196" unique_id=2010758381]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@196/world" unique_id=1224955756]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@197" type="Node3D" parent="TerrainMap/Visuals" unique_id=1123323764 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@197" unique_id=259999932]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@197/world" unique_id=780277511]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@198" type="Node3D" parent="TerrainMap/Visuals" unique_id=2086526039 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@198" unique_id=881205394]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@198/world" unique_id=579946246]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@199" type="Node3D" parent="TerrainMap/Visuals" unique_id=642638801 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@199" unique_id=1683079828]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@199/world" unique_id=1548471344]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@200" type="Node3D" parent="TerrainMap/Visuals" unique_id=1341216292 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@200" unique_id=2053030519]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@200/world" unique_id=511940632]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@201" type="Node3D" parent="TerrainMap/Visuals" unique_id=1464897951 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@201" unique_id=390328369]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@201/world" unique_id=1754364263]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@202" type="Node3D" parent="TerrainMap/Visuals" unique_id=256693405 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@202" unique_id=67776200]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@202/world" unique_id=1377053482]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@203" type="Node3D" parent="TerrainMap/Visuals" unique_id=1186178732 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@203" unique_id=893283035]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@203/world" unique_id=1513616288]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@204" type="Node3D" parent="TerrainMap/Visuals" unique_id=2018395360 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@204" unique_id=1665204442]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@204/world" unique_id=807281905]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@205" type="Node3D" parent="TerrainMap/Visuals" unique_id=1437745957 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@205" unique_id=541067242]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@205/world" unique_id=2146552586]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@206" type="Node3D" parent="TerrainMap/Visuals" unique_id=309982189 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@206" unique_id=1310826485]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@206/world" unique_id=808399645]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@207" type="Node3D" parent="TerrainMap/Visuals" unique_id=1487597540 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@207" unique_id=1591703229]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@207/world" unique_id=864777338]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@208" type="Node3D" parent="TerrainMap/Visuals" unique_id=54791553 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@208" unique_id=547366966]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@208/world" unique_id=728476694]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@209" type="Node3D" parent="TerrainMap/Visuals" unique_id=209774350 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 19)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@209" unique_id=1072087248]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@209/world" unique_id=1849135813]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@210" type="Node3D" parent="TerrainMap/Visuals" unique_id=1574639774 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@210" unique_id=2136537297]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@210/world" unique_id=748796295]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@211" type="Node3D" parent="TerrainMap/Visuals" unique_id=1767465190 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@211" unique_id=2134626382]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@211/world" unique_id=1602822043]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@212" type="Node3D" parent="TerrainMap/Visuals" unique_id=1854878490 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@212" unique_id=1794784794]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@212/world" unique_id=428588691]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@213" type="Node3D" parent="TerrainMap/Visuals" unique_id=286461771 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@213" unique_id=1015208413]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@213/world" unique_id=1471839627]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@214" type="Node3D" parent="TerrainMap/Visuals" unique_id=285250806 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@214" unique_id=274599976]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@214/world" unique_id=642195199]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@215" type="Node3D" parent="TerrainMap/Visuals" unique_id=170496172 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@215" unique_id=17647210]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@215/world" unique_id=1705534150]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@216" type="Node3D" parent="TerrainMap/Visuals" unique_id=2020707855 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@216" unique_id=1365964245]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@216/world" unique_id=1958806122]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@217" type="Node3D" parent="TerrainMap/Visuals" unique_id=962876490 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@217" unique_id=837661141]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@217/world" unique_id=92577503]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@218" type="Node3D" parent="TerrainMap/Visuals" unique_id=828545519 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@218" unique_id=1844595930]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@218/world" unique_id=2127671130]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@219" type="Node3D" parent="TerrainMap/Visuals" unique_id=728547386 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@219" unique_id=1671120382]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@219/world" unique_id=285991522]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@220" type="Node3D" parent="TerrainMap/Visuals" unique_id=2045795066 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@220" unique_id=1961406578]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@220/world" unique_id=1859610142]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@221" type="Node3D" parent="TerrainMap/Visuals" unique_id=1645452884 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@221" unique_id=1147618827]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@221/world" unique_id=1649848104]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@222" type="Node3D" parent="TerrainMap/Visuals" unique_id=139435911 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@222" unique_id=580215186]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@222/world" unique_id=875622342]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@223" type="Node3D" parent="TerrainMap/Visuals" unique_id=598743764 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@223" unique_id=650576849]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@223/world" unique_id=884613854]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@224" type="Node3D" parent="TerrainMap/Visuals" unique_id=182096970 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@224" unique_id=151616915]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@224/world" unique_id=509559397]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@225" type="Node3D" parent="TerrainMap/Visuals" unique_id=778404236 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@225" unique_id=2085781040]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@225/world" unique_id=244567346]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@226" type="Node3D" parent="TerrainMap/Visuals" unique_id=1805776971 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@226" unique_id=1758154439]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@226/world" unique_id=1337640362]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@227" type="Node3D" parent="TerrainMap/Visuals" unique_id=157998114 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@227" unique_id=792489796]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@227/world" unique_id=1645118867]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@228" type="Node3D" parent="TerrainMap/Visuals" unique_id=2080967328 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@228" unique_id=1128694679]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@228/world" unique_id=131856354]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@229" type="Node3D" parent="TerrainMap/Visuals" unique_id=1298090016 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@229" unique_id=766337324]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@229/world" unique_id=1507778603]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@230" type="Node3D" parent="TerrainMap/Visuals" unique_id=1376208516 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 21)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@230" unique_id=1366628109]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@230/world" unique_id=1185614263]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@231" type="Node3D" parent="TerrainMap/Visuals" unique_id=945487684 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@231" unique_id=1650345030]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@231/world" unique_id=1050486142]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@232" type="Node3D" parent="TerrainMap/Visuals" unique_id=2053788590 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@232" unique_id=1398167804]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@232/world" unique_id=833260805]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@233" type="Node3D" parent="TerrainMap/Visuals" unique_id=1320323008 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@233" unique_id=1322001002]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@233/world" unique_id=1790576200]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@234" type="Node3D" parent="TerrainMap/Visuals" unique_id=1557931022 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@234" unique_id=1556575400]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@234/world" unique_id=351710450]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@235" type="Node3D" parent="TerrainMap/Visuals" unique_id=2110021004 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@235" unique_id=1788010645]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@235/world" unique_id=1019139738]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@236" type="Node3D" parent="TerrainMap/Visuals" unique_id=1291297910 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@236" unique_id=1393102339]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@236/world" unique_id=2016638459]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@237" type="Node3D" parent="TerrainMap/Visuals" unique_id=395986093 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@237" unique_id=697163188]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@237/world" unique_id=1051132424]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@238" type="Node3D" parent="TerrainMap/Visuals" unique_id=1200781527 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@238" unique_id=1814224895]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@238/world" unique_id=205642864]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@239" type="Node3D" parent="TerrainMap/Visuals" unique_id=1183192015 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@239" unique_id=1044457144]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@239/world" unique_id=2102193688]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@240" type="Node3D" parent="TerrainMap/Visuals" unique_id=716393469 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@240" unique_id=411845670]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@240/world" unique_id=375008366]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@241" type="Node3D" parent="TerrainMap/Visuals" unique_id=1038606085 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@241" unique_id=1271950389]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@241/world" unique_id=1880534471]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@242" type="Node3D" parent="TerrainMap/Visuals" unique_id=758830661 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@242" unique_id=1488173360]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@242/world" unique_id=1237326282]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@243" type="Node3D" parent="TerrainMap/Visuals" unique_id=2125096958 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@243" unique_id=1921493654]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@243/world" unique_id=752539885]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@244" type="Node3D" parent="TerrainMap/Visuals" unique_id=1989058941 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@244" unique_id=626157426]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@244/world" unique_id=2061563422]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@245" type="Node3D" parent="TerrainMap/Visuals" unique_id=1563522484 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@245" unique_id=1158597317]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@245/world" unique_id=1370205558]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@246" type="Node3D" parent="TerrainMap/Visuals" unique_id=1710633012 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@246" unique_id=22779169]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@246/world" unique_id=1276578893]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@247" type="Node3D" parent="TerrainMap/Visuals" unique_id=1698156953 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@247" unique_id=916996473]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@247/world" unique_id=2082565370]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@248" type="Node3D" parent="TerrainMap/Visuals" unique_id=650863074 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@248" unique_id=21119441]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@248/world" unique_id=1632218225]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@249" type="Node3D" parent="TerrainMap/Visuals" unique_id=386510723 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@249" unique_id=1700768192]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@249/world" unique_id=1723109865]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@250" type="Node3D" parent="TerrainMap/Visuals" unique_id=1533594021 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@250" unique_id=1371276748]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@250/world" unique_id=485546502]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@251" type="Node3D" parent="TerrainMap/Visuals" unique_id=90455842 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 23)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@251" unique_id=1664321516]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@251/world" unique_id=1653463264]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@252" type="Node3D" parent="TerrainMap/Visuals" unique_id=246100615 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@252" unique_id=1469244059]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@252/world" unique_id=1648417532]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@253" type="Node3D" parent="TerrainMap/Visuals" unique_id=381383473 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@253" unique_id=1171034993]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@253/world" unique_id=143764355]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@254" type="Node3D" parent="TerrainMap/Visuals" unique_id=1719399992 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@254" unique_id=252304184]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@254/world" unique_id=759921529]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@255" type="Node3D" parent="TerrainMap/Visuals" unique_id=275877194 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@255" unique_id=1428294040]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@255/world" unique_id=320845943]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@256" type="Node3D" parent="TerrainMap/Visuals" unique_id=1208173575 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@256" unique_id=1983945264]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@256/world" unique_id=1332098210]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@257" type="Node3D" parent="TerrainMap/Visuals" unique_id=1772663911 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@257" unique_id=124186269]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@257/world" unique_id=631138282]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@258" type="Node3D" parent="TerrainMap/Visuals" unique_id=637022561 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@258" unique_id=353460922]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@258/world" unique_id=1093535729]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@259" type="Node3D" parent="TerrainMap/Visuals" unique_id=149724875 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@259" unique_id=1333623358]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@259/world" unique_id=2048287064]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@260" type="Node3D" parent="TerrainMap/Visuals" unique_id=495868194 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@260" unique_id=1471737253]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@260/world" unique_id=790028806]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@261" type="Node3D" parent="TerrainMap/Visuals" unique_id=703724260 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@261" unique_id=170535117]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@261/world" unique_id=1658730139]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@262" type="Node3D" parent="TerrainMap/Visuals" unique_id=443469691 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@262" unique_id=1351898337]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@262/world" unique_id=2003176742]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@263" type="Node3D" parent="TerrainMap/Visuals" unique_id=1119044520 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@263" unique_id=1127245328]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@263/world" unique_id=1705603051]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@264" type="Node3D" parent="TerrainMap/Visuals" unique_id=1960562673 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@264" unique_id=1042669969]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@264/world" unique_id=1584486071]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@265" type="Node3D" parent="TerrainMap/Visuals" unique_id=541152908 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@265" unique_id=1909067106]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@265/world" unique_id=1900206141]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@266" type="Node3D" parent="TerrainMap/Visuals" unique_id=1439597243 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@266" unique_id=295124598]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@266/world" unique_id=267127129]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@267" type="Node3D" parent="TerrainMap/Visuals" unique_id=499394000 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@267" unique_id=415007547]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@267/world" unique_id=313696998]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@268" type="Node3D" parent="TerrainMap/Visuals" unique_id=569128638 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@268" unique_id=2059124759]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@268/world" unique_id=1299514076]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@269" type="Node3D" parent="TerrainMap/Visuals" unique_id=187158357 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@269" unique_id=502109543]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@269/world" unique_id=1519610824]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@270" type="Node3D" parent="TerrainMap/Visuals" unique_id=257824552 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@270" unique_id=1222271109]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@270/world" unique_id=837871896]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@271" type="Node3D" parent="TerrainMap/Visuals" unique_id=1441295299 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@271" unique_id=1835774879]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@271/world" unique_id=1494943437]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@272" type="Node3D" parent="TerrainMap/Visuals" unique_id=906855189 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 25)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@272" unique_id=1949484705]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@272/world" unique_id=5863711]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@273" type="Node3D" parent="TerrainMap/Visuals" unique_id=1427668031 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@273" unique_id=1436146189]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@273/world" unique_id=1955970032]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@274" type="Node3D" parent="TerrainMap/Visuals" unique_id=886695061 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@274" unique_id=1487392920]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@274/world" unique_id=82613952]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@275" type="Node3D" parent="TerrainMap/Visuals" unique_id=499545897 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@275" unique_id=1873247823]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@275/world" unique_id=2132539941]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@276" type="Node3D" parent="TerrainMap/Visuals" unique_id=338373615 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@276" unique_id=1534551737]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@276/world" unique_id=460297288]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@277" type="Node3D" parent="TerrainMap/Visuals" unique_id=187588025 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@277" unique_id=83422410]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@277/world" unique_id=1840594381]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@278" type="Node3D" parent="TerrainMap/Visuals" unique_id=151485746 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@278" unique_id=2047464965]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@278/world" unique_id=1687813527]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@279" type="Node3D" parent="TerrainMap/Visuals" unique_id=2128691732 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@279" unique_id=1629653714]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@279/world" unique_id=956862804]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@280" type="Node3D" parent="TerrainMap/Visuals" unique_id=853447271 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@280" unique_id=1352740087]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@280/world" unique_id=1196898185]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@281" type="Node3D" parent="TerrainMap/Visuals" unique_id=2049065508 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@281" unique_id=1643096865]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@281/world" unique_id=2061619824]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@282" type="Node3D" parent="TerrainMap/Visuals" unique_id=1802465734 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@282" unique_id=1721318553]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@282/world" unique_id=143010021]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@283" type="Node3D" parent="TerrainMap/Visuals" unique_id=2030783457 instance=ExtResource("3_kd3eu")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@283" unique_id=1686311755]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@283/world" unique_id=1692249167]
+mesh = SubResource("ArrayMesh_4u8xk")
+
+[node name="@Node3D@284" type="Node3D" parent="TerrainMap/Visuals" unique_id=1613802107 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@284" unique_id=1100263287]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@284/world" unique_id=610323073]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@285" type="Node3D" parent="TerrainMap/Visuals" unique_id=161984297 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@285" unique_id=751474589]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@285/world" unique_id=63926611]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@286" type="Node3D" parent="TerrainMap/Visuals" unique_id=1656695364 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@286" unique_id=872410783]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@286/world" unique_id=752559307]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@287" type="Node3D" parent="TerrainMap/Visuals" unique_id=1228392930 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@287" unique_id=777737539]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@287/world" unique_id=1196674952]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@288" type="Node3D" parent="TerrainMap/Visuals" unique_id=2075237566 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@288" unique_id=1311646098]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@288/world" unique_id=1131209622]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@289" type="Node3D" parent="TerrainMap/Visuals" unique_id=1110579423 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@289" unique_id=387552096]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@289/world" unique_id=328636522]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@290" type="Node3D" parent="TerrainMap/Visuals" unique_id=1550489456 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@290" unique_id=904873047]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@290/world" unique_id=1831871168]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@291" type="Node3D" parent="TerrainMap/Visuals" unique_id=873003109 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@291" unique_id=2066558001]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@291/world" unique_id=240954785]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@292" type="Node3D" parent="TerrainMap/Visuals" unique_id=1874221378 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@292" unique_id=54159009]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@292/world" unique_id=1130346613]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="@Node3D@293" type="Node3D" parent="TerrainMap/Visuals" unique_id=646318849 instance=ExtResource("2_7h63w")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1, 27)
+
+[node name="world" type="Node3D" parent="TerrainMap/Visuals/@Node3D@293" unique_id=1801279062]
+
+[node name="geometry_0" type="MeshInstance3D" parent="TerrainMap/Visuals/@Node3D@293/world" unique_id=2029848846]
+mesh = SubResource("ArrayMesh_4qhvh")
+
+[node name="NodeMarkers" type="Node3D" parent="." unique_id=139054732]
+script = ExtResource("4_qddmj")
+
+[node name="SourceMarker" type="Node3D" parent="NodeMarkers" unique_id=765780735 instance=ExtResource("5_x42mn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 2, 9)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_vxexi")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/SourceMarker" unique_id=484879396]
+
+[node name="Crate" type="Node3D" parent="NodeMarkers/SourceMarker/Visual" unique_id=1558022444 instance=ExtResource("8_6yiy8")]
+transform = Transform3D(0.55, 0, 0, 0, 0.55, 0, 0, 0, 0.55, 0, 0.3, 0)
+
+[node name="world" type="Node3D" parent="NodeMarkers/SourceMarker/Visual/Crate" unique_id=1718608031]
+
+[node name="geometry_0" type="MeshInstance3D" parent="NodeMarkers/SourceMarker/Visual/Crate/world" unique_id=1368742663]
+material_override = SubResource("StandardMaterial3D_anbji")
+mesh = SubResource("ArrayMesh_bd1t6")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/SourceMarker" unique_id=411726937]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Farm"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@294" type="Node3D" parent="NodeMarkers" unique_id=298154232 instance=ExtResource("5_x42mn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 2, 13)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_xovoy")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@294" unique_id=1771532272]
+
+[node name="Crate" type="Node3D" parent="NodeMarkers/@Node3D@294/Visual" unique_id=1791188014 instance=ExtResource("8_6yiy8")]
+transform = Transform3D(0.55, 0, 0, 0, 0.55, 0, 0, 0, 0.55, 0, 0.3, 0)
+
+[node name="world" type="Node3D" parent="NodeMarkers/@Node3D@294/Visual/Crate" unique_id=209738433]
+
+[node name="geometry_0" type="MeshInstance3D" parent="NodeMarkers/@Node3D@294/Visual/Crate/world" unique_id=1973793667]
+material_override = SubResource("StandardMaterial3D_euxj6")
+mesh = SubResource("ArrayMesh_bd1t6")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@294" unique_id=1566573217]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Garden"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@295" type="Node3D" parent="NodeMarkers" unique_id=1961777649 instance=ExtResource("5_x42mn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 2, 19)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_d5ptm")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@295" unique_id=1869372286]
+
+[node name="Crate" type="Node3D" parent="NodeMarkers/@Node3D@295/Visual" unique_id=1341665271 instance=ExtResource("8_6yiy8")]
+transform = Transform3D(0.55, 0, 0, 0, 0.55, 0, 0, 0, 0.55, 0, 0.3, 0)
+
+[node name="world" type="Node3D" parent="NodeMarkers/@Node3D@295/Visual/Crate" unique_id=684559920]
+
+[node name="geometry_0" type="MeshInstance3D" parent="NodeMarkers/@Node3D@295/Visual/Crate/world" unique_id=885653026]
+material_override = SubResource("StandardMaterial3D_pwr6m")
+mesh = SubResource("ArrayMesh_bd1t6")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@295" unique_id=483602153]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Bakery"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@296" type="Node3D" parent="NodeMarkers" unique_id=1762632268 instance=ExtResource("5_x42mn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 2, 9)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_aljhd")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@296" unique_id=966178079]
+
+[node name="Crate" type="Node3D" parent="NodeMarkers/@Node3D@296/Visual" unique_id=1632268268 instance=ExtResource("8_6yiy8")]
+transform = Transform3D(0.55, 0, 0, 0, 0.55, 0, 0, 0, 0.55, 0, 0.3, 0)
+
+[node name="world" type="Node3D" parent="NodeMarkers/@Node3D@296/Visual/Crate" unique_id=985494399]
+
+[node name="geometry_0" type="MeshInstance3D" parent="NodeMarkers/@Node3D@296/Visual/Crate/world" unique_id=916625329]
+material_override = SubResource("StandardMaterial3D_20and")
+mesh = SubResource("ArrayMesh_bd1t6")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@296" unique_id=1525732319]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Dairy"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@297" type="Node3D" parent="NodeMarkers" unique_id=977344344 instance=ExtResource("5_x42mn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 35, 2, 19)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_lq88y")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@297" unique_id=242553352]
+
+[node name="Crate" type="Node3D" parent="NodeMarkers/@Node3D@297/Visual" unique_id=301325698 instance=ExtResource("8_6yiy8")]
+transform = Transform3D(0.55, 0, 0, 0, 0.55, 0, 0, 0, 0.55, 0, 0.3, 0)
+
+[node name="world" type="Node3D" parent="NodeMarkers/@Node3D@297/Visual/Crate" unique_id=1376193049]
+
+[node name="geometry_0" type="MeshInstance3D" parent="NodeMarkers/@Node3D@297/Visual/Crate/world" unique_id=81355371]
+material_override = SubResource("StandardMaterial3D_w3hvu")
+mesh = SubResource("ArrayMesh_bd1t6")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@297" unique_id=1188520841]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Harbor"
+font_size = 10
+outline_size = 3
+
+[node name="SettlementMarker" type="Node3D" parent="NodeMarkers" unique_id=398437791 instance=ExtResource("9_on3i4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 2, 7)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_pp5np")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/SettlementMarker" unique_id=1968813065]
+
+[node name="Pole" type="MeshInstance3D" parent="NodeMarkers/SettlementMarker/Visual" unique_id=1601029043]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+material_override = SubResource("StandardMaterial3D_iih0v")
+mesh = SubResource("1")
+
+[node name="Head" type="MeshInstance3D" parent="NodeMarkers/SettlementMarker/Visual" unique_id=1351109937]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+material_override = SubResource("StandardMaterial3D_h8krf")
+mesh = SubResource("2")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/SettlementMarker" unique_id=885661878]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Village A"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@298" type="Node3D" parent="NodeMarkers" unique_id=625799104 instance=ExtResource("9_on3i4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 13, 2, 21)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_i5j61")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@298" unique_id=1208128552]
+
+[node name="Pole" type="MeshInstance3D" parent="NodeMarkers/@Node3D@298/Visual" unique_id=1211952778]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+material_override = SubResource("StandardMaterial3D_go7qi")
+mesh = SubResource("1")
+
+[node name="Head" type="MeshInstance3D" parent="NodeMarkers/@Node3D@298/Visual" unique_id=1294202554]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+material_override = SubResource("StandardMaterial3D_6tbhh")
+mesh = SubResource("2")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@298" unique_id=908200689]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Village B"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@299" type="Node3D" parent="NodeMarkers" unique_id=212101951 instance=ExtResource("9_on3i4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 2, 7)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_1oktl")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@299" unique_id=247643229]
+
+[node name="Pole" type="MeshInstance3D" parent="NodeMarkers/@Node3D@299/Visual" unique_id=264276619]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+material_override = SubResource("StandardMaterial3D_pmsde")
+mesh = SubResource("1")
+
+[node name="Head" type="MeshInstance3D" parent="NodeMarkers/@Node3D@299/Visual" unique_id=1531636014]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+material_override = SubResource("StandardMaterial3D_xxlnh")
+mesh = SubResource("2")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@299" unique_id=1346865368]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Village C"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@300" type="Node3D" parent="NodeMarkers" unique_id=1307927810 instance=ExtResource("9_on3i4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 2, 13)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_kwn02")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@300" unique_id=318988120]
+
+[node name="Pole" type="MeshInstance3D" parent="NodeMarkers/@Node3D@300/Visual" unique_id=2022890220]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+material_override = SubResource("StandardMaterial3D_aatdh")
+mesh = SubResource("1")
+
+[node name="Head" type="MeshInstance3D" parent="NodeMarkers/@Node3D@300/Visual" unique_id=1023149710]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+material_override = SubResource("StandardMaterial3D_xlttg")
+mesh = SubResource("2")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@300" unique_id=112263158]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "Town D"
+font_size = 10
+outline_size = 3
+
+[node name="@Node3D@301" type="Node3D" parent="NodeMarkers" unique_id=309489335 instance=ExtResource("9_on3i4")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 2, 19)
+script = ExtResource("6_klls2")
+node_data = SubResource("Resource_q7vhy")
+
+[node name="Visual" type="Node3D" parent="NodeMarkers/@Node3D@301" unique_id=363165230]
+
+[node name="Pole" type="MeshInstance3D" parent="NodeMarkers/@Node3D@301/Visual" unique_id=1225963200]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+material_override = SubResource("StandardMaterial3D_vh1um")
+mesh = SubResource("1")
+
+[node name="Head" type="MeshInstance3D" parent="NodeMarkers/@Node3D@301/Visual" unique_id=330543615]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+material_override = SubResource("StandardMaterial3D_xeaf3")
+mesh = SubResource("2")
+
+[node name="Label3D" type="Label3D" parent="NodeMarkers/@Node3D@301" unique_id=147756074]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+billboard = 1
+fixed_size = true
+text = "City E"
+font_size = 10
+outline_size = 3

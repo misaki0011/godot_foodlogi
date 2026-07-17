@@ -12,6 +12,13 @@ const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
 const HUB_SCENE := preload("res://scenes/markers/hub_marker.tscn")
 const FOOD_NEED_SCENE := preload("res://scenes/markers/food_need_marker.tscn")
 
+const ROUTE_LEVEL_SCENES := {
+	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt.glb"),
+	"paved": preload("res://assets/Blocks/glTF/Block_Road_Paved.glb"),
+	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
+}
+const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
+
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
 const BRIDGE_COLOR := Color("8FB9D8")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}
@@ -34,7 +41,6 @@ const TOOL_HINTS := {
 @onready var _terrain: TerrainRenderer = $TerrainMap
 @onready var _node_spawner: NodeSpawner = $NodeMarkers
 @onready var _camera: Camera3D = $Camera3D
-@onready var _directional_light: DirectionalLight3D = $DirectionalLight3D
 
 var _map_data: MapData
 var _state := GameState.new()
@@ -64,7 +70,6 @@ var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
 func _ready() -> void:
-	_apply_web_mobile_rendering_limits()
 	_map_data = load(REGION_MAP_PATH)
 	_state.balance = GameBalance.STARTING_FUNDS
 	for node in _map_data.node_placements:
@@ -102,13 +107,6 @@ func _process(delta: float) -> void:
 		new_pos.x = clampf(new_pos.x, _map_bounds_min.x - PAN_MAP_MARGIN, _map_bounds_max.x + PAN_MAP_MARGIN)
 		new_pos.z = clampf(new_pos.z, _map_bounds_min.y - PAN_MAP_MARGIN, _map_bounds_max.y + PAN_MAP_MARGIN)
 		_camera.position = new_pos
-
-func _apply_web_mobile_rendering_limits() -> void:
-	# Mobile browsers have much smaller WebGL memory budgets than native apps.
-	# High-DPI rendering is disabled in project settings, and shadows are the
-	# largest remaining off-screen allocation in this scene.
-	if OS.has_feature("web_android") or OS.has_feature("web_ios"):
-		_directional_light.shadow_enabled = false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _report_overlay.visible:
@@ -346,8 +344,10 @@ func _render_grid() -> void:
 		var cell = _state.grid[pos]
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
 		if cell.kind == "route":
-			var color: Color = BRIDGE_COLOR if _map_data.is_river(pos.x, pos.y) else ROUTE_LEVEL_COLORS[cell.level]
-			_add_tile_box(world_pos, color, 0.16)
+			if _map_data.is_river(pos.x, pos.y):
+				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
+			else:
+				_add_route_block(world_pos, cell.level)
 			if cell.get("needs_hub", false):
 				_add_warning_ring(world_pos, Color("C4573A"))
 			elif cell.get("hub_capped", false):
@@ -398,10 +398,21 @@ func _render_food_need_bubbles() -> void:
 			bubble.setup(foods[food_id], unmet)
 			stack += 1
 
+func _add_route_block(pos: Vector3, level: String) -> void:
+	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
+	if scene == null:
+		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
+		return
+	var block: Node3D = scene.instantiate()
+	_grid_visuals.add_child(block)
+	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
+	# No scale needed: the block's footprint is authored at the real 2x2
+	# world-space cell size already (see generate_blocks.py).
+
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
-	mesh.size = Vector3(1.55, height, 1.55)
+	mesh.size = Vector3(_terrain.cell_size.x, height, _terrain.cell_size.z)
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos + Vector3(0, height * 0.5, 0)
 	var material := StandardMaterial3D.new()

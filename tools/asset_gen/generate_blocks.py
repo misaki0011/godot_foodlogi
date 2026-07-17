@@ -1,11 +1,21 @@
 """Generate the small set of block-style glTF props the game still needs.
 
-The original Kenney asset pack was deleted from the repo. Terrain rendering
-survives because resources/terrain/blocks.meshlib already has baked mesh
-data, but two marker scenes (source_marker.tscn, storage_marker.tscn)
-referenced external glTF files that no longer exist. This script
-procedurally rebuilds just those two props as simple, low-poly, vertex
-colored blocks -- no textures needed.
+The original Kenney asset pack was deleted from the repo, so every block and
+prop here is procedurally rebuilt as a simple, low-poly, vertex-colored mesh
+-- no textures needed. Terrain and route-tile blocks use a chunky,
+Animal-Crossing-inspired look (a distinct capped/inset top layer plus small
+detail bumps) instead of a single flat-colored cube.
+
+Every block is authored at its real, final 2.0 x 2.0 world-space footprint
+-- matching the GridMap's cell_size exactly -- so it can be placed with
+position alone and no scale transform anywhere in the pipeline. Each tile's
+top face has a thin border baked in at the true edge, so adjacent tiles'
+borders meet and read as a continuous grid line across the map.
+
+Every mesh gets an explicit matte (non-metallic, fully rough) material --
+without one, Godot's glTF import falls back to a shinier default that
+picks up visible reflections/banding from the editor's sky, which reads as
+a "weird texture" despite there being no texture in this pipeline at all.
 
 Run with: uv run --python .venv tools/asset_gen/generate_blocks.py
 """
@@ -21,10 +31,28 @@ CHEST_BASE = (122, 91, 63, 255)
 CHEST_LID = (94, 67, 45, 255)
 METAL_BAND = (150, 150, 158, 255)
 LATCH_GOLD = (201, 162, 39, 255)
-GRASS_TOP = (110, 173, 92, 255)
-GRASS_SIDE = (137, 107, 66, 255)
-ICE_TOP = (188, 224, 240, 255)
-ICE_SIDE = (129, 175, 204, 255)
+
+# Terrain (2x2 world-space footprint, placed with position only, no scale).
+DIRT_SIDE = (150, 116, 74, 255)
+DIRT_BOTTOM = (117, 89, 56, 255)
+GRASS_CAP = (128, 197, 104, 255)
+GRASS_TUFT = (104, 173, 84, 255)
+WATER_SIDE = (86, 138, 176, 255)
+WATER_BOTTOM = (66, 111, 148, 255)
+WATER_CAP = (150, 215, 232, 255)
+WATER_RIPPLE = (203, 238, 245, 255)
+
+# Route tiles (2x2 world-space footprint too; height is a thin slab on
+# top, authored directly in world-space meters).
+DIRT_ROAD_BASE = (181, 148, 100, 255)
+DIRT_ROAD_PATH = (201, 172, 122, 255)
+PAVED_BASE = (142, 138, 132, 255)
+PAVED_STONE = (176, 172, 164, 255)
+MAIN_BASE = (90, 80, 68, 255)
+MAIN_STRIPE = (223, 208, 168, 255)
+
+GRID_LINE_COLOR = (96, 100, 82, 255)
+GRID_LINE_THICKNESS = 0.03
 
 
 def _box(extents, translation, color) -> trimesh.Trimesh:
@@ -32,6 +60,21 @@ def _box(extents, translation, color) -> trimesh.Trimesh:
     mesh.apply_translation(translation)
     mesh.visual.vertex_colors = np.tile(color, (len(mesh.vertices), 1))
     return mesh
+
+
+def _grid_border_parts(footprint: float, top_y: float) -> list[trimesh.Trimesh]:
+    """Four thin strips forming a frame flush with a tile's true edge (no
+    inset), so two full-footprint tiles placed side by side have their
+    strips touch and read as one continuous grid line, replacing the old
+    gap-between-tiles look."""
+    half = footprint / 2
+    edge = half - GRID_LINE_THICKNESS / 2
+    return [
+        _box((footprint, 0.02, GRID_LINE_THICKNESS), (0, top_y, edge), GRID_LINE_COLOR),
+        _box((footprint, 0.02, GRID_LINE_THICKNESS), (0, top_y, -edge), GRID_LINE_COLOR),
+        _box((GRID_LINE_THICKNESS, 0.02, footprint), (edge, top_y, 0), GRID_LINE_COLOR),
+        _box((GRID_LINE_THICKNESS, 0.02, footprint), (-edge, top_y, 0), GRID_LINE_COLOR),
+    ]
 
 
 def build_crate() -> trimesh.Trimesh:
@@ -60,27 +103,99 @@ def build_chest() -> trimesh.Trimesh:
     return trimesh.util.concatenate(parts)
 
 
-def _two_tone_cube(top_color, side_color) -> trimesh.Trimesh:
-    """A unit cube with one color on top and another on the sides/bottom,
-    since a MeshLibrary item is baked mesh geometry -- vertex colors survive
-    the bake with no external texture file to go missing later."""
-    box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
-    colors = np.tile(side_color, (len(box.vertices), 1))
-    top_mask = box.vertices[:, 1] > 0.49
-    colors[top_mask] = top_color
-    box.visual.vertex_colors = colors
-    return box
-
-
 def build_grass_block() -> trimesh.Trimesh:
-    return _two_tone_cube(GRASS_TOP, GRASS_SIDE)
+    """Chunky grass-over-dirt cube: a dirt base with a flush (same-size,
+    non-overhanging) grass cap and four little corner tufts, plus a grid
+    border baked into the top edge. 2x2 world-space footprint (see module
+    docstring), so this is a straight 2x scale-up of every dimension from
+    the block's original 1x1 design -- same proportions, real size.
+
+    The dirt base is a deep plinth (not just a shallow slab) on purpose:
+    the game camera looks down at a fixed ~60 degree angle, not straight
+    down, so a shallow-based tile leaves a gap of empty space beneath its
+    visible front face before the next row's tile begins -- the camera
+    sees clean through to the sky background there. A shallow base looks
+    fine from directly above but shows a real gap at this camera's actual
+    angle; the plinth needs to reach deep enough that there's no empty
+    space left for that camera angle to see into."""
+    parts = [
+        _box((2.0, 6.36, 2.0), (0, -2.82, 0), DIRT_SIDE),
+        _box((2.0, 0.12, 2.0), (0, -5.94, 0), DIRT_BOTTOM),
+        _box((2.0, 0.68, 2.0), (0, 0.66, 0), GRASS_CAP),
+    ]
+    tuft = 0.32
+    for dx in (-1, 1):
+        for dz in (-1, 1):
+            x = dx * 0.64
+            z = dz * 0.64
+            parts.append(_box((tuft, 0.24, tuft), (x, 1.10, z), GRASS_TUFT))
+    parts += _grid_border_parts(2.0, 1.004)
+    return trimesh.util.concatenate(parts)
 
 
-def build_ice_block() -> trimesh.Trimesh:
-    return _two_tone_cube(ICE_TOP, ICE_SIDE)
+def build_river_block() -> trimesh.Trimesh:
+    """Chunky water cube: a darker basin with a flush (same-size) bright
+    cap, two pale ripple strips, and a grid border on top. Deep plinth for
+    the same reason as build_grass_block()'s -- no gap-to-the-sky at the
+    camera's actual viewing angle. Same 2x scale-up as build_grass_block()."""
+    parts = [
+        _box((2.0, 6.36, 2.0), (0, -2.82, 0), WATER_SIDE),
+        _box((2.0, 0.12, 2.0), (0, -5.94, 0), WATER_BOTTOM),
+        _box((2.0, 0.6, 2.0), (0, 0.70, 0), WATER_CAP),
+        _box((1.2, 0.04, 0.2), (-0.3, 1.02, -0.4), WATER_RIPPLE),
+        _box((1.0, 0.04, 0.2), (0.36, 1.02, 0.44), WATER_RIPPLE),
+    ]
+    parts += _grid_border_parts(2.0, 1.004)
+    return trimesh.util.concatenate(parts)
+
+
+def build_dirt_road_block() -> trimesh.Trimesh:
+    """A worn dirt path slab: a tan base with a lighter, slightly inset
+    tread strip down the middle, and a grid border on top. 2x2 world-space
+    footprint, placed with position only, no scale; height stays authored
+    directly in world-space meters (unaffected by the footprint change)."""
+    parts = [
+        _box((2.0, 0.22, 2.0), (0, 0, 0), DIRT_ROAD_BASE),
+        _box((1.48, 0.05, 2.0), (0, 0.135, 0), DIRT_ROAD_PATH),
+    ]
+    parts += _grid_border_parts(2.0, 0.111)
+    return trimesh.util.concatenate(parts)
+
+
+def build_paved_road_block() -> trimesh.Trimesh:
+    """A paved road slab: a grey base topped with four individually raised
+    cobblestone pavers (small gaps between them) instead of a flat color,
+    so it actually reads as *paving* rather than a generic grey box."""
+    parts = [_box((2.0, 0.22, 2.0), (0, 0, 0), PAVED_BASE)]
+    stone = 0.88
+    gap_offset = stone / 2 + 0.04
+    for dx in (-1, 1):
+        for dz in (-1, 1):
+            parts.append(
+                _box((stone, 0.08, stone), (dx * gap_offset, 0.15, dz * gap_offset), PAVED_STONE)
+            )
+    parts += _grid_border_parts(2.0, 0.111)
+    return trimesh.util.concatenate(parts)
+
+
+def build_main_road_block() -> trimesh.Trimesh:
+    """A major road slab: a dark base with a pale painted center line, for
+    the most-upgraded route tier."""
+    parts = [
+        _box((2.0, 0.24, 2.0), (0, 0, 0), MAIN_BASE),
+        _box((0.2, 0.03, 1.68), (0, 0.135, 0), MAIN_STRIPE),
+    ]
+    parts += _grid_border_parts(2.0, 0.121)
+    return trimesh.util.concatenate(parts)
 
 
 def export(mesh: trimesh.Trimesh, path: str) -> None:
+    # An explicit matte, non-metallic material -- without one, Godot's glTF
+    # import falls back to a shinier default that visibly reflects the
+    # editor's sky on these flat-shaded faces.
+    mesh.visual.material = trimesh.visual.material.PBRMaterial(
+        baseColorFactor=[255, 255, 255, 255], metallicFactor=0.0, roughnessFactor=1.0
+    )
     mesh.export(path, file_type="glb")
     print(f"wrote {path} ({len(mesh.vertices)} verts, {len(mesh.faces)} faces)")
 
@@ -89,4 +204,7 @@ if __name__ == "__main__":
     export(build_crate(), "assets/Blocks/glTF/Block_Crate.glb")
     export(build_chest(), "assets/Environment/glTF/Chest_Closed.glb")
     export(build_grass_block(), "assets/Blocks/glTF/Block_Grass.glb")
-    export(build_ice_block(), "assets/Blocks/glTF/Block_Ice.glb")
+    export(build_river_block(), "assets/Blocks/glTF/Block_Ice.glb")
+    export(build_dirt_road_block(), "assets/Blocks/glTF/Block_Road_Dirt.glb")
+    export(build_paved_road_block(), "assets/Blocks/glTF/Block_Road_Paved.glb")
+    export(build_main_road_block(), "assets/Blocks/glTF/Block_Road_Main.glb")

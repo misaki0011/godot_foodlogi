@@ -18,7 +18,7 @@ config/features=PackedStringArray("4.6", "GL Compatibility")
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
-window/stretch/mode="canvas_items"
+window/stretch/mode="viewport"
 window/stretch/aspect="expand"
 window/dpi/allow_hidpi=false
 
@@ -27,3 +27,4 @@ window/dpi/allow_hidpi=false
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
+anti_aliasing/quality/msaa_3d=2

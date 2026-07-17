@@ -1,3 +1,4 @@
+@tool
 class_name NodeMarker
 extends Node3D
 
