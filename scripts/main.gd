@@ -12,6 +12,13 @@ const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
 const HUB_SCENE := preload("res://scenes/markers/hub_marker.tscn")
 const FOOD_NEED_SCENE := preload("res://scenes/markers/food_need_marker.tscn")
 
+const ROUTE_LEVEL_SCENES := {
+	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt.glb"),
+	"paved": preload("res://assets/Blocks/glTF/Block_Road_Paved.glb"),
+	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
+}
+const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
+
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
 const BRIDGE_COLOR := Color("8FB9D8")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}
@@ -346,8 +353,10 @@ func _render_grid() -> void:
 		var cell = _state.grid[pos]
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
 		if cell.kind == "route":
-			var color: Color = BRIDGE_COLOR if _map_data.is_river(pos.x, pos.y) else ROUTE_LEVEL_COLORS[cell.level]
-			_add_tile_box(world_pos, color, 0.16)
+			if _map_data.is_river(pos.x, pos.y):
+				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
+			else:
+				_add_route_block(world_pos, cell.level)
 			if cell.get("needs_hub", false):
 				_add_warning_ring(world_pos, Color("C4573A"))
 			elif cell.get("hub_capped", false):
@@ -397,6 +406,15 @@ func _render_food_need_bubbles() -> void:
 			bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
 			bubble.setup(foods[food_id], unmet)
 			stack += 1
+
+func _add_route_block(pos: Vector3, level: String) -> void:
+	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
+	if scene == null:
+		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
+		return
+	var block: Node3D = scene.instantiate()
+	_grid_visuals.add_child(block)
+	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()

@@ -1,11 +1,11 @@
 """Generate the small set of block-style glTF props the game still needs.
 
-The original Kenney asset pack was deleted from the repo. Terrain rendering
-survives because resources/terrain/blocks.meshlib already has baked mesh
-data, but two marker scenes (source_marker.tscn, storage_marker.tscn)
-referenced external glTF files that no longer exist. This script
-procedurally rebuilds just those two props as simple, low-poly, vertex
-colored blocks -- no textures needed.
+The original Kenney asset pack was deleted from the repo, so every block and
+prop here is procedurally rebuilt as a simple, low-poly, vertex-colored mesh
+-- no textures needed. Terrain and route-tile blocks use a chunky,
+Animal-Crossing-inspired look (a distinct capped/inset top layer plus small
+detail bumps) instead of a single flat-colored cube, so tiles read as
+individual toy-like blocks rather than a flat color underneath the camera.
 
 Run with: uv run --python .venv tools/asset_gen/generate_blocks.py
 """
@@ -21,10 +21,26 @@ CHEST_BASE = (122, 91, 63, 255)
 CHEST_LID = (94, 67, 45, 255)
 METAL_BAND = (150, 150, 158, 255)
 LATCH_GOLD = (201, 162, 39, 255)
-GRASS_TOP = (110, 173, 92, 255)
-GRASS_SIDE = (137, 107, 66, 255)
-ICE_TOP = (188, 224, 240, 255)
-ICE_SIDE = (129, 175, 204, 255)
+
+# Terrain (GridMap cell content, unit cube -- GridMap scales this up by its
+# cell_size at placement time, same as the flat cubes it replaces).
+DIRT_SIDE = (150, 116, 74, 255)
+DIRT_BOTTOM = (117, 89, 56, 255)
+GRASS_CAP = (128, 197, 104, 255)
+GRASS_TUFT = (104, 173, 84, 255)
+WATER_SIDE = (86, 138, 176, 255)
+WATER_BOTTOM = (66, 111, 148, 255)
+WATER_CAP = (150, 215, 232, 255)
+WATER_RIPPLE = (203, 238, 245, 255)
+
+# Route tiles (world-space slabs main.gd lays on top of the terrain, sized
+# directly in meters -- no extra runtime scale needed).
+DIRT_ROAD_BASE = (181, 148, 100, 255)
+DIRT_ROAD_PATH = (201, 172, 122, 255)
+PAVED_BASE = (142, 138, 132, 255)
+PAVED_STONE = (176, 172, 164, 255)
+MAIN_BASE = (90, 80, 68, 255)
+MAIN_STRIPE = (223, 208, 168, 255)
 
 
 def _box(extents, translation, color) -> trimesh.Trimesh:
@@ -60,24 +76,70 @@ def build_chest() -> trimesh.Trimesh:
     return trimesh.util.concatenate(parts)
 
 
-def _two_tone_cube(top_color, side_color) -> trimesh.Trimesh:
-    """A unit cube with one color on top and another on the sides/bottom,
-    since a MeshLibrary item is baked mesh geometry -- vertex colors survive
-    the bake with no external texture file to go missing later."""
-    box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
-    colors = np.tile(side_color, (len(box.vertices), 1))
-    top_mask = box.vertices[:, 1] > 0.49
-    colors[top_mask] = top_color
-    box.visual.vertex_colors = colors
-    return box
-
-
 def build_grass_block() -> trimesh.Trimesh:
-    return _two_tone_cube(GRASS_TOP, GRASS_SIDE)
+    """Chunky grass-over-dirt cube: a dirt base with a slightly overhanging
+    grass cap and four little corner tufts, instead of a flat two-tone
+    split, so it reads as a toy block rather than a painted cube."""
+    parts = [
+        _box((1.0, 0.68, 1.0), (0, -0.16, 0), DIRT_SIDE),
+        _box((1.0, 0.06, 1.0), (0, -0.47, 0), DIRT_BOTTOM),
+        _box((1.03, 0.34, 1.03), (0, 0.33, 0), GRASS_CAP),
+    ]
+    tuft = 0.16
+    for dx in (-1, 1):
+        for dz in (-1, 1):
+            x = dx * 0.32
+            z = dz * 0.32
+            parts.append(_box((tuft, 0.12, tuft), (x, 0.55, z), GRASS_TUFT))
+    return trimesh.util.concatenate(parts)
 
 
-def build_ice_block() -> trimesh.Trimesh:
-    return _two_tone_cube(ICE_TOP, ICE_SIDE)
+def build_river_block() -> trimesh.Trimesh:
+    """Chunky water cube: a darker basin with a bright cap and two pale
+    ripple strips, echoing Animal Crossing's cute, high-contrast water."""
+    parts = [
+        _box((1.0, 0.68, 1.0), (0, -0.16, 0), WATER_SIDE),
+        _box((1.0, 0.06, 1.0), (0, -0.47, 0), WATER_BOTTOM),
+        _box((1.03, 0.3, 1.03), (0, 0.35, 0), WATER_CAP),
+        _box((0.6, 0.02, 0.1), (-0.15, 0.51, -0.2), WATER_RIPPLE),
+        _box((0.5, 0.02, 0.1), (0.18, 0.51, 0.22), WATER_RIPPLE),
+    ]
+    return trimesh.util.concatenate(parts)
+
+
+def build_dirt_road_block() -> trimesh.Trimesh:
+    """A worn dirt path slab: a tan base with a lighter, slightly inset
+    tread strip down the middle."""
+    parts = [
+        _box((1.55, 0.22, 1.55), (0, 0, 0), DIRT_ROAD_BASE),
+        _box((1.15, 0.05, 1.55), (0, 0.135, 0), DIRT_ROAD_PATH),
+    ]
+    return trimesh.util.concatenate(parts)
+
+
+def build_paved_road_block() -> trimesh.Trimesh:
+    """A paved road slab: a grey base topped with four individually raised
+    cobblestone pavers (small gaps between them) instead of a flat color,
+    so it actually reads as *paving* rather than a generic grey box."""
+    parts = [_box((1.55, 0.22, 1.55), (0, 0, 0), PAVED_BASE)]
+    stone = 0.68
+    gap_offset = stone / 2 + 0.03
+    for dx in (-1, 1):
+        for dz in (-1, 1):
+            parts.append(
+                _box((stone, 0.08, stone), (dx * gap_offset, 0.15, dz * gap_offset), PAVED_STONE)
+            )
+    return trimesh.util.concatenate(parts)
+
+
+def build_main_road_block() -> trimesh.Trimesh:
+    """A major road slab: a dark base with a pale painted center line, for
+    the most-upgraded route tier."""
+    parts = [
+        _box((1.55, 0.24, 1.55), (0, 0, 0), MAIN_BASE),
+        _box((0.16, 0.03, 1.3), (0, 0.135, 0), MAIN_STRIPE),
+    ]
+    return trimesh.util.concatenate(parts)
 
 
 def export(mesh: trimesh.Trimesh, path: str) -> None:
@@ -89,4 +151,7 @@ if __name__ == "__main__":
     export(build_crate(), "assets/Blocks/glTF/Block_Crate.glb")
     export(build_chest(), "assets/Environment/glTF/Chest_Closed.glb")
     export(build_grass_block(), "assets/Blocks/glTF/Block_Grass.glb")
-    export(build_ice_block(), "assets/Blocks/glTF/Block_Ice.glb")
+    export(build_river_block(), "assets/Blocks/glTF/Block_Ice.glb")
+    export(build_dirt_road_block(), "assets/Blocks/glTF/Block_Road_Dirt.glb")
+    export(build_paved_road_block(), "assets/Blocks/glTF/Block_Road_Paved.glb")
+    export(build_main_road_block(), "assets/Blocks/glTF/Block_Road_Main.glb")
