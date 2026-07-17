@@ -1,4 +1,5 @@
-extends SceneTree
+@tool
+extends EditorScript
 
 ## Bakes the terrain and node markers into a standalone, script-free scene
 ## (scenes/main/MapPreview.tscn) so the map is visible in the Godot
@@ -16,12 +17,17 @@ extends SceneTree
 ## they live in GameState.grid, not MapData, and only exist once a game
 ## session actually builds them.
 ##
-## Run via: godot --headless --script res://scripts/tools/bake_static_map.gd
+## Run from inside the editor: open this file in the Script tab, then
+## File > Run (or Ctrl+Shift+X). EditorScript can only run inside a live
+## editor session -- Godot rejects it outright from `godot --script`
+## (even with --editor), so there's no headless/CLI equivalent for this
+## one; see git history for the previous SceneTree-based CLI version if
+## a headless variant is needed again.
 
 const OUTPUT_SCENE_PATH := "res://scenes/main/MapPreview.tscn"
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 
-func _initialize() -> void:
+func _run() -> void:
 	var preview := Node3D.new()
 	preview.name = "MapPreview"
 
@@ -73,17 +79,15 @@ func _initialize() -> void:
 	var pack_result := packed.pack(preview)
 	if pack_result != OK:
 		printerr("bake_static_map: pack() failed with error %d" % pack_result)
-		quit(1)
 		return
 
 	var save_result := ResourceSaver.save(packed, OUTPUT_SCENE_PATH)
 	if save_result != OK:
 		printerr("bake_static_map: ResourceSaver.save() failed with error %d" % save_result)
-		quit(1)
 		return
 
 	print("bake_static_map: baked terrain + markers into %s" % OUTPUT_SCENE_PATH)
-	quit()
+	get_editor_interface().get_resource_filesystem().scan()
 
 func _claim_ownership(node: Node, owner: Node) -> void:
 	for child in node.get_children():
