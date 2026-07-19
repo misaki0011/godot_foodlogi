@@ -147,6 +147,9 @@ func _do_build_route(cell: Vector2i) -> void:
 	if not _adjacent_to_network(cell):
 		_show_toast("Route must connect to a node or existing route.", true)
 		return
+	if SimulationEngine.would_exceed_hub_cap(_state, _nodes_by_pos, cell):
+		_show_toast("Can't place this road: it would need a 3rd hub, but each connected network can only support %d. Try routing around this junction." % GameBalance.HUB_CAP_PER_NETWORK, true)
+		return
 	var cost := SimulationEngine.route_build_cost(cell, _map_data)
 	if _state.balance < cost:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
@@ -402,6 +405,11 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 		bubble.setup(foods[food_id], used, produced, used >= produced - 0.01)
 		stack += 1
 
+## A settlement can demand up to 3 foods (Town D, City E), and some
+## settlements sit only 3 tiles from a neighbor -- stacking every bubble
+## in a single tall column risked visually crowding the neighbor's own
+## bubbles. A 2-column grid caps the stack at 2 rows regardless of how
+## many foods are demanded.
 func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
 	var status = _state.last_settlement_status.get(n.node_id, {})
 	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
@@ -409,7 +417,7 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 	# above it -- otherwise this billboard sits inside the pin head and the
 	# two fuse into an unreadable blob.
 	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
-	var stack := 0
+	var index := 0
 	for food_id in n.demand:
 		var requested: float = n.demand[food_id]
 		var delivered: float = 0.0
@@ -418,11 +426,14 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			requested = s.requested
 			delivered = s.delivered
 		var fulfilled: bool = delivered >= requested - 0.01
+		var row := index / 2
+		var col := index % 2
+		var col_offset: float = (col - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.STACK_SPACING, 0)
+		bubble.position = base_pos + Vector3(col_offset, row * FoodBubbleMarker.STACK_SPACING, 0)
 		bubble.setup(foods[food_id], delivered, requested, fulfilled, true, fulfilled)
-		stack += 1
+		index += 1
 
 func _add_route_block(pos: Vector3, level: String) -> void:
 	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)

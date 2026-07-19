@@ -10,12 +10,16 @@ extends Node3D
 ## Label3D sorting behind the bubble mesh, and reads far crisper than
 ## stacked 3D primitives at this scale.
 
-## World-space height of the baked sprite (SubViewport size.y * Sprite3D
-## pixel_size in food_bubble_marker.tscn). Callers stacking multiple
-## bubbles above one node (main.gd) must space them at least this far
-## apart vertically, or consecutive bubbles overlap.
-const WORLD_HEIGHT := 0.75
-const STACK_SPACING := WORLD_HEIGHT + 0.15
+## World-space size of the baked sprite (SubViewport size * Sprite3D
+## pixel_size in food_bubble_marker.tscn). Callers arranging multiple
+## bubbles above one node (main.gd's bubble grid) must space rows/columns
+## at least this far apart, or consecutive bubbles overlap; some close
+## neighboring nodes also lean on the smaller footprint here to keep
+## their own bubbles from visually crowding each other's airspace.
+const WORLD_WIDTH := 1.178
+const WORLD_HEIGHT := 0.57
+const STACK_SPACING := WORLD_HEIGHT + 0.08
+const COLUMN_SPACING := WORLD_WIDTH + 0.1
 
 @onready var _canvas: BubbleCanvas = $SubViewport/BubbleCanvas
 @onready var _viewport: SubViewport = $SubViewport
