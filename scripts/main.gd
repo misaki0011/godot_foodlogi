@@ -396,7 +396,7 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 			used = status[food_id].used
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
+		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.STACK_SPACING, 0)
 		bubble.setup(foods[food_id], used, produced, used >= produced - 0.01)
 		stack += 1
 
@@ -417,8 +417,8 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			delivered = s.delivered
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
-		bubble.setup(foods[food_id], delivered, requested)
+		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.STACK_SPACING, 0)
+		bubble.setup(foods[food_id], delivered, requested, false, true, delivered >= requested - 0.01)
 		stack += 1
 
 func _add_route_block(pos: Vector3, level: String) -> void:

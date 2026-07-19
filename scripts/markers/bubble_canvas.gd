@@ -21,14 +21,23 @@ const GRAYED_BUBBLE_COLOR := Color(0.82, 0.82, 0.79, 0.9)
 const GRAYED_ICON_COLOR := Color(0.58, 0.58, 0.55)
 const GRAYED_TEXT_COLOR := Color(0.42, 0.42, 0.4)
 
+const CHECK_COLOR := Color(0.28, 0.5, 0.26)
+
 var _icon_color: Color = Color.WHITE
 var _amount_text: String = "0"
 var _grayed_out: bool = false
+var _show_checkbox: bool = false
+var _checked: bool = false
 
-func set_content(icon_color: Color, amount_text: String, grayed_out: bool = false) -> void:
+## show_checkbox/checked add a checkbox before the food icon (settlement
+## bubbles only, main.gd): checked once a food's delivered amount meets
+## its requested amount, empty otherwise.
+func set_content(icon_color: Color, amount_text: String, grayed_out: bool = false, show_checkbox: bool = false, checked: bool = false) -> void:
 	_icon_color = icon_color
 	_amount_text = amount_text
 	_grayed_out = grayed_out
+	_show_checkbox = show_checkbox
+	_checked = checked
 	queue_redraw()
 
 func _draw() -> void:
@@ -59,8 +68,23 @@ func _draw() -> void:
 	draw_colored_polygon(tail, bubble_color)
 	draw_polyline(PackedVector2Array([tail[0], tail[2], tail[1]]), BORDER_COLOR, 2.0, true)
 
+	var content_x := bubble_rect.position.x + 10
+	if _show_checkbox:
+		var box_side := bubble_rect.size.y * 0.34
+		var box_rect := Rect2(Vector2(content_x, bubble_rect.position.y + (bubble_rect.size.y - box_side) * 0.5), Vector2(box_side, box_side))
+		draw_rect(box_rect, Color.WHITE, true)
+		draw_rect(box_rect, BORDER_COLOR, false, 2.0)
+		if _checked:
+			var tick := PackedVector2Array([
+				box_rect.position + Vector2(box_side * 0.18, box_side * 0.55),
+				box_rect.position + Vector2(box_side * 0.42, box_side * 0.8),
+				box_rect.position + Vector2(box_side * 0.85, box_side * 0.2),
+			])
+			draw_polyline(tick, CHECK_COLOR, 3.0, true)
+		content_x = box_rect.end.x + 8
+
 	var icon_r := bubble_rect.size.y * 0.30
-	var icon_center := Vector2(bubble_rect.position.x + icon_r + 10, bubble_rect.position.y + bubble_rect.size.y * 0.5)
+	var icon_center := Vector2(content_x + icon_r, bubble_rect.position.y + bubble_rect.size.y * 0.5)
 	draw_circle(icon_center, icon_r, icon_color)
 	draw_arc(icon_center, icon_r, 0, TAU, 32, BORDER_COLOR, 2.0, true)
 
