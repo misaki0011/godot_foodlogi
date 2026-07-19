@@ -2,12 +2,13 @@ class_name FoodBubbleMarker
 extends Node3D
 
 ## A speech bubble floated above a node showing a food-colored icon and a
-## quantity: a source's daily supply (always visible, node_spawner.gd), or
-## a settlement's unmet demand for the last simulated day (main.gd's
-## _render_food_need_bubbles). The bubble is drawn once into a SubViewport
-## and displayed on a billboard Sprite3D -- baking the whole thing (shape,
-## icon, number) into one texture avoids Label3D sorting behind the bubble
-## mesh, and reads far crisper than stacked 3D primitives at this scale.
+## "current/max" quantity: a source's amount drawn today vs. its daily
+## produce, or a settlement's delivered amount vs. its daily demand (both
+## from main.gd, refreshed each time the grid re-renders). The bubble is
+## drawn once into a SubViewport and displayed on a billboard Sprite3D --
+## baking the whole thing (shape, icon, numbers) into one texture avoids
+## Label3D sorting behind the bubble mesh, and reads far crisper than
+## stacked 3D primitives at this scale.
 
 @onready var _canvas: BubbleCanvas = $SubViewport/BubbleCanvas
 @onready var _viewport: SubViewport = $SubViewport
@@ -16,6 +17,9 @@ extends Node3D
 func _ready() -> void:
 	_sprite.texture = _viewport.get_texture()
 
-func setup(food: FoodData, amount: float) -> void:
-	_canvas.set_content(food.color, str(roundi(amount)))
+## grayed_out mutes the bubble's color -- used by a source once it has
+## given away its entire daily produce, so a glance shows it's tapped out.
+func setup(food: FoodData, current: float, max_amount: float, grayed_out: bool = false) -> void:
+	var text := "%d/%d" % [roundi(current), roundi(max_amount)]
+	_canvas.set_content(food.color, text, grayed_out)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE

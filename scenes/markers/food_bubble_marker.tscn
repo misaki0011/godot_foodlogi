@@ -8,7 +8,7 @@ script = ExtResource("1")
 
 [node name="SubViewport" type="SubViewport" parent="."]
 transparent_bg = true
-size = Vector2i(220, 150)
+size = Vector2i(280, 150)
 render_target_update_mode = 1
 
 [node name="BubbleCanvas" type="Control" parent="SubViewport"]

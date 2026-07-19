@@ -80,6 +80,7 @@ func _ready() -> void:
 	_grid_visuals = Node3D.new()
 	_grid_visuals.name = "GridVisuals"
 	add_child(_grid_visuals)
+	_render_grid()
 	_default_camera_size = _camera.size
 	var min_corner: Vector3 = _terrain.map_to_local(Vector3i(0, 0, 0))
 	var max_corner: Vector3 = _terrain.map_to_local(Vector3i(_map_data.grid_size.x - 1, 0, _map_data.grid_size.y - 1))
@@ -365,38 +366,60 @@ func _render_grid() -> void:
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
-	_render_food_need_bubbles()
+	_render_supply_bubbles()
 
-## Speech-bubble indicator floated above any settlement still short on a
-## food after the last simulated day (SETT-02/LOOP-02 unmet demand =
-## requested - delivered), so a shortfall is visible without a click.
-func _render_food_need_bubbles() -> void:
+## Always-on speech bubbles showing "current/max" for every source and
+## settlement: a source's amount drawn today vs. its daily produce
+## (SimulationEngine.run_day's last_source_status), grayed out once fully
+## tapped out; a settlement's delivered vs. requested amount per food
+## (last_settlement_status). Both read as "0/max" before the first
+## simulated day, since neither dictionary has entries yet.
+func _render_supply_bubbles() -> void:
 	var foods := GameBalance.food_types()
 	for pos in _nodes_by_pos:
 		var n: NodeData = _nodes_by_pos[pos]
-		if n.node_type != GameEnums.NodeType.SETTLEMENT:
-			continue
-		var status = _state.last_settlement_status.get(n.node_id)
-		if status == null:
-			continue
-		# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
-		# +1.0 root offset plus node_marker_base.tscn's local offset), so start
-		# above it -- otherwise this billboard sits inside the pin head and the
-		# two fuse into an unreadable blob.
-		var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
-		var stack := 0
-		for food_id in n.demand:
-			var s = status.get(food_id)
-			if s == null:
-				continue
-			var unmet: float = s.requested - s.delivered
-			if unmet < 0.5:
-				continue
-			var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-			_grid_visuals.add_child(bubble)
-			bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
-			bubble.setup(foods[food_id], unmet)
-			stack += 1
+		if n.node_type == GameEnums.NodeType.SOURCE:
+			_render_source_bubbles(n, pos, foods)
+		elif n.node_type == GameEnums.NodeType.SETTLEMENT:
+			_render_settlement_bubbles(n, pos, foods)
+
+func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
+	# The source's crate model is shorter than the settlement pin, so its
+	# bubble sits a little lower than the settlement stack's start height.
+	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 2.5, 0)
+	var stack := 0
+	for food_id in n.produces:
+		var produced: float = n.produces[food_id]
+		var used: float = 0.0
+		if status.has(food_id):
+			used = status[food_id].used
+		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+		_grid_visuals.add_child(bubble)
+		bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
+		bubble.setup(foods[food_id], used, produced, used >= produced - 0.01)
+		stack += 1
+
+func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+	var status = _state.last_settlement_status.get(n.node_id, {})
+	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
+	# +1.0 root offset plus node_marker_base.tscn's local offset), so start
+	# above it -- otherwise this billboard sits inside the pin head and the
+	# two fuse into an unreadable blob.
+	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
+	var stack := 0
+	for food_id in n.demand:
+		var requested: float = n.demand[food_id]
+		var delivered: float = 0.0
+		var s = status.get(food_id)
+		if s != null:
+			requested = s.requested
+			delivered = s.delivered
+		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+		_grid_visuals.add_child(bubble)
+		bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
+		bubble.setup(foods[food_id], delivered, requested)
+		stack += 1
 
 func _add_route_block(pos: Vector3, level: String) -> void:
 	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)

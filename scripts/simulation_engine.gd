@@ -356,8 +356,18 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		state.best_grade = grade
 	state.score_history.append({"day": state.day, "score": grade_score, "grade": grade, "profit": profit})
 
+	var source_status := {}
+	for s in sources:
+		var food_status := {}
+		for food_id in s.produces:
+			var produced: float = s.produces[food_id]
+			var left: float = supply_left.get("%s|%s" % [s.node_id, food_id], produced)
+			food_status[food_id] = {"produced": produced, "used": produced - left}
+		source_status[s.node_id] = food_status
+
 	state.last_flows = flows
 	state.last_settlement_status = settlement_food_status
+	state.last_source_status = source_status
 	state.last_congestion.clear()
 	for pos in state.grid:
 		var cap := tile_capacity(state, pos)

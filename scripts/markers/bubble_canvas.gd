@@ -14,15 +14,28 @@ const BORDER_COLOR := Color(0.15, 0.12, 0.08, 0.65)
 const TEXT_COLOR := Color(0.14, 0.11, 0.08)
 const TAIL_HEIGHT := 14.0
 
+## A source that has given up its whole daily produce, or any other
+## "nothing more to see here" state, mutes the bubble to this palette
+## instead of the normal food-colored one.
+const GRAYED_BUBBLE_COLOR := Color(0.82, 0.82, 0.79, 0.9)
+const GRAYED_ICON_COLOR := Color(0.58, 0.58, 0.55)
+const GRAYED_TEXT_COLOR := Color(0.42, 0.42, 0.4)
+
 var _icon_color: Color = Color.WHITE
 var _amount_text: String = "0"
+var _grayed_out: bool = false
 
-func set_content(icon_color: Color, amount_text: String) -> void:
+func set_content(icon_color: Color, amount_text: String, grayed_out: bool = false) -> void:
 	_icon_color = icon_color
 	_amount_text = amount_text
+	_grayed_out = grayed_out
 	queue_redraw()
 
 func _draw() -> void:
+	var bubble_color := GRAYED_BUBBLE_COLOR if _grayed_out else BUBBLE_COLOR
+	var icon_color := GRAYED_ICON_COLOR if _grayed_out else _icon_color
+	var text_color := GRAYED_TEXT_COLOR if _grayed_out else TEXT_COLOR
+
 	var bubble_rect := Rect2(Vector2(3, 3), Vector2(size.x - 6, size.y - TAIL_HEIGHT - 6))
 
 	var shadow_box := StyleBoxFlat.new()
@@ -31,7 +44,7 @@ func _draw() -> void:
 	draw_style_box(shadow_box, Rect2(bubble_rect.position + Vector2(0, 2), bubble_rect.size))
 
 	var box := StyleBoxFlat.new()
-	box.bg_color = BUBBLE_COLOR
+	box.bg_color = bubble_color
 	box.set_corner_radius_all(int(bubble_rect.size.y * 0.35))
 	box.border_color = BORDER_COLOR
 	box.set_border_width_all(2)
@@ -43,17 +56,17 @@ func _draw() -> void:
 		Vector2(tail_cx + 8, bubble_rect.end.y - 2),
 		Vector2(tail_cx, bubble_rect.end.y + TAIL_HEIGHT - 2),
 	])
-	draw_colored_polygon(tail, BUBBLE_COLOR)
+	draw_colored_polygon(tail, bubble_color)
 	draw_polyline(PackedVector2Array([tail[0], tail[2], tail[1]]), BORDER_COLOR, 2.0, true)
 
 	var icon_r := bubble_rect.size.y * 0.30
 	var icon_center := Vector2(bubble_rect.position.x + icon_r + 10, bubble_rect.position.y + bubble_rect.size.y * 0.5)
-	draw_circle(icon_center, icon_r, _icon_color)
+	draw_circle(icon_center, icon_r, icon_color)
 	draw_arc(icon_center, icon_r, 0, TAU, 32, BORDER_COLOR, 2.0, true)
 
 	var font := ThemeDB.fallback_font
-	var font_size := int(bubble_rect.size.y * 0.5)
+	var font_size := int(bubble_rect.size.y * 0.42)
 	var text_x := icon_center.x + icon_r + 10
 	var text_width := bubble_rect.end.x - text_x - 8
 	var text_pos := Vector2(text_x, bubble_rect.position.y + bubble_rect.size.y * 0.5 + font_size * 0.35)
-	draw_string(font, text_pos, _amount_text, HORIZONTAL_ALIGNMENT_LEFT, text_width, font_size, TEXT_COLOR)
+	draw_string(font, text_pos, _amount_text, HORIZONTAL_ALIGNMENT_LEFT, text_width, font_size, text_color)
