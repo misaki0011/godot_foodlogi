@@ -22,6 +22,8 @@ const GRAYED_ICON_COLOR := Color(0.58, 0.58, 0.55)
 const GRAYED_TEXT_COLOR := Color(0.42, 0.42, 0.4)
 
 const CHECK_COLOR := Color(0.28, 0.5, 0.26)
+const GRAYED_CHECK_COLOR := Color(0.5, 0.5, 0.48)
+const GRAYED_CHECKBOX_FILL := Color(0.88, 0.88, 0.86)
 
 var _icon_color: Color = Color.WHITE
 var _amount_text: String = "0"
@@ -72,7 +74,7 @@ func _draw() -> void:
 	if _show_checkbox:
 		var box_side := bubble_rect.size.y * 0.34
 		var box_rect := Rect2(Vector2(content_x, bubble_rect.position.y + (bubble_rect.size.y - box_side) * 0.5), Vector2(box_side, box_side))
-		draw_rect(box_rect, Color.WHITE, true)
+		draw_rect(box_rect, GRAYED_CHECKBOX_FILL if _grayed_out else Color.WHITE, true)
 		draw_rect(box_rect, BORDER_COLOR, false, 2.0)
 		if _checked:
 			var tick := PackedVector2Array([
@@ -80,7 +82,7 @@ func _draw() -> void:
 				box_rect.position + Vector2(box_side * 0.42, box_side * 0.8),
 				box_rect.position + Vector2(box_side * 0.85, box_side * 0.2),
 			])
-			draw_polyline(tick, CHECK_COLOR, 3.0, true)
+			draw_polyline(tick, GRAYED_CHECK_COLOR if _grayed_out else CHECK_COLOR, 3.0, true)
 		content_x = box_rect.end.x + 8
 
 	var icon_r := bubble_rect.size.y * 0.30

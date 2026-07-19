@@ -372,8 +372,10 @@ func _render_grid() -> void:
 ## settlement: a source's amount drawn today vs. its daily produce
 ## (SimulationEngine.run_day's last_source_status), grayed out once fully
 ## tapped out; a settlement's delivered vs. requested amount per food
-## (last_settlement_status). Both read as "0/max" before the first
-## simulated day, since neither dictionary has entries yet.
+## (last_settlement_status), grayed out (and checked, see
+## _render_settlement_bubbles) once that food's demand is fully met. Both
+## read as "0/max" before the first simulated day, since neither
+## dictionary has entries yet.
 func _render_supply_bubbles() -> void:
 	var foods := GameBalance.food_types()
 	for pos in _nodes_by_pos:
@@ -415,10 +417,11 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		if s != null:
 			requested = s.requested
 			delivered = s.delivered
+		var fulfilled: bool = delivered >= requested - 0.01
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
 		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.STACK_SPACING, 0)
-		bubble.setup(foods[food_id], delivered, requested, false, true, delivered >= requested - 0.01)
+		bubble.setup(foods[food_id], delivered, requested, fulfilled, true, fulfilled)
 		stack += 1
 
 func _add_route_block(pos: Vector3, level: String) -> void:
