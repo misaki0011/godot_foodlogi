@@ -360,12 +360,12 @@ func _render_grid() -> void:
 			var marker: NodeMarker = STORAGE_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
 			marker.position = world_pos
-			marker.apply_tint(MarkerColors.storage_color(cell.stype), GameBalance.STORAGE_TYPES[cell.stype].name)
+			marker.apply_tint(MarkerColors.storage_color(cell.stype))
 		elif cell.kind == "hub":
 			var marker: NodeMarker = HUB_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
 			marker.position = world_pos
-			marker.apply_tint(MarkerColors.hub_color(cell.htype), GameBalance.HUB_TYPES[cell.htype].name)
+			marker.apply_tint(MarkerColors.hub_color(cell.htype))
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
