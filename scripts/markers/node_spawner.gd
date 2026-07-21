@@ -6,7 +6,9 @@ extends Node3D
 ## via the GridMap's own map_to_local() so markers align exactly to terrain
 ## cells without manual grid math. Player-built route/storage/hub tiles are
 ## rendered separately (see Main._render_grid) since they live in
-## GameState.grid, not MapData.node_placements.
+## GameState.grid, not MapData.node_placements. Supply/demand speech
+## bubbles are rendered by Main._render_supply_bubbles instead, since they
+## need to be rebuilt every simulated day, not just once at spawn time.
 
 const MARKER_SCENES := {
 	GameEnums.NodeType.SOURCE: preload("res://scenes/markers/source_marker.tscn"),

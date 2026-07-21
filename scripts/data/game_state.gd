@@ -18,4 +18,5 @@ var grid: Dictionary = {}
 ## Last simulated day's results, kept for hover popups (SPEC.md §17 step 13).
 var last_flows: Array[Dictionary] = [] # {food, path:Array[Vector2i], delivered, rejected, settlement, source, fresh}
 var last_settlement_status: Dictionary = {} # settlement_id -> {food_id: {requested, delivered, rejected, fresh_sum}}
+var last_source_status: Dictionary = {} # source_id -> {food_id: {produced, used}}
 var last_congestion: Array[Dictionary] = [] # {pos:Vector2i, over:bool}

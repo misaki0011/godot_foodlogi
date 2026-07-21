@@ -58,6 +58,45 @@ static func compute_components(state: GameState, nodes_by_pos: Dictionary) -> Di
 		comp_id += 1
 	return comp_of
 
+## Read-only preview for main.gd's route-placement validation: would
+## building a route tile at new_cell push some junction (the new tile
+## itself, or an existing route tile newly connected through it) to 3+
+## connections inside a network that's already at HUB_CAP_PER_NETWORK
+## hubs? Only tiles whose degree actually changes because of this one
+## placement are considered, so an already-hub_capped junction elsewhere
+## doesn't block unrelated route building.
+static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new_cell: Vector2i) -> bool:
+	if state.grid.has(new_cell):
+		return false
+	var temp_grid := state.grid.duplicate()
+	temp_grid[new_cell] = {"kind": "route", "level": "dirt"}
+	var temp_state := GameState.new()
+	temp_state.grid = temp_grid
+
+	var comp_of := compute_components(temp_state, nodes_by_pos)
+	var hub_counts := {}
+	for pos in state.grid.keys():
+		var cell = state.grid[pos]
+		if cell.kind == "hub":
+			var c = comp_of.get(pos, -1)
+			hub_counts[c] = hub_counts.get(c, 0) + 1
+
+	var new_junctions: Array[Vector2i] = []
+	if tile_degree(new_cell, temp_state, nodes_by_pos) >= 3:
+		new_junctions.append(new_cell)
+	for n in neighbors(new_cell, GameBalance.GRID_SIZE):
+		var cell = state.grid.get(n)
+		if cell == null or cell.kind != "route":
+			continue
+		if tile_degree(n, state, nodes_by_pos) < 3 and tile_degree(n, temp_state, nodes_by_pos) >= 3:
+			new_junctions.append(n)
+
+	for pos in new_junctions:
+		var comp = comp_of.get(pos, -1)
+		if hub_counts.get(comp, 0) >= GameBalance.HUB_CAP_PER_NETWORK:
+			return true
+	return false
+
 ## Mutates state.grid/state.balance: auto-forms a Small Hub on any route
 ## tile with 3+ connections, unless its connected network already has
 ## HUB_CAP_PER_NETWORK hubs (hub_capped) or funds are short (needs_hub).
@@ -356,8 +395,18 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		state.best_grade = grade
 	state.score_history.append({"day": state.day, "score": grade_score, "grade": grade, "profit": profit})
 
+	var source_status := {}
+	for s in sources:
+		var food_status := {}
+		for food_id in s.produces:
+			var produced: float = s.produces[food_id]
+			var left: float = supply_left.get("%s|%s" % [s.node_id, food_id], produced)
+			food_status[food_id] = {"produced": produced, "used": produced - left}
+		source_status[s.node_id] = food_status
+
 	state.last_flows = flows
 	state.last_settlement_status = settlement_food_status
+	state.last_source_status = source_status
 	state.last_congestion.clear()
 	for pos in state.grid:
 		var cap := tile_capacity(state, pos)

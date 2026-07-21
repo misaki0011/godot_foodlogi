@@ -6,7 +6,7 @@
 [sub_resource type="Resource" id="Resource_vxexi"]
 script = ExtResource("1_ycuoh")
 node_id = "farm"
-grid_position = Vector2i(3, 4)
+grid_position = Vector2i(3, 2)
 display_name = "Farm"
 produces = {
 "grain": 80.0
@@ -24,7 +24,7 @@ produces = {
 [sub_resource type="Resource" id="Resource_d5ptm"]
 script = ExtResource("1_ycuoh")
 node_id = "bakery"
-grid_position = Vector2i(3, 9)
+grid_position = Vector2i(3, 11)
 display_name = "Bakery"
 produces = {
 "bread": 80.0
@@ -42,7 +42,7 @@ produces = {
 [sub_resource type="Resource" id="Resource_lq88y"]
 script = ExtResource("1_ycuoh")
 node_id = "harbor"
-grid_position = Vector2i(17, 9)
+grid_position = Vector2i(18, 9)
 display_name = "Harbor"
 produces = {
 "seafood": 55.0

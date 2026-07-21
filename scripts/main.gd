@@ -10,7 +10,7 @@ extends Node3D
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
 const HUB_SCENE := preload("res://scenes/markers/hub_marker.tscn")
-const FOOD_NEED_SCENE := preload("res://scenes/markers/food_need_marker.tscn")
+const FOOD_BUBBLE_SCENE := preload("res://scenes/markers/food_bubble_marker.tscn")
 
 const ROUTE_LEVEL_SCENES := {
 	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt.glb"),
@@ -80,6 +80,7 @@ func _ready() -> void:
 	_grid_visuals = Node3D.new()
 	_grid_visuals.name = "GridVisuals"
 	add_child(_grid_visuals)
+	_render_grid()
 	_default_camera_size = _camera.size
 	var min_corner: Vector3 = _terrain.map_to_local(Vector3i(0, 0, 0))
 	var max_corner: Vector3 = _terrain.map_to_local(Vector3i(_map_data.grid_size.x - 1, 0, _map_data.grid_size.y - 1))
@@ -145,6 +146,9 @@ func _do_build_route(cell: Vector2i) -> void:
 		return
 	if not _adjacent_to_network(cell):
 		_show_toast("Route must connect to a node or existing route.", true)
+		return
+	if SimulationEngine.would_exceed_hub_cap(_state, _nodes_by_pos, cell):
+		_show_toast("Can't place this road: it would need a 3rd hub, but each connected network can only support %d. Try routing around this junction." % GameBalance.HUB_CAP_PER_NETWORK, true)
 		return
 	var cost := SimulationEngine.route_build_cost(cell, _map_data)
 	if _state.balance < cost:
@@ -356,47 +360,103 @@ func _render_grid() -> void:
 			var marker: NodeMarker = STORAGE_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
 			marker.position = world_pos
-			marker.apply_tint(MarkerColors.storage_color(cell.stype), GameBalance.STORAGE_TYPES[cell.stype].name)
+			marker.apply_tint(MarkerColors.storage_color(cell.stype))
 		elif cell.kind == "hub":
 			var marker: NodeMarker = HUB_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
 			marker.position = world_pos
-			marker.apply_tint(MarkerColors.hub_color(cell.htype), GameBalance.HUB_TYPES[cell.htype].name)
+			marker.apply_tint(MarkerColors.hub_color(cell.htype))
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
-	_render_food_need_bubbles()
+	_render_supply_bubbles()
 
-## Speech-bubble indicator floated above any settlement still short on a
-## food after the last simulated day (SETT-02/LOOP-02 unmet demand =
-## requested - delivered), so a shortfall is visible without a click.
-func _render_food_need_bubbles() -> void:
+## Always-on speech bubbles showing "current/max" for every source and
+## settlement: a source's amount drawn today vs. its daily produce
+## (SimulationEngine.run_day's last_source_status), muted once fully
+## tapped out; a settlement's delivered vs. requested amount per food
+## plus average freshness (last_settlement_status), colored red/amber/
+## green by combined amount+freshness status (see
+## _render_settlement_bubbles). Both read as "0/max" before the first
+## simulated day, since neither dictionary has entries yet.
+func _render_supply_bubbles() -> void:
 	var foods := GameBalance.food_types()
 	for pos in _nodes_by_pos:
 		var n: NodeData = _nodes_by_pos[pos]
-		if n.node_type != GameEnums.NodeType.SETTLEMENT:
-			continue
-		var status = _state.last_settlement_status.get(n.node_id)
-		if status == null:
-			continue
-		# NodeMarker puts the settlement pin's head at +2.1 and its name label
-		# at +2.6 (node_spawner.gd's +1.0 root offset plus node_marker_base.tscn's
-		# local offsets), so start above both -- otherwise this billboard sits
-		# inside the pin head and the two fuse into an unreadable blob.
-		var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
-		var stack := 0
-		for food_id in n.demand:
-			var s = status.get(food_id)
-			if s == null:
-				continue
-			var unmet: float = s.requested - s.delivered
-			if unmet < 0.5:
-				continue
-			var bubble: FoodNeedMarker = FOOD_NEED_SCENE.instantiate()
-			_grid_visuals.add_child(bubble)
-			bubble.position = base_pos + Vector3(0, stack * 0.7, 0)
-			bubble.setup(foods[food_id], unmet)
-			stack += 1
+		if n.node_type == GameEnums.NodeType.SOURCE:
+			_render_source_bubbles(n, pos, foods)
+		elif n.node_type == GameEnums.NodeType.SETTLEMENT:
+			_render_settlement_bubbles(n, pos, foods)
+
+func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
+	# The source's crate model is shorter than the settlement pin, so its
+	# bubble sits a little lower than the settlement stack's start height.
+	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 2.5, 0)
+	var stack := 0
+	for food_id in n.produces:
+		var produced: float = n.produces[food_id]
+		var used: float = 0.0
+		if status.has(food_id):
+			used = status[food_id].used
+		var bubble_status := FoodBubbleMarker.Status.MUTED if used >= produced - 0.01 else FoodBubbleMarker.Status.DEFAULT
+		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+		_grid_visuals.add_child(bubble)
+		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.STACK_SPACING, 0)
+		bubble.setup(foods[food_id], used, produced, bubble_status)
+		stack += 1
+
+## A settlement can demand up to 3 foods (Town D, City E), and some
+## settlements sit only 3 tiles from a neighbor -- stacking every bubble
+## in a single tall column risked visually crowding the neighbor's own
+## bubbles. A 2-column grid caps the stack at 2 rows regardless of how
+## many foods are demanded.
+## Combined amount+freshness status, "weakest link" rule: RED whenever
+## nothing has arrived yet or what arrived came in below this
+## settlement's own min_freshness (regardless of amount); GREEN only
+## when the full requested amount arrived at bonus_freshness or above;
+## AMBER for every other combination (partial amount, or full amount but
+## sub-bonus freshness).
+func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+	var status = _state.last_settlement_status.get(n.node_id, {})
+	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
+	# +1.0 root offset plus node_marker_base.tscn's local offset), so start
+	# above it -- otherwise this billboard sits inside the pin head and the
+	# two fuse into an unreadable blob.
+	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
+	var index := 0
+	for food_id in n.demand:
+		var requested: float = n.demand[food_id]
+		var delivered: float = 0.0
+		var avg_fresh: float = 0.0
+		var s = status.get(food_id)
+		if s != null:
+			requested = s.requested
+			delivered = s.delivered
+			if delivered > 0.0:
+				avg_fresh = s.fresh_sum / delivered
+
+		var bubble_status: FoodBubbleMarker.Status
+		var freshness_pct := -1
+		if delivered <= 0.0:
+			bubble_status = FoodBubbleMarker.Status.RED
+		else:
+			freshness_pct = roundi(avg_fresh)
+			if avg_fresh < n.min_freshness:
+				bubble_status = FoodBubbleMarker.Status.RED
+			elif delivered >= requested - 0.01 and avg_fresh >= n.bonus_freshness:
+				bubble_status = FoodBubbleMarker.Status.GREEN
+			else:
+				bubble_status = FoodBubbleMarker.Status.AMBER
+
+		var row := index / 2
+		var col := index % 2
+		var col_offset: float = (col - 0.5) * FoodBubbleMarker.COLUMN_SPACING
+		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+		_grid_visuals.add_child(bubble)
+		bubble.position = base_pos + Vector3(col_offset, row * FoodBubbleMarker.STACK_SPACING, 0)
+		bubble.setup(foods[food_id], delivered, requested, bubble_status, freshness_pct)
+		index += 1
 
 func _add_route_block(pos: Vector3, level: String) -> void:
 	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
@@ -715,9 +775,12 @@ func _build_map_controls(root: Control) -> void:
 	_add_pan_button(pan_grid, "v", Vector2(0, -1))
 	pan_grid.add_child(_pan_spacer())
 
+const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
+const CONTROLLER_FONT_SIZE := 24
+
 func _pan_spacer() -> Control:
 	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(34, 34)
+	spacer.custom_minimum_size = CONTROLLER_BUTTON_SIZE
 	return spacer
 
 func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
@@ -726,7 +789,8 @@ func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
 func _add_hold_button(parent: Container, text: String, on_press: Callable, on_release: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(34, 34)
+	button.custom_minimum_size = CONTROLLER_BUTTON_SIZE
+	button.add_theme_font_size_override("font_size", CONTROLLER_FONT_SIZE)
 	button.button_down.connect(on_press)
 	button.button_up.connect(on_release)
 	parent.add_child(button)
