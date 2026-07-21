@@ -21,7 +21,7 @@ grow_vertical = 2
 
 [node name="Sprite3D" type="Sprite3D" parent="."]
 billboard = 1
-pixel_size = 0.005
+pixel_size = 0.01
 centered = true
 offset = Vector2(0, 75)
 texture_filter = 1

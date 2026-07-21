@@ -12,8 +12,8 @@ extends Node3D
 
 ## World-space size of the baked sprite (SubViewport size * Sprite3D
 ## pixel_size in food_bubble_marker.tscn).
-const WORLD_WIDTH := 1.55
-const WORLD_HEIGHT := 0.75
+const WORLD_WIDTH := 3.1
+const WORLD_HEIGHT := 1.5
 
 ## Main.tscn's Camera3D is pitched -60 deg (rotation.x = -1.047198) and
 ## looks straight down that axis with no yaw/roll, so its "right" vector
