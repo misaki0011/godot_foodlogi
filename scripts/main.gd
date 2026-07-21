@@ -17,6 +17,18 @@ const ROUTE_LEVEL_SCENES := {
 	"paved": preload("res://assets/Blocks/glTF/Block_Road_Paved.glb"),
 	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
 }
+## Corner (L-shape) variants. Paved has none -- its existing block is 4
+## symmetric corner stones that already read fine unrotated for any shape
+## (see generate_blocks.py). Falls back to ROUTE_LEVEL_SCENES when absent.
+const ROUTE_CORNER_SCENES := {
+	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt_Corner.glb"),
+	"main": preload("res://assets/Blocks/glTF/Block_Road_Main_Corner.glb"),
+}
+## Y-axis yaw for each facing. Straight blocks' tread already runs N-S at 0
+## rotation (see generate_blocks.py), so "ud" needs none and "lr" needs a
+## quarter turn. Corner blocks are authored connecting N+E ("ne") at 0
+## rotation; each other facing is one further quarter turn clockwise.
+const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "se": 90.0, "sw": 180.0, "nw": 270.0}
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
@@ -140,8 +152,16 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_bulldoze(cell)
 	_after_action()
 
+const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (North-East)", "se": "corner (South-East)", "sw": "corner (South-West)", "nw": "corner (North-West)"}
+
 func _do_build_route(cell: Vector2i) -> void:
 	if _state.grid.has(cell):
+		var cell_data = _state.grid[cell]
+		if cell_data.kind == "route" and SimulationEngine.tile_degree(cell, _state, _nodes_by_pos) <= 1:
+			var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
+			cell_data.facing = facing
+			_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))
+			return
 		_show_toast("Already built here.", true)
 		return
 	if not _adjacent_to_network(cell):
@@ -351,7 +371,8 @@ func _render_grid() -> void:
 			if _map_data.is_river(pos.x, pos.y):
 				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
 			else:
-				_add_route_block(world_pos, cell.level)
+				var shape := SimulationEngine.route_shape(pos, _state, _nodes_by_pos)
+				_add_route_block(world_pos, cell.level, shape.family, shape.facing)
 			if cell.get("needs_hub", false):
 				_add_warning_ring(world_pos, Color("C4573A"))
 			elif cell.get("hub_capped", false):
@@ -458,8 +479,10 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		bubble.setup(foods[food_id], delivered, requested, bubble_status, freshness_pct)
 		index += 1
 
-func _add_route_block(pos: Vector3, level: String) -> void:
-	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
+func _add_route_block(pos: Vector3, level: String, family := "straight", facing := "ud") -> void:
+	var scene: PackedScene = ROUTE_CORNER_SCENES.get(level) if family == "corner" else null
+	if scene == null:
+		scene = ROUTE_LEVEL_SCENES.get(level)
 	if scene == null:
 		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
 		return
@@ -468,6 +491,8 @@ func _add_route_block(pos: Vector3, level: String) -> void:
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
 	# No scale needed: the block's footprint is authored at the real 2x2
 	# world-space cell size already (see generate_blocks.py).
+	if family != "junction":
+		block.rotation_degrees.y = ROUTE_FACING_YAW.get(facing, 0.0)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()

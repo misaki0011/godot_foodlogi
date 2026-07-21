@@ -23,6 +23,64 @@ static func tile_degree(pos: Vector2i, state: GameState, nodes_by_pos: Dictionar
 			count += 1
 	return count
 
+## Per-direction breakdown of tile_degree()'s connection check, keyed by
+## compass side. (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west, matching
+## how world Z increases with grid Y (see main.gd's map_to_local usage).
+static func connection_sides(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+	var sides := {"n": false, "e": false, "s": false, "w": false}
+	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
+	for d in DIRECTIONS:
+		var n := pos + d
+		if n.x < 0 or n.y < 0 or n.x >= GameBalance.GRID_SIZE.x or n.y >= GameBalance.GRID_SIZE.y:
+			continue
+		if state.grid.has(n) or nodes_by_pos.has(n):
+			sides[dir_keys[d]] = true
+	return sides
+
+const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
+const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
+
+## Auto-derives a route tile's visual shape from its real connections (see
+## AGENTS.md route-direction feature): forced straight/corner when exactly 2
+## sides connect, the existing 3+/junction fallback otherwise, and a
+## player-choosable default when 0-1 sides connect (see cycle_shape_facing).
+static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+	var sides := connection_sides(pos, state, nodes_by_pos)
+	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
+	if count >= 3:
+		return {"family": "junction", "facing": ""}
+	if count == 2:
+		if sides.n and sides.s:
+			return {"family": "straight", "facing": "ud"}
+		if sides.e and sides.w:
+			return {"family": "straight", "facing": "lr"}
+		for facing in CORNER_FACINGS:
+			if sides[facing[0]] and sides[facing[1]]:
+				return {"family": "corner", "facing": facing}
+	# 0 or 1 real connections: ambiguous. Default to a corner only when the
+	# single connection is to a source/settlement node; otherwise (a stub
+	# next to another route/storage/hub tile, or fully isolated) default to
+	# straight. A player-chosen facing (from a prior tap) overrides the
+	# default as long as it still belongs to the resolved family.
+	var adjacent_to_node := false
+	for n in neighbors(pos, GameBalance.GRID_SIZE):
+		if nodes_by_pos.has(n) and not state.grid.has(n):
+			adjacent_to_node = true
+			break
+	var family := "corner" if adjacent_to_node else "straight"
+	var cycle: Array[String] = CORNER_FACINGS if family == "corner" else STRAIGHT_FACINGS
+	var stored = state.grid.get(pos, {}).get("facing", "")
+	var facing: String = stored if cycle.has(stored) else cycle[0]
+	return {"family": family, "facing": facing}
+
+## Returns the next facing to store for an ambiguous route tile (caller must
+## confirm tile_degree(pos) <= 1 first -- forced shapes aren't cycleable).
+static func cycle_shape_facing(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> String:
+	var current := route_shape(pos, state, nodes_by_pos)
+	var cycle: Array[String] = CORNER_FACINGS if current.family == "corner" else STRAIGHT_FACINGS
+	var idx: int = cycle.find(current.facing)
+	return cycle[(idx + 1) % cycle.size()]
+
 ## key -> [key, ...]; every built tile connects to adjacent built tiles or
 ## nodes, and every node connects to its adjacent built tiles (nodes never
 ## link directly to another node without a route tile between them).

@@ -9,6 +9,7 @@ func _initialize() -> void:
 	_test_storage_preservation()
 	_test_daily_simulation()
 	_test_hub_auto_formation_and_cap()
+	_test_route_shape()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -80,6 +81,56 @@ func _test_hub_auto_formation_and_cap() -> void:
 	assert(hub_count == GameBalance.HUB_CAP_PER_NETWORK, "Exactly HUB_CAP_PER_NETWORK hubs should auto-form on one connected network")
 	assert(capped_count == forks.size() - GameBalance.HUB_CAP_PER_NETWORK, "Any further 3-way junction must be rejected as hub_capped, not silently formed")
 	assert(is_equal_approx(state.balance, starting_balance - GameBalance.HUB_CAP_PER_NETWORK * GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build))
+
+func _test_route_shape() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var nodes_by_pos := {}
+	for node in map.node_placements:
+		nodes_by_pos[node.grid_position] = node
+
+	# A lone stub built directly east of Farm: its only real connection is
+	# the source node, so it should default to a corner, not straight.
+	var farm := _node(map, "farm")
+	var stub_by_node := farm.grid_position + Vector2i(1, 0)
+	var state_a := GameState.new()
+	state_a.grid[stub_by_node] = {"kind": "route", "level": "dirt"}
+	var shape_a := SimulationEngine.route_shape(stub_by_node, state_a, nodes_by_pos)
+	assert(shape_a.family == "corner" and shape_a.facing == "ne", "A stub adjacent only to a source/settlement should default to a corner")
+
+	# A lone stub next to another route tile (not a node) should default to
+	# straight instead.
+	var state_b := GameState.new()
+	state_b.grid[Vector2i(2, 13)] = {"kind": "route", "level": "dirt"}
+	state_b.grid[Vector2i(3, 13)] = {"kind": "route", "level": "dirt"}
+	var shape_b := SimulationEngine.route_shape(Vector2i(2, 13), state_b, {})
+	assert(shape_b.family == "straight" and shape_b.facing == "lr", "A stub adjacent only to another route tile should default to straight")
+
+	# Two opposite neighbors force straight on that axis, even overriding a
+	# previously stored facing.
+	var state_c := GameState.new()
+	state_c.grid[Vector2i(4, 13)] = {"kind": "route", "level": "dirt"}
+	state_c.grid[Vector2i(5, 13)] = {"kind": "route", "level": "dirt", "facing": "ud"}
+	state_c.grid[Vector2i(6, 13)] = {"kind": "route", "level": "dirt"}
+	var shape_c := SimulationEngine.route_shape(Vector2i(5, 13), state_c, {})
+	assert(shape_c.family == "straight" and shape_c.facing == "lr", "Two opposite (E/W) connections must force a left-right straight tile")
+
+	# Two adjacent neighbors force the matching corner, ignoring any stored facing.
+	var state_d := GameState.new()
+	state_d.grid[Vector2i(8, 13)] = {"kind": "route", "level": "dirt", "facing": "lr"}
+	state_d.grid[Vector2i(9, 13)] = {"kind": "route", "level": "dirt"} # east of (8,13)
+	state_d.grid[Vector2i(8, 12)] = {"kind": "route", "level": "dirt"} # north of (8,13)
+	var shape_d := SimulationEngine.route_shape(Vector2i(8, 13), state_d, {})
+	assert(shape_d.family == "corner" and shape_d.facing == "ne", "North+East connections must force the matching NE corner")
+
+	# Cycling an ambiguous straight tile twice returns to its starting facing.
+	var state_e := GameState.new()
+	var lone := Vector2i(11, 13)
+	state_e.grid[lone] = {"kind": "route", "level": "dirt"}
+	var start_facing: String = SimulationEngine.route_shape(lone, state_e, {}).facing
+	var once: String = SimulationEngine.cycle_shape_facing(lone, state_e, {})
+	state_e.grid[lone].facing = once
+	var twice: String = SimulationEngine.cycle_shape_facing(lone, state_e, {})
+	assert(twice == start_facing, "Cycling a 2-way family (straight or corner-4) an even number of times for straight should return to the start")
 
 func _node(map: MapData, node_id: String) -> NodeData:
 	for node in map.node_placements:

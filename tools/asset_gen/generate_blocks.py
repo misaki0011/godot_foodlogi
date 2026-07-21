@@ -162,6 +162,21 @@ def build_dirt_road_block() -> trimesh.Trimesh:
     return trimesh.util.concatenate(parts)
 
 
+def build_dirt_road_corner() -> trimesh.Trimesh:
+    """A dirt path bent into an L, connecting the north edge to the east
+    edge: same base/tread style as build_dirt_road_block(), but the tread
+    is two half-length arms meeting at the tile center instead of one
+    full-length strip. Rotate in-engine (rotation_degrees.y) for the other
+    three corner orientations."""
+    parts = [
+        _box((2.0, 0.22, 2.0), (0, 0, 0), DIRT_ROAD_BASE),
+        _box((1.48, 0.05, 1.0), (0, 0.135, -0.5), DIRT_ROAD_PATH),
+        _box((1.0, 0.05, 1.48), (0.5, 0.135, 0), DIRT_ROAD_PATH),
+    ]
+    parts += _grid_border_parts(2.0, 0.111)
+    return trimesh.util.concatenate(parts)
+
+
 def build_paved_road_block() -> trimesh.Trimesh:
     """A paved road slab: a grey base topped with four individually raised
     cobblestone pavers (small gaps between them) instead of a flat color,
@@ -189,6 +204,21 @@ def build_main_road_block() -> trimesh.Trimesh:
     return trimesh.util.concatenate(parts)
 
 
+def build_main_road_corner() -> trimesh.Trimesh:
+    """A major road bent into an L, connecting the north edge to the east
+    edge: same base/stripe style as build_main_road_block(), but the
+    painted line is two half-length arms meeting at the tile center
+    instead of one straight center line. Rotate in-engine
+    (rotation_degrees.y) for the other three corner orientations."""
+    parts = [
+        _box((2.0, 0.24, 2.0), (0, 0, 0), MAIN_BASE),
+        _box((0.2, 0.03, 0.84), (0, 0.135, -0.42), MAIN_STRIPE),
+        _box((0.84, 0.03, 0.2), (0.42, 0.135, 0), MAIN_STRIPE),
+    ]
+    parts += _grid_border_parts(2.0, 0.121)
+    return trimesh.util.concatenate(parts)
+
+
 def export(mesh: trimesh.Trimesh, path: str) -> None:
     # An explicit matte, non-metallic material -- without one, Godot's glTF
     # import falls back to a shinier default that visibly reflects the
@@ -208,3 +238,5 @@ if __name__ == "__main__":
     export(build_dirt_road_block(), "assets/Blocks/glTF/Block_Road_Dirt.glb")
     export(build_paved_road_block(), "assets/Blocks/glTF/Block_Road_Paved.glb")
     export(build_main_road_block(), "assets/Blocks/glTF/Block_Road_Main.glb")
+    export(build_dirt_road_corner(), "assets/Blocks/glTF/Block_Road_Dirt_Corner.glb")
+    export(build_main_road_corner(), "assets/Blocks/glTF/Block_Road_Main_Corner.glb")
