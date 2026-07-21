@@ -752,9 +752,12 @@ func _build_map_controls(root: Control) -> void:
 	_add_pan_button(pan_grid, "v", Vector2(0, -1))
 	pan_grid.add_child(_pan_spacer())
 
+const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
+const CONTROLLER_FONT_SIZE := 24
+
 func _pan_spacer() -> Control:
 	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(34, 34)
+	spacer.custom_minimum_size = CONTROLLER_BUTTON_SIZE
 	return spacer
 
 func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
@@ -763,7 +766,8 @@ func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
 func _add_hold_button(parent: Container, text: String, on_press: Callable, on_release: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(34, 34)
+	button.custom_minimum_size = CONTROLLER_BUTTON_SIZE
+	button.add_theme_font_size_override("font_size", CONTROLLER_FONT_SIZE)
 	button.button_down.connect(on_press)
 	button.button_up.connect(on_release)
 	parent.add_child(button)

@@ -11,14 +11,26 @@ extends Node3D
 ## stacked 3D primitives at this scale.
 
 ## World-space size of the baked sprite (SubViewport size * Sprite3D
-## pixel_size in food_bubble_marker.tscn). Callers arranging multiple
-## bubbles above one node (main.gd's bubble grid) must space rows/columns
-## at least this far apart, or consecutive bubbles overlap; some close
-## neighboring nodes also lean on the smaller footprint here to keep
-## their own bubbles from visually crowding each other's airspace.
+## pixel_size in food_bubble_marker.tscn).
 const WORLD_WIDTH := 1.178
 const WORLD_HEIGHT := 0.57
-const STACK_SPACING := WORLD_HEIGHT + 0.08
+
+## Main.tscn's Camera3D is pitched -60 deg (rotation.x = -1.047198) and
+## looks straight down that axis with no yaw/roll, so its "right" vector
+## is exactly world +X (unrotated) but its "up" vector is
+## (0, cos60, -sin60) = (0, 0.5, -0.866). A billboard sprite always
+## renders at its full configured size on screen regardless of view
+## angle (that's the point of billboarding) -- but stacking bubbles
+## apart along world Y only buys 0.5x that distance in actual screen
+## separation, since the other 0.866x of a Y-axis camera-up step lands
+## in world Z instead. Spacing rows by only WORLD_HEIGHT (as if the
+## camera were level) therefore left rows visually overlapping on
+## screen even though they were correctly separated in world space;
+## rows need double the gap to end up with WORLD_HEIGHT of *screen*
+## separation. Columns don't have this problem: the camera has no yaw,
+## so world-X offsets map 1:1 onto screen-X with no compression.
+const CAMERA_VERTICAL_COMPENSATION := 2.0
+const STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION + 0.1
 const COLUMN_SPACING := WORLD_WIDTH + 0.1
 
 @onready var _canvas: BubbleCanvas = $SubViewport/BubbleCanvas
