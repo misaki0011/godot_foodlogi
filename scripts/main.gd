@@ -157,7 +157,7 @@ const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (Nort
 func _do_build_route(cell: Vector2i) -> void:
 	if _state.grid.has(cell):
 		var cell_data = _state.grid[cell]
-		if cell_data.kind == "route" and SimulationEngine.tile_degree(cell, _state, _nodes_by_pos) <= 1:
+		if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
 			var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
 			cell_data.facing = facing
 			_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))

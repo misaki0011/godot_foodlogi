@@ -165,13 +165,19 @@ def build_dirt_road_block() -> trimesh.Trimesh:
 def build_dirt_road_corner() -> trimesh.Trimesh:
     """A dirt path bent into an L, connecting the north edge to the east
     edge: same base/tread style as build_dirt_road_block(), but the tread
-    is two half-length arms meeting at the tile center instead of one
-    full-length strip. Rotate in-engine (rotation_degrees.y) for the other
-    three corner orientations."""
+    is two arms meeting past the tile center instead of one full-length
+    strip. Each arm overshoots center by 0.3 (rather than stopping exactly
+    at it) so the two arms overlap generously -- this keeps the tan/dark
+    coverage ratio close to the straight block's (a stub-length L reads as
+    a noticeably different, darker tile at this game's small on-screen tile
+    size) while still stopping 0.7 short of the far edges, so the tile
+    never visually implies a south or west connection it doesn't have.
+    Rotate in-engine (rotation_degrees.y) for the other three corner
+    orientations."""
     parts = [
         _box((2.0, 0.22, 2.0), (0, 0, 0), DIRT_ROAD_BASE),
-        _box((1.48, 0.05, 1.0), (0, 0.135, -0.5), DIRT_ROAD_PATH),
-        _box((1.0, 0.05, 1.48), (0.5, 0.135, 0), DIRT_ROAD_PATH),
+        _box((1.48, 0.05, 1.3), (0, 0.135, -0.35), DIRT_ROAD_PATH),
+        _box((1.3, 0.05, 1.48), (0.35, 0.135, 0), DIRT_ROAD_PATH),
     ]
     parts += _grid_border_parts(2.0, 0.111)
     return trimesh.util.concatenate(parts)
@@ -207,13 +213,15 @@ def build_main_road_block() -> trimesh.Trimesh:
 def build_main_road_corner() -> trimesh.Trimesh:
     """A major road bent into an L, connecting the north edge to the east
     edge: same base/stripe style as build_main_road_block(), but the
-    painted line is two half-length arms meeting at the tile center
-    instead of one straight center line. Rotate in-engine
-    (rotation_degrees.y) for the other three corner orientations."""
+    painted line is two arms overlapping past the tile center (matching
+    build_dirt_road_corner()'s overshoot, so the two arms actually overlap
+    at the bend instead of just touching at a point) instead of one
+    straight center line. Rotate in-engine (rotation_degrees.y) for the
+    other three corner orientations."""
     parts = [
         _box((2.0, 0.24, 2.0), (0, 0, 0), MAIN_BASE),
-        _box((0.2, 0.03, 0.84), (0, 0.135, -0.42), MAIN_STRIPE),
-        _box((0.84, 0.03, 0.2), (0.42, 0.135, 0), MAIN_STRIPE),
+        _box((0.2, 0.03, 1.14), (0, 0.135, -0.27), MAIN_STRIPE),
+        _box((1.14, 0.03, 0.2), (0.27, 0.135, 0), MAIN_STRIPE),
     ]
     parts += _grid_border_parts(2.0, 0.121)
     return trimesh.util.concatenate(parts)

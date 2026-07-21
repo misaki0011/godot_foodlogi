@@ -132,6 +132,25 @@ func _test_route_shape() -> void:
 	var twice: String = SimulationEngine.cycle_shape_facing(lone, state_e, {})
 	assert(twice == start_facing, "Cycling a 2-way family (straight or corner-4) an even number of times for straight should return to the start")
 
+	# Regression: a route tile with a node on one side (west) and a real
+	# route tile continuing on an *adjacent* side (south) must NOT be forced
+	# into a corner -- only route/storage/hub neighbors can force a shape.
+	# It should default to a corner but stay tappable all the way to "ud".
+	var stub_by_node_and_route := farm.grid_position + Vector2i(1, 0) # node to the west
+	var state_f := GameState.new()
+	state_f.grid[stub_by_node_and_route] = {"kind": "route", "level": "dirt"}
+	state_f.grid[stub_by_node_and_route + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # route to the south
+	assert(SimulationEngine.is_shape_ambiguous(stub_by_node_and_route, state_f, nodes_by_pos), "A node beside a tile must never force its shape, even with a real route neighbor on an adjacent side")
+	var reachable_ud := false
+	var facing: String = SimulationEngine.route_shape(stub_by_node_and_route, state_f, nodes_by_pos).facing
+	for _i in range(6):
+		facing = SimulationEngine.cycle_shape_facing(stub_by_node_and_route, state_f, nodes_by_pos)
+		state_f.grid[stub_by_node_and_route].facing = facing
+		if facing == "ud":
+			reachable_ud = true
+			break
+	assert(reachable_ud, "A node-adjacent ambiguous tile must be able to cycle all the way to a straight up-down facing")
+
 func _node(map: MapData, node_id: String) -> NodeData:
 	for node in map.node_placements:
 		if node.node_id == node_id:

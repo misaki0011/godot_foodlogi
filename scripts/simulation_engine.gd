@@ -23,32 +23,49 @@ static func tile_degree(pos: Vector2i, state: GameState, nodes_by_pos: Dictionar
 			count += 1
 	return count
 
-## Per-direction breakdown of tile_degree()'s connection check, keyed by
-## compass side. (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west, matching
-## how world Z increases with grid Y (see main.gd's map_to_local usage).
-static func connection_sides(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
+const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
+
+## Only route/storage/hub grid tiles can force a route tile's shape -- a
+## nearby source/settlement node never does, since it has its own separate
+## marker and shouldn't lock the road into visually bending toward it. Node
+## adjacency only ever affects the *default* shown for an already-ambiguous
+## tile (see route_shape()), and never blocks tap-cycling. Keyed by compass
+## side: (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west, matching how
+## world Z increases with grid Y (see main.gd's map_to_local usage).
+static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 	var sides := {"n": false, "e": false, "s": false, "w": false}
 	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
 	for d in DIRECTIONS:
 		var n := pos + d
 		if n.x < 0 or n.y < 0 or n.x >= GameBalance.GRID_SIZE.x or n.y >= GameBalance.GRID_SIZE.y:
 			continue
-		if state.grid.has(n) or nodes_by_pos.has(n):
+		if state.grid.has(n):
 			sides[dir_keys[d]] = true
 	return sides
 
-const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
-const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
+## The tap-cycle options for an ambiguous route tile. A tile next to a
+## source/settlement node can reach every corner facing as well as both
+## straight facings (so a stub the player thinks of as "up-down" is always
+## reachable even though a corner is offered as the default); a tile with no
+## node neighbor only ever needs the 2 straight facings.
+static func _ambiguous_cycle(pos: Vector2i, nodes_by_pos: Dictionary) -> Array[String]:
+	for n in neighbors(pos, GameBalance.GRID_SIZE):
+		if nodes_by_pos.has(n):
+			return CORNER_FACINGS + STRAIGHT_FACINGS
+	return STRAIGHT_FACINGS
 
 ## Auto-derives a route tile's visual shape from its real connections (see
-## AGENTS.md route-direction feature): forced straight/corner when exactly 2
-## sides connect, the existing 3+/junction fallback otherwise, and a
-## player-choosable default when 0-1 sides connect (see cycle_shape_facing).
+## AGENTS.md route-direction feature): forced straight/corner only when
+## exactly 2 *route/storage/hub* sides connect, the existing 3+/junction
+## fallback when tile_degree (which does count nodes, matching hub-formation
+## rules) reaches 3+, and a player-choosable default otherwise (see
+## is_shape_ambiguous/cycle_shape_facing).
 static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
-	var sides := connection_sides(pos, state, nodes_by_pos)
-	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
-	if count >= 3:
+	if tile_degree(pos, state, nodes_by_pos) >= 3:
 		return {"family": "junction", "facing": ""}
+	var sides := _grid_only_sides(pos, state)
+	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
 	if count == 2:
 		if sides.n and sides.s:
 			return {"family": "straight", "facing": "ud"}
@@ -57,27 +74,32 @@ static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionar
 		for facing in CORNER_FACINGS:
 			if sides[facing[0]] and sides[facing[1]]:
 				return {"family": "corner", "facing": facing}
-	# 0 or 1 real connections: ambiguous. Default to a corner only when the
-	# single connection is to a source/settlement node; otherwise (a stub
-	# next to another route/storage/hub tile, or fully isolated) default to
-	# straight. A player-chosen facing (from a prior tap) overrides the
-	# default as long as it still belongs to the resolved family.
-	var adjacent_to_node := false
-	for n in neighbors(pos, GameBalance.GRID_SIZE):
-		if nodes_by_pos.has(n) and not state.grid.has(n):
-			adjacent_to_node = true
-			break
-	var family := "corner" if adjacent_to_node else "straight"
-	var cycle: Array[String] = CORNER_FACINGS if family == "corner" else STRAIGHT_FACINGS
+	# 0 or 1 real route/storage/hub connections: ambiguous, regardless of any
+	# node sitting next to this tile. A player-chosen facing (from a prior
+	# tap) is honored as long as it's still in this tile's cycle.
+	var cycle := _ambiguous_cycle(pos, nodes_by_pos)
 	var stored = state.grid.get(pos, {}).get("facing", "")
 	var facing: String = stored if cycle.has(stored) else cycle[0]
+	var family := "corner" if CORNER_FACINGS.has(facing) else "straight"
 	return {"family": family, "facing": facing}
 
-## Returns the next facing to store for an ambiguous route tile (caller must
-## confirm tile_degree(pos) <= 1 first -- forced shapes aren't cycleable).
+## True when tapping this route tile should cycle its shape instead of
+## no-opping -- i.e. its shape isn't forced by 2+ real route/storage/hub
+## connections or the 3+/junction fallback. Node adjacency never forces, so
+## it never blocks tapping either.
+static func is_shape_ambiguous(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> bool:
+	if tile_degree(pos, state, nodes_by_pos) >= 3:
+		return false
+	var sides := _grid_only_sides(pos, state)
+	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
+	return count <= 1
+
+## Returns the next facing to store for an ambiguous route tile (caller
+## should confirm is_shape_ambiguous(pos) first -- forced shapes aren't
+## cycleable).
 static func cycle_shape_facing(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> String:
 	var current := route_shape(pos, state, nodes_by_pos)
-	var cycle: Array[String] = CORNER_FACINGS if current.family == "corner" else STRAIGHT_FACINGS
+	var cycle := _ambiguous_cycle(pos, nodes_by_pos)
 	var idx: int = cycle.find(current.facing)
 	return cycle[(idx + 1) % cycle.size()]
 
