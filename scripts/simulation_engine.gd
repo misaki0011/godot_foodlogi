@@ -16,10 +16,20 @@ static func neighbors(pos: Vector2i, grid_size: Vector2i) -> Array[Vector2i]:
 			result.append(n)
 	return result
 
+## Hub-formation degree: how many of this tile's sides count toward the
+## 3-connection hub threshold (see check_auto_hubs/would_exceed_hub_cap).
+## Route/storage/hub tiles and settlement nodes all count. A source node
+## does not: per §4.7, a source is a pure production endpoint that a
+## delivery path can never enter or pass through, so a tile that only
+## reaches "3 connections" because a source happens to sit beside it isn't
+## actually organizing a branching junction -- it's a plain pass-through
+## with supply attached, and shouldn't require (or be blocked by) a hub.
 static func tile_degree(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> int:
 	var count := 0
 	for n in neighbors(pos, GameBalance.GRID_SIZE):
-		if state.grid.has(n) or nodes_by_pos.has(n):
+		if state.grid.has(n):
+			count += 1
+		elif nodes_by_pos.has(n) and nodes_by_pos[n].node_type == GameEnums.NodeType.SETTLEMENT:
 			count += 1
 	return count
 
@@ -58,8 +68,9 @@ static func _ambiguous_cycle(pos: Vector2i, nodes_by_pos: Dictionary) -> Array[S
 ## Auto-derives a route tile's visual shape from its real connections (see
 ## AGENTS.md route-direction feature): forced straight/corner only when
 ## exactly 2 *route/storage/hub* sides connect, the existing 3+/junction
-## fallback when tile_degree (which does count nodes, matching hub-formation
-## rules) reaches 3+, and a player-choosable default otherwise (see
+## fallback when tile_degree (route/storage/hub tiles plus settlement nodes,
+## matching hub-formation rules -- source nodes don't count, see
+## tile_degree()) reaches 3+, and a player-choosable default otherwise (see
 ## is_shape_ambiguous/cycle_shape_facing).
 static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
 	if tile_degree(pos, state, nodes_by_pos) >= 3:

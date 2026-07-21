@@ -10,6 +10,7 @@ func _initialize() -> void:
 	_test_daily_simulation()
 	_test_hub_auto_formation_and_cap()
 	_test_route_shape()
+	_test_source_adjacency_excluded_from_hub_degree()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -150,6 +151,31 @@ func _test_route_shape() -> void:
 			reachable_ud = true
 			break
 	assert(reachable_ud, "A node-adjacent ambiguous tile must be able to cycle all the way to a straight up-down facing")
+
+func _test_source_adjacency_excluded_from_hub_degree() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var nodes_by_pos := {}
+	for node in map.node_placements:
+		nodes_by_pos[node.grid_position] = node
+	var farm := _node(map, "farm")
+
+	# A route tile straight-through (route north + route south) that also
+	# happens to sit beside Farm (a source) should NOT count the source as
+	# a 3rd connection -- sources are pure endpoints, never real branch
+	# points (§4.7), so this must stay a plain 2-way pass-through, not a
+	# forced hub.
+	var mid := farm.grid_position + Vector2i(1, 0) # east of Farm
+	var state := GameState.new()
+	state.grid[mid + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north of mid
+	state.grid[mid] = {"kind": "route", "level": "dirt"}
+	state.grid[mid + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south of mid
+	assert(SimulationEngine.tile_degree(mid, state, nodes_by_pos) == 2, "A source beside a tile must not count toward its hub-formation degree")
+
+	SimulationEngine.check_auto_hubs(state, nodes_by_pos)
+	assert(state.grid[mid].kind == "route", "A tile with only 2 real route connections plus an adjacent source must not auto-form a hub")
+
+	var shape := SimulationEngine.route_shape(mid, state, nodes_by_pos)
+	assert(shape.family == "straight" and shape.facing == "ud", "The same tile should render as a normal straight tile, not the junction/hub_capped fallback")
 
 func _node(map: MapData, node_id: String) -> NodeData:
 	for node in map.node_placements:

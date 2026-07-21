@@ -17,6 +17,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 1. **Sources and settlements show all info on tap, no dialog.** The two-tier design (hover popup + click-to-open full checklist) is replaced by a single tap/hover info tip: tapping (or hovering, on desktop) a source or settlement tile shows the same tip, and for settlements it includes the full last-delivery checklist that used to live in a separate popup. Tapping one of these tiles never attempts to build there, regardless of the active tool.
 2. **A top-left map panel adds touch zoom/pan controls.** Since a touchscreen can't scroll-wheel-zoom or hold a key to drag-pan, a fixed on-screen panel provides +/− zoom buttons and a 4-direction pan pad for exploring the map, usable by mouse or touch. See §10.7.
+3. **Route tiles render a directional shape.** A route tile auto-renders straight or L-corner from its real adjacency instead of always looking the same; when that shape is ambiguous (0-1 real connections) it defaults sensibly and the player can tap it to cycle through the valid options. See §4.1.
+4. **Food sources no longer count toward hub-formation degree.** A route tile that only reaches "3 connections" because a source sits beside it is a plain pass-through, not a branching junction, so it neither requires a hub nor gets blocked by the network's hub cap on that basis. Settlements still count. See §4.4.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -494,7 +496,9 @@ A hub is not primarily for freshness. It is for network organization, flow visib
 
 ### Automatic hub formation
 
-A Small Hub is required on any newly built route tile that would have 3 or more connections. Connections include adjacent routes, storage, hubs, food sources, and settlements.
+A Small Hub is required on any newly built route tile that would have 3 or more connections. Connections include adjacent routes, storage, hubs, and settlements.
+
+**Food sources do not count toward this threshold (added in v0.4).** A source is a pure production endpoint that a delivery path can never enter or pass through (§4.7), so a tile that only reaches "3 connections" because a source happens to sit beside it isn't actually organizing a branching junction -- it's a plain 2-way pass-through with supply attached, and neither requires a hub nor gets blocked by the network's hub cap on that basis. Settlements still count: a hub genuinely organizing a delivery split toward a settlement is a real branch.
 
 The hub and route placement are one atomic construction action:
 
