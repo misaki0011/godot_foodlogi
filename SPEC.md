@@ -268,6 +268,26 @@ No treasury deducted.
 
 This prevents a visually valid branch from existing when the required hub could not be created.
 
+### Route tile directional shape (added in v0.4)
+
+A route tile's rendered shape follows its real connections, not a
+player-authored layout:
+
+- Two opposite connections (e.g. a tile with a built neighbor on both its
+  east and west side) force a straight tile matching that axis.
+- Two adjacent connections (e.g. north and east) force an L-corner tile
+  matching those exact two sides.
+- Three or more connections are unchanged from existing behavior: either a
+  Small Hub auto-forms (§4.4), or, if the network is at its hub cap, the
+  tile stays a plain `hub_capped` tile with today's rendering.
+
+A tile with zero or one real connection has no single correct shape, so it
+defaults to whichever family reads better for its context (a corner next
+to a source/settlement node, straight otherwise) and the player can tap it
+to cycle through that family's remaining options. This is a purely
+cosmetic choice: it never changes the tile's upkeep, capacity, or its
+adjacency contribution to hub-formation math.
+
 ---
 
 # 4.2 Food Freshness System
