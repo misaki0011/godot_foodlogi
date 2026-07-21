@@ -373,12 +373,12 @@ func _render_grid() -> void:
 
 ## Always-on speech bubbles showing "current/max" for every source and
 ## settlement: a source's amount drawn today vs. its daily produce
-## (SimulationEngine.run_day's last_source_status), grayed out once fully
+## (SimulationEngine.run_day's last_source_status), muted once fully
 ## tapped out; a settlement's delivered vs. requested amount per food
-## (last_settlement_status), grayed out (and checked, see
-## _render_settlement_bubbles) once that food's demand is fully met. Both
-## read as "0/max" before the first simulated day, since neither
-## dictionary has entries yet.
+## plus average freshness (last_settlement_status), colored red/amber/
+## green by combined amount+freshness status (see
+## _render_settlement_bubbles). Both read as "0/max" before the first
+## simulated day, since neither dictionary has entries yet.
 func _render_supply_bubbles() -> void:
 	var foods := GameBalance.food_types()
 	for pos in _nodes_by_pos:
@@ -399,10 +399,11 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 		var used: float = 0.0
 		if status.has(food_id):
 			used = status[food_id].used
+		var bubble_status := FoodBubbleMarker.Status.MUTED if used >= produced - 0.01 else FoodBubbleMarker.Status.DEFAULT
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
 		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.STACK_SPACING, 0)
-		bubble.setup(foods[food_id], used, produced, used >= produced - 0.01)
+		bubble.setup(foods[food_id], used, produced, bubble_status)
 		stack += 1
 
 ## A settlement can demand up to 3 foods (Town D, City E), and some
@@ -410,6 +411,12 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 ## in a single tall column risked visually crowding the neighbor's own
 ## bubbles. A 2-column grid caps the stack at 2 rows regardless of how
 ## many foods are demanded.
+## Combined amount+freshness status, "weakest link" rule: RED whenever
+## nothing has arrived yet or what arrived came in below this
+## settlement's own min_freshness (regardless of amount); GREEN only
+## when the full requested amount arrived at bonus_freshness or above;
+## AMBER for every other combination (partial amount, or full amount but
+## sub-bonus freshness).
 func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
 	var status = _state.last_settlement_status.get(n.node_id, {})
 	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
@@ -421,18 +428,34 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 	for food_id in n.demand:
 		var requested: float = n.demand[food_id]
 		var delivered: float = 0.0
+		var avg_fresh: float = 0.0
 		var s = status.get(food_id)
 		if s != null:
 			requested = s.requested
 			delivered = s.delivered
-		var fulfilled: bool = delivered >= requested - 0.01
+			if delivered > 0.0:
+				avg_fresh = s.fresh_sum / delivered
+
+		var bubble_status: FoodBubbleMarker.Status
+		var freshness_pct := -1
+		if delivered <= 0.0:
+			bubble_status = FoodBubbleMarker.Status.RED
+		else:
+			freshness_pct = roundi(avg_fresh)
+			if avg_fresh < n.min_freshness:
+				bubble_status = FoodBubbleMarker.Status.RED
+			elif delivered >= requested - 0.01 and avg_fresh >= n.bonus_freshness:
+				bubble_status = FoodBubbleMarker.Status.GREEN
+			else:
+				bubble_status = FoodBubbleMarker.Status.AMBER
+
 		var row := index / 2
 		var col := index % 2
 		var col_offset: float = (col - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
 		bubble.position = base_pos + Vector3(col_offset, row * FoodBubbleMarker.STACK_SPACING, 0)
-		bubble.setup(foods[food_id], delivered, requested, fulfilled, true, fulfilled)
+		bubble.setup(foods[food_id], delivered, requested, bubble_status, freshness_pct)
 		index += 1
 
 func _add_route_block(pos: Vector3, level: String) -> void:
