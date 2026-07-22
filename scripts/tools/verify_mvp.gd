@@ -91,12 +91,14 @@ func _test_route_shape() -> void:
 	var farm := _node(map, "farm")
 
 	# A lone stub built directly east of Farm: its only real connection is
-	# the source node, so it should default to a corner, not straight.
+	# the source node (to its west), so it should default to a corner that
+	# actually touches that side ("sw", the first CORNER_FACINGS entry
+	# containing "w"), not an arbitrary one that ignores where the node is.
 	var stub_by_node := farm.grid_position + Vector2i(1, 0)
 	var state_a := GameState.new()
 	state_a.grid[stub_by_node] = {"kind": "route", "level": "dirt"}
 	var shape_a := SimulationEngine.route_shape(stub_by_node, state_a, nodes_by_pos)
-	assert(shape_a.family == "corner" and shape_a.facing == "ne", "A stub adjacent only to a source/settlement should default to a corner")
+	assert(shape_a.family == "corner" and shape_a.facing == "sw", "A stub adjacent only to a source/settlement should default to a corner touching the node's actual side")
 
 	# A lone stub next to another route tile (not a node) should default to
 	# straight instead.
@@ -168,6 +170,25 @@ func _test_route_shape() -> void:
 			reachable_ud = true
 			break
 	assert(reachable_ud, "A node-adjacent ambiguous tile must be able to cycle all the way to a straight up-down facing")
+
+	# Regression: a straight-drawn run where one end sits beside a source and
+	# the other beside a settlement must default to shapes that reflect the
+	# real neighbor on each side (opposite -> straight through, adjacent ->
+	# the matching corner), not an arbitrary fixed choice.
+	var village_a := _node(map, "villageA")
+	var tile_by_source := farm.grid_position + Vector2i(1, 0) # source west, route east
+	var state_g := GameState.new()
+	state_g.grid[tile_by_source] = {"kind": "route", "level": "dirt"}
+	state_g.grid[tile_by_source + Vector2i(1, 0)] = {"kind": "route", "level": "dirt"}
+	var shape_g := SimulationEngine.route_shape(tile_by_source, state_g, nodes_by_pos)
+	assert(shape_g.family == "straight" and shape_g.facing == "lr", "A source to the west and a route to the east must default to a left-right straight tile, not an arbitrary corner")
+
+	var tile_by_settlement := village_a.grid_position + Vector2i(0, 1) # settlement north, route west
+	var state_h := GameState.new()
+	state_h.grid[tile_by_settlement] = {"kind": "route", "level": "dirt"}
+	state_h.grid[tile_by_settlement + Vector2i(-1, 0)] = {"kind": "route", "level": "dirt"}
+	var shape_h := SimulationEngine.route_shape(tile_by_settlement, state_h, nodes_by_pos)
+	assert(shape_h.family == "corner" and shape_h.facing == "nw", "A settlement to the north and a route to the west must default to the NW corner that actually touches both real sides")
 
 func _test_node_adjacency_excluded_from_hub_degree() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")

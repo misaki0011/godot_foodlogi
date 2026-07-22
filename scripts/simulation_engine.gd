@@ -75,14 +75,61 @@ static func _natural_facing(sides: Dictionary) -> Dictionary:
 			return {"family": "corner", "facing": facing}
 	return {}
 
-## Every tappable facing, ordered so index 0 is the sensible fallback when
-## nothing else applies (no natural shape, nothing tapped yet): corner-first
-## next to a node (a bend toward the node reads better there), straight-first
-## everywhere else.
-static func _shape_cycle(prefer_corner: bool) -> Array[String]:
-	if prefer_corner:
-		return CORNER_FACINGS + STRAIGHT_FACINGS
+## Every tappable facing. Order doesn't matter for the default (see
+## _best_default_facing) -- it only determines what cycle_shape_facing()
+## advances to next.
+static func _shape_cycle() -> Array[String]:
 	return STRAIGHT_FACINGS + CORNER_FACINGS
+
+## The compass side of this tile's one real route/storage/hub neighbor, or
+## "" if there isn't exactly one (0, 2, or 3+ real sides).
+static func _single_real_side(sides: Dictionary) -> String:
+	var found := ""
+	var count := 0
+	for side in ["n", "e", "s", "w"]:
+		if sides[side]:
+			count += 1
+			found = side
+	return found if count == 1 else ""
+
+## The compass side of the first source/settlement node touching this tile,
+## or "" if none does.
+static func _node_side(pos: Vector2i, nodes_by_pos: Dictionary) -> String:
+	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
+	for d in DIRECTIONS:
+		if nodes_by_pos.has(pos + d):
+			return dir_keys[d]
+	return ""
+
+const OPPOSITE_SIDE := {"n": "s", "s": "n", "e": "w", "w": "e"}
+
+## Best-effort default facing for a tile whose shape isn't forced (see
+## route_shape()) and has no stored tap override yet: prefers whatever
+## shape is truthful to the real geometry actually touching it, rather than
+## an arbitrary fixed choice -- a single real route side and an adjacent
+## node on the *opposite* side reads as a straight through-line (e.g. a
+## source to the west and a route continuing east); a single real route
+## side and a node on an *adjacent* side reads as a corner bending toward
+## the node; a node with no real route side at all still bends toward the
+## node, just with no second side to disambiguate; only when there's
+## nothing nearby to go on at all does this fall back to a plain "lr".
+static func _best_default_facing(sides: Dictionary, pos: Vector2i, nodes_by_pos: Dictionary) -> String:
+	var route_side := _single_real_side(sides)
+	var node_side := _node_side(pos, nodes_by_pos)
+	if route_side != "" and node_side != "":
+		if OPPOSITE_SIDE[route_side] == node_side:
+			return "ud" if (route_side == "n" or route_side == "s") else "lr"
+		for facing in CORNER_FACINGS:
+			if facing.find(route_side) != -1 and facing.find(node_side) != -1:
+				return facing
+		return "lr" # unreachable: every side pairs with exactly one corner
+	if node_side != "":
+		for facing in CORNER_FACINGS:
+			if facing.find(node_side) != -1:
+				return facing
+	if route_side != "":
+		return "ud" if (route_side == "n" or route_side == "s") else "lr"
+	return "lr"
 
 ## Auto-derives a route tile's visual shape from its real connections (see
 ## AGENTS.md route-direction feature and the v0.4 "tap and hold to draw"
@@ -90,9 +137,9 @@ static func _shape_cycle(prefer_corner: bool) -> Array[String]:
 ## have its shape forced: 2 real route/storage/hub connections force the
 ## matching straight/corner, 3+ force the existing plain junction/hub_capped
 ## fallback. Every other tile -- regardless of its real connection count --
-## is always player-choosable by tap, defaulting to whatever shape matches
-## its real connections when nothing's been tapped yet, or the stored
-## override once it has (see is_shape_ambiguous/cycle_shape_facing).
+## is always player-choosable by tap, defaulting to whatever shape best
+## matches its real connections when nothing's been tapped yet, or the
+## stored override once it has (see is_shape_ambiguous/cycle_shape_facing).
 static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
 	var sides := _grid_only_sides(pos, state)
 	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
@@ -103,14 +150,14 @@ static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionar
 	if node_adjacent and count == 2:
 		return _natural_facing(sides)
 
-	var cycle := _shape_cycle(node_adjacent)
+	var cycle := _shape_cycle()
 	var stored = state.grid.get(pos, {}).get("facing", "")
 	if cycle.has(stored):
 		return {"family": "corner" if CORNER_FACINGS.has(stored) else "straight", "facing": stored}
 	var natural := _natural_facing(sides)
 	if not natural.is_empty():
 		return natural
-	var facing: String = cycle[0]
+	var facing: String = _best_default_facing(sides, pos, nodes_by_pos)
 	return {"family": "corner" if CORNER_FACINGS.has(facing) else "straight", "facing": facing}
 
 ## True when tapping this route tile should cycle its shape instead of
@@ -128,7 +175,7 @@ static func is_shape_ambiguous(pos: Vector2i, state: GameState, nodes_by_pos: Di
 ## forced shapes aren't cycleable).
 static func cycle_shape_facing(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> String:
 	var current := route_shape(pos, state, nodes_by_pos)
-	var cycle := _shape_cycle(_is_node_adjacent(pos, nodes_by_pos))
+	var cycle := _shape_cycle()
 	var idx: int = cycle.find(current.facing)
 	return cycle[(idx + 1) % cycle.size()]
 

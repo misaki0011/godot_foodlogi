@@ -21,6 +21,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 4. **Neither food sources nor settlements count toward hub-formation degree.** A route tile that only reaches "3 connections" because a node sits beside it is a plain pass-through, not a branching junction, so it neither requires a hub nor gets blocked by the network's hub cap on that basis. See §4.4.
 5. **A Bubbles On/Off toggle joins the map control panel.** Hides or shows every source/settlement speech bubble at once, since a busy network can crowd many bubbles together. See §10.7.
 6. **Route shape locking is now scoped to nodes only, and a hold-to-drag mode previews multi-tile paths.** Item 3's forcing rule now only applies to a tile adjacent to a source or settlement -- every other route tile is always tappable to any of the 6 shapes, defaulting sensibly until tapped. Separately, pressing and holding a buildable cell switches from single-tile tapping into a drag preview: a translucent line traces the path live (green if valid, red if not) without touching the map, and only builds the whole path, and only if it's fully valid, on release. See §4.1.
+7. **A lone stub's default shape is direction-aware.** Item 6's "defaulting sensibly" previously meant an arbitrary fixed shape regardless of where a tile's one real neighbor (route or node) actually was, which could default to a corner touching neither real neighbor. It now considers the actual side of a single real route neighbor and/or an adjacent node together, defaulting to a straight tile when they're in line, the one corner touching both when they're perpendicular, and a corner touching the node's real side when there's no route neighbor at all. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -286,8 +287,8 @@ node-adjacent tile:
   Small Hub auto-forms (§4.4), or, if the network is at its hub cap, the
   tile stays a plain `hub_capped` tile with today's rendering.
 - Zero or one real connection has no single correct shape, so it defaults
-  to a corner (reading better next to the node) and the player can tap it
-  to cycle through every shape.
+  to whichever shape actually reflects the real geometry touching it (see
+  below) and the player can tap it to cycle through every shape.
 
 **Every other route tile -- regardless of its real connection count -- is
 always player-choosable by tap** (revised in v0.4): tapping a built route
@@ -300,6 +301,27 @@ choice is kept even if later connections would otherwise suggest a
 different natural shape. This is a purely cosmetic choice: it never
 changes the tile's upkeep, capacity, or its adjacency contribution to
 hub-formation math.
+
+**The default for a tile with only one real anchor is direction-aware, not
+arbitrary** (revised in v0.4): a lone stub's default shape considers both
+its single real route neighbor (if any) and an adjacent node's side (if
+any), rather than always picking the same fixed shape regardless of where
+those neighbors actually are.
+
+- A real route neighbor and a node on the *opposite* side (e.g. a source
+  to the west and a route continuing east) default to the matching
+  straight tile -- the road visually continues in a line past the node.
+- A real route neighbor and a node on an *adjacent* side (e.g. a route to
+  the west and a settlement to the north) default to the one corner that
+  actually touches both sides, so the tile visually bends toward the node
+  from the direction the road is really coming from, instead of showing a
+  corner that touches neither real neighbor.
+- A node with no real route neighbor at all still defaults to a corner
+  touching the node's actual side (there's no second real anchor to pick
+  between the two candidate corners, so the choice is an arbitrary but
+  consistent tie-break).
+- With neither a real route neighbor nor a node touching it, the default
+  is a plain left-right straight tile.
 
 ### Drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.4)
 
