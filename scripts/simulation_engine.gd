@@ -16,29 +16,29 @@ static func neighbors(pos: Vector2i, grid_size: Vector2i) -> Array[Vector2i]:
 			result.append(n)
 	return result
 
-## Hub-formation degree: how many of this tile's sides count toward the
-## 3-connection hub threshold (see check_auto_hubs/would_exceed_hub_cap).
-## Route/storage/hub tiles and settlement nodes all count. A source node
-## does not: per §4.7, a source is a pure production endpoint that a
-## delivery path can never enter or pass through, so a tile that only
-## reaches "3 connections" because a source happens to sit beside it isn't
-## actually organizing a branching junction -- it's a plain pass-through
-## with supply attached, and shouldn't require (or be blocked by) a hub.
-static func tile_degree(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> int:
-	var count := 0
-	for n in neighbors(pos, GameBalance.GRID_SIZE):
-		if state.grid.has(n):
-			count += 1
-		elif nodes_by_pos.has(n) and nodes_by_pos[n].node_type == GameEnums.NodeType.SETTLEMENT:
-			count += 1
-	return count
+## Hub-formation degree: how many of this tile's sides are real
+## route/storage/hub neighbors (see check_auto_hubs/would_exceed_hub_cap).
+## Neither source nor settlement nodes count (added in v0.4): per §4.7,
+## both are pure endpoints a delivery path can never enter or pass through
+## (a path starts at exactly one source, ends at exactly one settlement,
+## and may not use any other node as a transit shortcut), so a tile that
+## only reaches "3 connections" because a node happens to sit beside it
+## isn't actually organizing a branching junction -- it's a plain
+## pass-through with a node attached, and shouldn't require (or be blocked
+## by) a hub. Only converging route/storage/hub tiles do that.
+static func tile_degree(pos: Vector2i, state: GameState) -> int:
+	var sides := _grid_only_sides(pos, state)
+	return int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
 
 const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
 const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
 
-## Only route/storage/hub grid tiles can force a route tile's shape -- a
-## nearby source/settlement node never does, since it has its own separate
-## marker and shouldn't lock the road into visually bending toward it. Node
+## Which of this tile's sides are real route/storage/hub neighbors (used
+## both for tile_degree()'s hub-formation threshold and for auto-deriving
+## visual shape in route_shape()). A nearby source/settlement node is
+## deliberately excluded -- see tile_degree()'s doc comment -- and, for
+## shape purposes specifically, a node also has its own separate marker
+## and shouldn't lock the road into visually bending toward it; node
 ## adjacency only ever affects the *default* shown for an already-ambiguous
 ## tile (see route_shape()), and never blocks tap-cycling. Keyed by compass
 ## side: (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west, matching how
@@ -68,15 +68,13 @@ static func _ambiguous_cycle(pos: Vector2i, nodes_by_pos: Dictionary) -> Array[S
 ## Auto-derives a route tile's visual shape from its real connections (see
 ## AGENTS.md route-direction feature): forced straight/corner only when
 ## exactly 2 *route/storage/hub* sides connect, the existing 3+/junction
-## fallback when tile_degree (route/storage/hub tiles plus settlement nodes,
-## matching hub-formation rules -- source nodes don't count, see
-## tile_degree()) reaches 3+, and a player-choosable default otherwise (see
-## is_shape_ambiguous/cycle_shape_facing).
+## fallback when tile_degree reaches 3+, and a player-choosable default
+## otherwise (see is_shape_ambiguous/cycle_shape_facing).
 static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
-	if tile_degree(pos, state, nodes_by_pos) >= 3:
-		return {"family": "junction", "facing": ""}
 	var sides := _grid_only_sides(pos, state)
 	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
+	if count >= 3:
+		return {"family": "junction", "facing": ""}
 	if count == 2:
 		if sides.n and sides.s:
 			return {"family": "straight", "facing": "ud"}
@@ -98,12 +96,8 @@ static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionar
 ## no-opping -- i.e. its shape isn't forced by 2+ real route/storage/hub
 ## connections or the 3+/junction fallback. Node adjacency never forces, so
 ## it never blocks tapping either.
-static func is_shape_ambiguous(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> bool:
-	if tile_degree(pos, state, nodes_by_pos) >= 3:
-		return false
-	var sides := _grid_only_sides(pos, state)
-	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
-	return count <= 1
+static func is_shape_ambiguous(pos: Vector2i, state: GameState) -> bool:
+	return tile_degree(pos, state) <= 1
 
 ## Returns the next facing to store for an ambiguous route tile (caller
 ## should confirm is_shape_ambiguous(pos) first -- forced shapes aren't
@@ -173,13 +167,13 @@ static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new
 			hub_counts[c] = hub_counts.get(c, 0) + 1
 
 	var new_junctions: Array[Vector2i] = []
-	if tile_degree(new_cell, temp_state, nodes_by_pos) >= 3:
+	if tile_degree(new_cell, temp_state) >= 3:
 		new_junctions.append(new_cell)
 	for n in neighbors(new_cell, GameBalance.GRID_SIZE):
 		var cell = state.grid.get(n)
 		if cell == null or cell.kind != "route":
 			continue
-		if tile_degree(n, state, nodes_by_pos) < 3 and tile_degree(n, temp_state, nodes_by_pos) >= 3:
+		if tile_degree(n, state) < 3 and tile_degree(n, temp_state) >= 3:
 			new_junctions.append(n)
 
 	for pos in new_junctions:
@@ -205,7 +199,7 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 		var cell = state.grid[pos]
 		if cell.kind != "route":
 			continue
-		var degree := tile_degree(pos, state, nodes_by_pos)
+		var degree := tile_degree(pos, state)
 		if degree >= 3:
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)
