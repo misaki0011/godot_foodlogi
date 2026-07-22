@@ -20,7 +20,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 3. **Route tiles render a directional shape.** A route tile auto-renders straight or L-corner from its real adjacency instead of always looking the same; when that shape is ambiguous (0-1 real connections) it defaults sensibly and the player can tap it to cycle through the valid options. See §4.1.
 4. **Neither food sources nor settlements count toward hub-formation degree.** A route tile that only reaches "3 connections" because a node sits beside it is a plain pass-through, not a branching junction, so it neither requires a hub nor gets blocked by the network's hub cap on that basis. See §4.4.
 5. **A Bubbles On/Off toggle joins the map control panel.** Hides or shows every source/settlement speech bubble at once, since a busy network can crowd many bubbles together. See §10.7.
-6. **Route shape locking is now scoped to nodes only, and a hold-to-drag mode draws multi-tile paths.** Item 3's forcing rule now only applies to a tile adjacent to a source or settlement -- every other route tile is always tappable to any of the 6 shapes, defaulting sensibly until tapped. Separately, pressing and holding a buildable cell switches from single-tile tapping into drag mode, placing a route tile on every cell the pointer crosses until release. See §4.1.
+6. **Route shape locking is now scoped to nodes only, and a hold-to-drag mode previews multi-tile paths.** Item 3's forcing rule now only applies to a tile adjacent to a source or settlement -- every other route tile is always tappable to any of the 6 shapes, defaulting sensibly until tapped. Separately, pressing and holding a buildable cell switches from single-tile tapping into a drag preview: a translucent line traces the path live (green if valid, red if not) without touching the map, and only builds the whole path, and only if it's fully valid, on release. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -301,21 +301,31 @@ different natural shape. This is a purely cosmetic choice: it never
 changes the tile's upkeep, capacity, or its adjacency contribution to
 hub-formation math.
 
-### Drawing a route by press-and-hold-to-drag (added in v0.4)
+### Drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.4)
 
 Tapping still places one tile at a time, exactly as in §2.1's basic model.
 Pressing and holding a buildable cell for a short moment (roughly a third
 of a second) without releasing switches into drag mode: dragging the
-pointer across further cells places a route tile on each one in a single
-continuous motion, using the same per-tile cost, adjacency, and hub-cap
-rules as a single tap. A cell that fails any of those checks (not adjacent
-to the growing path yet, would exceed the hub cap, insufficient treasury)
-is simply skipped rather than stopping the whole gesture, except that
-running out of treasury shows one toast and halts further placement for
-that drag. Releasing ends the drag; the hub-formation pass then runs once
-for every tile placed during the gesture, the same as it would for a
-single tap. A press that releases before the hold threshold is an ordinary
-tap (place one tile, or cycle a tappable tile's shape), unchanged.
+pointer traces a candidate path across further cells, drawn live as a
+translucent line so the player can see it before committing to anything.
+
+**Nothing is written to the map while dragging.** The whole traced path is
+validated as a unit -- every new tile in it must connect (to the existing
+network or to an earlier tile already queued in the same path), none may
+push a junction past the hub cap, and the total cost must fit the current
+treasury (already-built tiles and nodes the path happens to cross are
+harmless waypoints, not failures). The preview line renders green while
+the path is valid and red the moment it isn't, explaining why in a toast
+if the player releases while it's red. **Only a fully valid path is built,
+and only on release** -- an invalid path places nothing at all, matching
+§4.1's existing transactional single-tile placement. On a valid release,
+every queued tile is written at once and the hub-formation pass runs a
+single time for the whole path, the same as it would after any tap; each
+tile then renders with the shape that matches its final real connections,
+exactly as if it had been placed one tap at a time. A press that releases
+before the hold threshold, or one that never actually drags to a second
+cell, is an ordinary tap (place one tile, or cycle a tappable tile's
+shape), unchanged.
 
 ---
 
