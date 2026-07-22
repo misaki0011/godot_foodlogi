@@ -20,6 +20,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 3. **Route tiles render a directional shape.** A route tile auto-renders straight or L-corner from its real adjacency instead of always looking the same; when that shape is ambiguous (0-1 real connections) it defaults sensibly and the player can tap it to cycle through the valid options. See §4.1.
 4. **Neither food sources nor settlements count toward hub-formation degree.** A route tile that only reaches "3 connections" because a node sits beside it is a plain pass-through, not a branching junction, so it neither requires a hub nor gets blocked by the network's hub cap on that basis. See §4.4.
 5. **A Bubbles On/Off toggle joins the map control panel.** Hides or shows every source/settlement speech bubble at once, since a busy network can crowd many bubbles together. See §10.7.
+6. **Route shape locking is now scoped to nodes only, and a hold-to-drag mode draws multi-tile paths.** Item 3's forcing rule now only applies to a tile adjacent to a source or settlement -- every other route tile is always tappable to any of the 6 shapes, defaulting sensibly until tapped. Separately, pressing and holding a buildable cell switches from single-tile tapping into drag mode, placing a route tile on every cell the pointer crosses until release. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -271,10 +272,11 @@ No treasury deducted.
 
 This prevents a visually valid branch from existing when the required hub could not be created.
 
-### Route tile directional shape (added in v0.4)
+### Route tile directional shape (added in v0.4, revised in v0.4)
 
-A route tile's rendered shape follows its real connections, not a
-player-authored layout:
+A route tile's rendered shape follows its real connections, but only when
+the tile is directly adjacent to a source or settlement node. For a
+node-adjacent tile:
 
 - Two opposite connections (e.g. a tile with a built neighbor on both its
   east and west side) force a straight tile matching that axis.
@@ -283,13 +285,37 @@ player-authored layout:
 - Three or more connections are unchanged from existing behavior: either a
   Small Hub auto-forms (§4.4), or, if the network is at its hub cap, the
   tile stays a plain `hub_capped` tile with today's rendering.
+- Zero or one real connection has no single correct shape, so it defaults
+  to a corner (reading better next to the node) and the player can tap it
+  to cycle through every shape.
 
-A tile with zero or one real connection has no single correct shape, so it
-defaults to whichever family reads better for its context (a corner next
-to a source/settlement node, straight otherwise) and the player can tap it
-to cycle through that family's remaining options. This is a purely
-cosmetic choice: it never changes the tile's upkeep, capacity, or its
-adjacency contribution to hub-formation math.
+**Every other route tile -- regardless of its real connection count -- is
+always player-choosable by tap** (revised in v0.4): tapping a built route
+tile that isn't adjacent to any source or settlement cycles it through all
+6 shapes (both straight facings, all 4 corners), so the player can flip it
+to any shape they want. Before the first tap, it still defaults to
+whichever shape matches its real connections (a plain straight run still
+looks correct without any manual correction); once tapped, the player's
+choice is kept even if later connections would otherwise suggest a
+different natural shape. This is a purely cosmetic choice: it never
+changes the tile's upkeep, capacity, or its adjacency contribution to
+hub-formation math.
+
+### Drawing a route by press-and-hold-to-drag (added in v0.4)
+
+Tapping still places one tile at a time, exactly as in §2.1's basic model.
+Pressing and holding a buildable cell for a short moment (roughly a third
+of a second) without releasing switches into drag mode: dragging the
+pointer across further cells places a route tile on each one in a single
+continuous motion, using the same per-tile cost, adjacency, and hub-cap
+rules as a single tap. A cell that fails any of those checks (not adjacent
+to the growing path yet, would exceed the hub cap, insufficient treasury)
+is simply skipped rather than stopping the whole gesture, except that
+running out of treasury shows one toast and halts further placement for
+that drag. Releasing ends the drag; the hub-formation pass then runs once
+for every tile placed during the gesture, the same as it would for a
+single tap. A press that releases before the hold threshold is an ordinary
+tap (place one tile, or cycle a tappable tile's shape), unchanged.
 
 ---
 

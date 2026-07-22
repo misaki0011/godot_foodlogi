@@ -40,8 +40,9 @@ const ZOOM_MAX := 60.0
 const ZOOM_SPEED := 24.0 # camera.size units/sec while a zoom button is held
 const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with zoom
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
+const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Click an empty tile adjacent to a node or existing route to extend your network.",
+	"route": "Tap an empty tile adjacent to a node or existing route to place one, or tap a built tile to flip its shape. Press and hold, then drag, to draw a whole path at once.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
@@ -83,6 +84,21 @@ var _map_bounds_max: Vector2
 var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
+## ---------- route draw: tap-to-cycle vs. hold-and-drag ----------
+## A press on a non-node cell while the "route" tool is active starts out
+## eligible for hold-to-drag; _process() promotes it to _drag_active once
+## held past HOLD_TO_DRAG_MSEC without releasing. A release before that
+## threshold is a normal tap (dispatched to _handle_click as before). This
+## is why a plain tap's build/cycle action now fires on release rather than
+## on press -- until release (or the hold threshold), there's no way to
+## know whether the gesture will turn into a drag.
+var _press_eligible := false
+var _press_cell := Vector2i(-1, -1)
+var _press_start_msec := 0
+var _drag_active := false
+var _drag_built_any := false
+var _drag_funds_warned := false
+
 func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
 	_state.balance = GameBalance.STARTING_FUNDS
@@ -122,14 +138,73 @@ func _process(delta: float) -> void:
 		new_pos.x = clampf(new_pos.x, _map_bounds_min.x - PAN_MAP_MARGIN, _map_bounds_max.x + PAN_MAP_MARGIN)
 		new_pos.z = clampf(new_pos.z, _map_bounds_min.y - PAN_MAP_MARGIN, _map_bounds_max.y + PAN_MAP_MARGIN)
 		_camera.position = new_pos
+	if _press_eligible and not _drag_active and Time.get_ticks_msec() - _press_start_msec >= HOLD_TO_DRAG_MSEC:
+		_drag_active = true
+		_tip_panel.visible = false
+		_show_toast("Drawing route -- drag to extend, release to stop.")
+		_paint_route_tile(_press_cell)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _report_overlay.visible:
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		_handle_click(_screen_to_cell(event.position), event.position)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_start_press(event.position)
+		else:
+			_end_press(event.position)
 	elif event is InputEventMouseMotion:
-		_update_tip(_screen_to_cell(event.position), event.position)
+		if _drag_active:
+			_paint_route_tile(_screen_to_cell(event.position))
+		elif not _press_eligible:
+			_update_tip(_screen_to_cell(event.position), event.position)
+
+func _start_press(screen_position: Vector2) -> void:
+	var cell := _screen_to_cell(screen_position)
+	_press_cell = cell
+	_press_start_msec = Time.get_ticks_msec()
+	_drag_active = false
+	_drag_built_any = false
+	_drag_funds_warned = false
+	# Only a route-tool press on a real, buildable (non-node) cell can turn
+	# into a drag -- other tools and node taps behave exactly as a normal
+	# click on release, same as before hold-to-drag existed.
+	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and _node_at(cell) == null
+
+func _end_press(screen_position: Vector2) -> void:
+	if _drag_active:
+		_drag_active = false
+		_press_eligible = false
+		if _drag_built_any:
+			_after_action()
+		return
+	_press_eligible = false
+	_handle_click(_screen_to_cell(screen_position), screen_position)
+
+## Silently places one route tile while drag-drawing (see _process()) --
+## skips node cells, already-built cells, and any cell that fails the same
+## adjacency/hub-cap/cost checks _do_build_route uses for a single tap, so
+## a fast or wandering drag just doesn't extend past an invalid cell rather
+## than erroring. Unlike a single tap, per-tile toasts and the hub-check
+## pass are deferred to _end_press()/_after_action() so a multi-tile drag
+## doesn't spam a toast per tile.
+func _paint_route_tile(cell: Vector2i) -> void:
+	if not _cell_in_bounds(cell) or _node_at(cell) or _state.grid.has(cell):
+		return
+	if not _adjacent_to_network(cell):
+		return
+	if SimulationEngine.would_exceed_hub_cap(_state, _nodes_by_pos, cell):
+		return
+	var cost := SimulationEngine.route_build_cost(cell, _map_data)
+	if _state.balance < cost:
+		if not _drag_funds_warned:
+			_show_toast("Not enough treasury -- stopped drawing.", true)
+			_drag_funds_warned = true
+		return
+	_state.balance -= cost
+	_state.grid[cell] = {"kind": "route", "level": "dirt"}
+	_drag_built_any = true
+	_render_grid()
+	_update_ui()
 
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
@@ -159,7 +234,7 @@ const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (Nort
 func _do_build_route(cell: Vector2i) -> void:
 	if _state.grid.has(cell):
 		var cell_data = _state.grid[cell]
-		if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state):
+		if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
 			var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
 			cell_data.facing = facing
 			_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))
