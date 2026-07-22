@@ -16,12 +16,168 @@ static func neighbors(pos: Vector2i, grid_size: Vector2i) -> Array[Vector2i]:
 			result.append(n)
 	return result
 
-static func tile_degree(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> int:
-	var count := 0
+## Hub-formation degree: how many of this tile's sides are real
+## route/storage/hub neighbors (see check_auto_hubs/would_exceed_hub_cap).
+## Neither source nor settlement nodes count (added in v0.4): per §4.7,
+## both are pure endpoints a delivery path can never enter or pass through
+## (a path starts at exactly one source, ends at exactly one settlement,
+## and may not use any other node as a transit shortcut), so a tile that
+## only reaches "3 connections" because a node happens to sit beside it
+## isn't actually organizing a branching junction -- it's a plain
+## pass-through with a node attached, and shouldn't require (or be blocked
+## by) a hub. Only converging route/storage/hub tiles do that.
+static func tile_degree(pos: Vector2i, state: GameState) -> int:
+	var sides := _grid_only_sides(pos, state)
+	return int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
+
+const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
+const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
+
+## Which of this tile's sides are real route/storage/hub neighbors (used
+## both for tile_degree()'s hub-formation threshold and for auto-deriving
+## visual shape in route_shape()). A nearby source/settlement node is
+## deliberately excluded -- see tile_degree()'s doc comment -- and, for
+## shape purposes specifically, a node also has its own separate marker
+## and shouldn't lock the road into visually bending toward it; node
+## adjacency only ever affects the *default* shown for an already-ambiguous
+## tile (see route_shape()), and never blocks tap-cycling. Keyed by compass
+## side: (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west, matching how
+## world Z increases with grid Y (see main.gd's map_to_local usage).
+static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
+	var sides := {"n": false, "e": false, "s": false, "w": false}
+	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
+	for d in DIRECTIONS:
+		var n := pos + d
+		if n.x < 0 or n.y < 0 or n.x >= GameBalance.GRID_SIZE.x or n.y >= GameBalance.GRID_SIZE.y:
+			continue
+		if state.grid.has(n):
+			sides[dir_keys[d]] = true
+	return sides
+
+static func _is_node_adjacent(pos: Vector2i, nodes_by_pos: Dictionary) -> bool:
 	for n in neighbors(pos, GameBalance.GRID_SIZE):
-		if state.grid.has(n) or nodes_by_pos.has(n):
+		if nodes_by_pos.has(n):
+			return true
+	return false
+
+## The shape that truthfully matches this tile's real connections, or {} if
+## the count (0, 1, or 3+) doesn't uniquely determine one.
+static func _natural_facing(sides: Dictionary) -> Dictionary:
+	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
+	if count != 2:
+		return {}
+	if sides.n and sides.s:
+		return {"family": "straight", "facing": "ud"}
+	if sides.e and sides.w:
+		return {"family": "straight", "facing": "lr"}
+	for facing in CORNER_FACINGS:
+		if sides[facing[0]] and sides[facing[1]]:
+			return {"family": "corner", "facing": facing}
+	return {}
+
+## Every tappable facing. Order doesn't matter for the default (see
+## _best_default_facing) -- it only determines what cycle_shape_facing()
+## advances to next.
+static func _shape_cycle() -> Array[String]:
+	return STRAIGHT_FACINGS + CORNER_FACINGS
+
+## The compass side of this tile's one real route/storage/hub neighbor, or
+## "" if there isn't exactly one (0, 2, or 3+ real sides).
+static func _single_real_side(sides: Dictionary) -> String:
+	var found := ""
+	var count := 0
+	for side in ["n", "e", "s", "w"]:
+		if sides[side]:
 			count += 1
-	return count
+			found = side
+	return found if count == 1 else ""
+
+## The compass side of the first source/settlement node touching this tile,
+## or "" if none does.
+static func _node_side(pos: Vector2i, nodes_by_pos: Dictionary) -> String:
+	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
+	for d in DIRECTIONS:
+		if nodes_by_pos.has(pos + d):
+			return dir_keys[d]
+	return ""
+
+const OPPOSITE_SIDE := {"n": "s", "s": "n", "e": "w", "w": "e"}
+
+## Best-effort default facing for a tile whose shape isn't forced (see
+## route_shape()) and has no stored tap override yet: prefers whatever
+## shape is truthful to the real geometry actually touching it, rather than
+## an arbitrary fixed choice -- a single real route side and an adjacent
+## node on the *opposite* side reads as a straight through-line (e.g. a
+## source to the west and a route continuing east); a single real route
+## side and a node on an *adjacent* side reads as a corner bending toward
+## the node; a node with no real route side at all still bends toward the
+## node, just with no second side to disambiguate; only when there's
+## nothing nearby to go on at all does this fall back to a plain "lr".
+static func _best_default_facing(sides: Dictionary, pos: Vector2i, nodes_by_pos: Dictionary) -> String:
+	var route_side := _single_real_side(sides)
+	var node_side := _node_side(pos, nodes_by_pos)
+	if route_side != "" and node_side != "":
+		if OPPOSITE_SIDE[route_side] == node_side:
+			return "ud" if (route_side == "n" or route_side == "s") else "lr"
+		for facing in CORNER_FACINGS:
+			if facing.find(route_side) != -1 and facing.find(node_side) != -1:
+				return facing
+		return "lr" # unreachable: every side pairs with exactly one corner
+	if node_side != "":
+		for facing in CORNER_FACINGS:
+			if facing.find(node_side) != -1:
+				return facing
+	if route_side != "":
+		return "ud" if (route_side == "n" or route_side == "s") else "lr"
+	return "lr"
+
+## Auto-derives a route tile's visual shape from its real connections (see
+## AGENTS.md route-direction feature and the v0.4 "tap and hold to draw"
+## changelog entry). Only a tile adjacent to a source or settlement node can
+## have its shape forced: 2 real route/storage/hub connections force the
+## matching straight/corner, 3+ force the existing plain junction/hub_capped
+## fallback. Every other tile -- regardless of its real connection count --
+## is always player-choosable by tap, defaulting to whatever shape best
+## matches its real connections when nothing's been tapped yet, or the
+## stored override once it has (see is_shape_ambiguous/cycle_shape_facing).
+static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+	var sides := _grid_only_sides(pos, state)
+	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
+	var node_adjacent := _is_node_adjacent(pos, nodes_by_pos)
+
+	if node_adjacent and count >= 3:
+		return {"family": "junction", "facing": ""}
+	if node_adjacent and count == 2:
+		return _natural_facing(sides)
+
+	var cycle := _shape_cycle()
+	var stored = state.grid.get(pos, {}).get("facing", "")
+	if cycle.has(stored):
+		return {"family": "corner" if CORNER_FACINGS.has(stored) else "straight", "facing": stored}
+	var natural := _natural_facing(sides)
+	if not natural.is_empty():
+		return natural
+	var facing: String = _best_default_facing(sides, pos, nodes_by_pos)
+	return {"family": "corner" if CORNER_FACINGS.has(facing) else "straight", "facing": facing}
+
+## True when tapping this route tile should cycle its shape instead of
+## no-opping. A tile with no source/settlement touching it is always
+## tappable, regardless of its real connection count; a node-adjacent tile
+## is only tappable when it has 0-1 real connections (otherwise its shape
+## is forced -- see route_shape()).
+static func is_shape_ambiguous(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> bool:
+	if _is_node_adjacent(pos, nodes_by_pos):
+		return tile_degree(pos, state) <= 1
+	return true
+
+## Returns the next facing to store for an ambiguous route tile (caller
+## should confirm is_shape_ambiguous(pos, state, nodes_by_pos) first --
+## forced shapes aren't cycleable).
+static func cycle_shape_facing(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> String:
+	var current := route_shape(pos, state, nodes_by_pos)
+	var cycle := _shape_cycle()
+	var idx: int = cycle.find(current.facing)
+	return cycle[(idx + 1) % cycle.size()]
 
 ## key -> [key, ...]; every built tile connects to adjacent built tiles or
 ## nodes, and every node connects to its adjacent built tiles (nodes never
@@ -82,13 +238,13 @@ static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new
 			hub_counts[c] = hub_counts.get(c, 0) + 1
 
 	var new_junctions: Array[Vector2i] = []
-	if tile_degree(new_cell, temp_state, nodes_by_pos) >= 3:
+	if tile_degree(new_cell, temp_state) >= 3:
 		new_junctions.append(new_cell)
 	for n in neighbors(new_cell, GameBalance.GRID_SIZE):
 		var cell = state.grid.get(n)
 		if cell == null or cell.kind != "route":
 			continue
-		if tile_degree(n, state, nodes_by_pos) < 3 and tile_degree(n, temp_state, nodes_by_pos) >= 3:
+		if tile_degree(n, state) < 3 and tile_degree(n, temp_state) >= 3:
 			new_junctions.append(n)
 
 	for pos in new_junctions:
@@ -114,7 +270,7 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 		var cell = state.grid[pos]
 		if cell.kind != "route":
 			continue
-		var degree := tile_degree(pos, state, nodes_by_pos)
+		var degree := tile_degree(pos, state)
 		if degree >= 3:
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)

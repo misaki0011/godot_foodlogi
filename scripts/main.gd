@@ -17,6 +17,18 @@ const ROUTE_LEVEL_SCENES := {
 	"paved": preload("res://assets/Blocks/glTF/Block_Road_Paved.glb"),
 	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
 }
+## Corner (L-shape) variants. Paved has none -- its existing block is 4
+## symmetric corner stones that already read fine unrotated for any shape
+## (see generate_blocks.py). Falls back to ROUTE_LEVEL_SCENES when absent.
+const ROUTE_CORNER_SCENES := {
+	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt_Corner.glb"),
+	"main": preload("res://assets/Blocks/glTF/Block_Road_Main_Corner.glb"),
+}
+## Y-axis yaw for each facing. Straight blocks' tread already runs N-S at 0
+## rotation (see generate_blocks.py), so "ud" needs none and "lr" needs a
+## quarter turn. Corner blocks are authored connecting N+E ("ne") at 0
+## rotation; each other facing is one further quarter turn clockwise.
+const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "se": 90.0, "sw": 180.0, "nw": 270.0}
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
@@ -28,8 +40,9 @@ const ZOOM_MAX := 60.0
 const ZOOM_SPEED := 24.0 # camera.size units/sec while a zoom button is held
 const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with zoom
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
+const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Click an empty tile adjacent to a node or existing route to extend your network.",
+	"route": "Tap an empty tile adjacent to a node or existing route to place one, or tap a built tile to flip its shape. Press and hold, then drag, to preview a whole path -- release to build it (nothing is built if the path isn't valid).",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
@@ -48,6 +61,7 @@ var _tool := "route"
 var _nodes_by_pos: Dictionary = {}
 var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
+var _bubbles_visible := true
 
 var _funds_label: Label
 var _day_label: Label
@@ -56,6 +70,7 @@ var _best_score_label: Label
 var _avg_score_label: Label
 var _hint_label: Label
 var _toast: Label
+var _bubbles_button: Button
 var _tool_buttons: Dictionary = {}
 var _tip_panel: PanelContainer
 var _tip_label: RichTextLabel
@@ -69,6 +84,41 @@ var _map_bounds_max: Vector2
 var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
+## ---------- route draw: tap-to-cycle vs. hold-and-drag ----------
+## A press on a non-node cell while the "route" tool is active starts out
+## eligible for hold-to-drag; _process() promotes it to _drag_active once
+## held past HOLD_TO_DRAG_MSEC without releasing. A release before that
+## threshold -- or a release without ever dragging to a second cell -- is a
+## normal tap (dispatched to _handle_click as before). This is why a plain
+## tap's build/cycle action now fires on release rather than on press --
+## until release (or the hold threshold), there's no way to know whether
+## the gesture will turn into a drag.
+##
+## While dragging, nothing is written to _state.grid: _drag_path just
+## records every cell the pointer has crossed, _recompute_drag_validity()
+## re-derives which of those are real new tiles to build (skipping nodes
+## and already-built cells as harmless pass-through waypoints) and
+## whether the whole path is affordable/connected/under the hub cap, and
+## _update_drag_preview() draws a translucent line so the player can see
+## the path (green) or why it's rejected (red) before committing anything.
+## The actual tiles -- with their final, correct auto-tile shapes, since
+## _render_grid() always recomputes those from the real grid -- are only
+## written to _state.grid on release, and only if the whole path is valid;
+## an invalid path builds nothing at all, matching ROUTE-01's single-tile
+## transactional placement.
+var _press_eligible := false
+var _press_cell := Vector2i(-1, -1)
+var _press_start_msec := 0
+var _drag_active := false
+var _drag_path: Array[Vector2i] = []
+var _drag_new_cells: Array[Vector2i] = []
+var _drag_valid := true
+var _drag_invalid_reason := ""
+var _drag_preview_visuals: Node3D
+
+const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
+const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
+
 func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
 	_state.balance = GameBalance.STARTING_FUNDS
@@ -80,6 +130,9 @@ func _ready() -> void:
 	_grid_visuals = Node3D.new()
 	_grid_visuals.name = "GridVisuals"
 	add_child(_grid_visuals)
+	_drag_preview_visuals = Node3D.new()
+	_drag_preview_visuals.name = "DragPreviewVisuals"
+	add_child(_drag_preview_visuals)
 	_render_grid()
 	_default_camera_size = _camera.size
 	var min_corner: Vector3 = _terrain.map_to_local(Vector3i(0, 0, 0))
@@ -108,14 +161,169 @@ func _process(delta: float) -> void:
 		new_pos.x = clampf(new_pos.x, _map_bounds_min.x - PAN_MAP_MARGIN, _map_bounds_max.x + PAN_MAP_MARGIN)
 		new_pos.z = clampf(new_pos.z, _map_bounds_min.y - PAN_MAP_MARGIN, _map_bounds_max.y + PAN_MAP_MARGIN)
 		_camera.position = new_pos
+	if _press_eligible and not _drag_active and Time.get_ticks_msec() - _press_start_msec >= HOLD_TO_DRAG_MSEC:
+		_drag_active = true
+		_tip_panel.visible = false
+		_drag_path = [_press_cell]
+		_recompute_drag_validity()
+		_update_drag_preview()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _report_overlay.visible:
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		_handle_click(_screen_to_cell(event.position), event.position)
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_start_press(event.position)
+		else:
+			_end_press(event.position)
 	elif event is InputEventMouseMotion:
-		_update_tip(_screen_to_cell(event.position), event.position)
+		if _drag_active:
+			_extend_drag_path(_screen_to_cell(event.position))
+		elif not _press_eligible:
+			_update_tip(_screen_to_cell(event.position), event.position)
+
+func _start_press(screen_position: Vector2) -> void:
+	var cell := _screen_to_cell(screen_position)
+	_press_cell = cell
+	_press_start_msec = Time.get_ticks_msec()
+	_drag_active = false
+	# Only a route-tool press on a real, buildable (non-node) cell can turn
+	# into a drag -- other tools and node taps behave exactly as a normal
+	# click on release, same as before hold-to-drag existed.
+	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and _node_at(cell) == null
+
+func _end_press(screen_position: Vector2) -> void:
+	if _drag_active:
+		_drag_active = false
+		_press_eligible = false
+		# A hold-then-release without ever dragging to a second cell is a
+		# plain tap on the pressed cell (build, or cycle its shape) --
+		# holding still shouldn't behave differently from tapping.
+		if _drag_path.size() > 1:
+			_commit_drag()
+		else:
+			_handle_click(_press_cell)
+		_clear_drag_preview()
+		return
+	_press_eligible = false
+	_handle_click(_screen_to_cell(screen_position), screen_position)
+
+## Grows the in-progress drag path with a newly-entered cell (duplicates of
+## the current tail are ignored) and refreshes the preview. Nothing is
+## written to _state.grid here -- see the class-level comment above
+## _press_eligible for why the whole path is only committed on release.
+func _extend_drag_path(cell: Vector2i) -> void:
+	if not _cell_in_bounds(cell) or (not _drag_path.is_empty() and _drag_path[-1] == cell):
+		return
+	_drag_path.append(cell)
+	_recompute_drag_validity()
+	_update_drag_preview()
+
+## Re-derives, from scratch, which cells in _drag_path are real new tiles to
+## build (_drag_new_cells) and whether the whole path is valid: every new
+## cell must connect to the existing network or an earlier tile already
+## queued in this same drag, none may push a junction past the hub cap, and
+## the total cost must fit the current treasury. Node cells and cells
+## already built are harmless pass-through waypoints, not failures. Runs
+## against a scratch grid copy, matching would_exceed_hub_cap's own
+## preview-without-mutating pattern -- _state.grid is never touched here.
+func _recompute_drag_validity() -> void:
+	_drag_valid = true
+	_drag_invalid_reason = ""
+	_drag_new_cells.clear()
+	var temp_grid: Dictionary = _state.grid.duplicate()
+	var temp_state := GameState.new()
+	temp_state.grid = temp_grid
+	var total_cost := 0.0
+	for cell in _drag_path:
+		if _node_at(cell) or temp_grid.has(cell):
+			continue
+		var adjacent := false
+		for n in _neighbor_cells(cell):
+			if temp_grid.has(n) or _nodes_by_pos.has(n):
+				adjacent = true
+				break
+		if not adjacent:
+			_drag_valid = false
+			_drag_invalid_reason = "That path isn't connected -- try dragging more slowly."
+			break
+		if SimulationEngine.would_exceed_hub_cap(temp_state, _nodes_by_pos, cell):
+			_drag_valid = false
+			_drag_invalid_reason = "That path would need a hub beyond the network's cap."
+			break
+		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
+		temp_grid[cell] = {"kind": "route", "level": "dirt"}
+		_drag_new_cells.append(cell)
+	if _drag_valid and total_cost > _state.balance:
+		_drag_valid = false
+		_drag_invalid_reason = "Not enough treasury for the whole path (§%d needed)." % roundi(total_cost)
+
+## Writes every queued new tile from a valid drag path to _state.grid in one
+## batch, then runs the usual post-build pass once for the whole gesture
+## (hub formation, re-render -- which recomputes each tile's shape from its
+## final real adjacency, so the path renders with correct shapes exactly as
+## if each tile had been tapped individually). An invalid path, or one with
+## nothing new to build, places nothing at all.
+func _commit_drag() -> void:
+	if not _drag_valid:
+		_show_toast(_drag_invalid_reason if _drag_invalid_reason != "" else "That path is invalid -- nothing built.", true)
+		return
+	if _drag_new_cells.is_empty():
+		_show_toast("Nothing new to build along that path.", true)
+		return
+	for cell in _drag_new_cells:
+		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
+		_state.grid[cell] = {"kind": "route", "level": "dirt"}
+	_show_toast("Route drawn: %d tile%s." % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	_after_action()
+
+func _clear_drag_preview() -> void:
+	_clear_children(_drag_preview_visuals)
+	_drag_path.clear()
+	_drag_new_cells.clear()
+
+## Translucent green (valid) or red (invalid) boxes on every crossed cell,
+## connected by thin bars between orthogonal neighbors, so the path reads
+## as a continuous line rather than disconnected dots. Purely visual --
+## _state.grid isn't touched until _commit_drag().
+func _update_drag_preview() -> void:
+	_clear_children(_drag_preview_visuals)
+	var color := DRAG_PREVIEW_VALID_COLOR if _drag_valid else DRAG_PREVIEW_INVALID_COLOR
+	var world_positions: Array[Vector3] = []
+	for cell in _drag_path:
+		world_positions.append(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.3, 0))
+	for i in range(world_positions.size()):
+		_add_drag_marker(world_positions[i], color)
+		if i > 0:
+			_add_drag_segment(world_positions[i - 1], world_positions[i], color)
+
+func _add_drag_marker(pos: Vector3, color: Color) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.5, 0.14, 0.5)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.material_override = _drag_preview_material(color)
+	_drag_preview_visuals.add_child(mesh_instance)
+
+## `a` and `b` are always orthogonal neighbors (one grid step apart), so the
+## connecting bar is always axis-aligned and needs no rotation.
+func _add_drag_segment(a: Vector3, b: Vector3, color: Color) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	var diff := b - a
+	mesh.size = Vector3(absf(diff.x) + 0.3, 0.1, absf(diff.z) + 0.3) if absf(diff.x) > absf(diff.z) else Vector3(0.3, 0.1, absf(diff.z) + 0.3)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = (a + b) * 0.5
+	mesh_instance.material_override = _drag_preview_material(color)
+	_drag_preview_visuals.add_child(mesh_instance)
+
+func _drag_preview_material(color: Color) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return material
 
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
@@ -140,8 +348,16 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_bulldoze(cell)
 	_after_action()
 
+const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (North-East)", "se": "corner (South-East)", "sw": "corner (South-West)", "nw": "corner (North-West)"}
+
 func _do_build_route(cell: Vector2i) -> void:
 	if _state.grid.has(cell):
+		var cell_data = _state.grid[cell]
+		if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
+			var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
+			cell_data.facing = facing
+			_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))
+			return
 		_show_toast("Already built here.", true)
 		return
 	if not _adjacent_to_network(cell):
@@ -351,7 +567,8 @@ func _render_grid() -> void:
 			if _map_data.is_river(pos.x, pos.y):
 				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
 			else:
-				_add_route_block(world_pos, cell.level)
+				var shape := SimulationEngine.route_shape(pos, _state, _nodes_by_pos)
+				_add_route_block(world_pos, cell.level, shape.family, shape.facing)
 			if cell.get("needs_hub", false):
 				_add_warning_ring(world_pos, Color("C4573A"))
 			elif cell.get("hub_capped", false):
@@ -369,7 +586,8 @@ func _render_grid() -> void:
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
-	_render_supply_bubbles()
+	if _bubbles_visible:
+		_render_supply_bubbles()
 
 ## Always-on speech bubbles showing "current/max" for every source and
 ## settlement: a source's amount drawn today vs. its daily produce
@@ -458,8 +676,10 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		bubble.setup(foods[food_id], delivered, requested, bubble_status, freshness_pct)
 		index += 1
 
-func _add_route_block(pos: Vector3, level: String) -> void:
-	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
+func _add_route_block(pos: Vector3, level: String, family := "straight", facing := "ud") -> void:
+	var scene: PackedScene = ROUTE_CORNER_SCENES.get(level) if family == "corner" else null
+	if scene == null:
+		scene = ROUTE_LEVEL_SCENES.get(level)
 	if scene == null:
 		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
 		return
@@ -468,6 +688,8 @@ func _add_route_block(pos: Vector3, level: String) -> void:
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
 	# No scale needed: the block's footprint is authored at the real 2x2
 	# world-space cell size already (see generate_blocks.py).
+	if family != "junction":
+		block.rotation_degrees.y = ROUTE_FACING_YAW.get(facing, 0.0)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -558,6 +780,11 @@ func _set_tool(tool: String) -> void:
 	for key in _tool_buttons:
 		_tool_buttons[key].button_pressed = key == tool
 	_hint_label.text = TOOL_HINTS.get(tool, "")
+
+func _on_bubbles_toggled(pressed: bool) -> void:
+	_bubbles_visible = pressed
+	_bubbles_button.text = "On" if pressed else "Off"
+	_render_grid()
 
 func _update_ui() -> void:
 	if _funds_label == null:
@@ -774,6 +1001,21 @@ func _build_map_controls(root: Control) -> void:
 	pan_grid.add_child(_pan_spacer())
 	_add_pan_button(pan_grid, "v", Vector2(0, -1))
 	pan_grid.add_child(_pan_spacer())
+
+	var bubbles_row := HBoxContainer.new()
+	bubbles_row.add_theme_constant_override("separation", 4)
+	box.add_child(bubbles_row)
+	var bubbles_label := Label.new()
+	bubbles_label.text = "Bubbles"
+	bubbles_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bubbles_row.add_child(bubbles_label)
+	_bubbles_button = Button.new()
+	_bubbles_button.toggle_mode = true
+	_bubbles_button.button_pressed = true
+	_bubbles_button.text = "On"
+	_bubbles_button.custom_minimum_size = Vector2(52, 36)
+	_bubbles_button.toggled.connect(_on_bubbles_toggled)
+	bubbles_row.add_child(_bubbles_button)
 
 const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
 const CONTROLLER_FONT_SIZE := 24

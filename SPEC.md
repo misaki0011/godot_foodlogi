@@ -17,6 +17,11 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 1. **Sources and settlements show all info on tap, no dialog.** The two-tier design (hover popup + click-to-open full checklist) is replaced by a single tap/hover info tip: tapping (or hovering, on desktop) a source or settlement tile shows the same tip, and for settlements it includes the full last-delivery checklist that used to live in a separate popup. Tapping one of these tiles never attempts to build there, regardless of the active tool.
 2. **A top-left map panel adds touch zoom/pan controls.** Since a touchscreen can't scroll-wheel-zoom or hold a key to drag-pan, a fixed on-screen panel provides +/− zoom buttons and a 4-direction pan pad for exploring the map, usable by mouse or touch. See §10.7.
+3. **Route tiles render a directional shape.** A route tile auto-renders straight or L-corner from its real adjacency instead of always looking the same; when that shape is ambiguous (0-1 real connections) it defaults sensibly and the player can tap it to cycle through the valid options. See §4.1.
+4. **Neither food sources nor settlements count toward hub-formation degree.** A route tile that only reaches "3 connections" because a node sits beside it is a plain pass-through, not a branching junction, so it neither requires a hub nor gets blocked by the network's hub cap on that basis. See §4.4.
+5. **A Bubbles On/Off toggle joins the map control panel.** Hides or shows every source/settlement speech bubble at once, since a busy network can crowd many bubbles together. See §10.7.
+6. **Route shape locking is now scoped to nodes only, and a hold-to-drag mode previews multi-tile paths.** Item 3's forcing rule now only applies to a tile adjacent to a source or settlement -- every other route tile is always tappable to any of the 6 shapes, defaulting sensibly until tapped. Separately, pressing and holding a buildable cell switches from single-tile tapping into a drag preview: a translucent line traces the path live (green if valid, red if not) without touching the map, and only builds the whole path, and only if it's fully valid, on release. See §4.1.
+7. **A lone stub's default shape is direction-aware.** Item 6's "defaulting sensibly" previously meant an arbitrary fixed shape regardless of where a tile's one real neighbor (route or node) actually was, which could default to a corner touching neither real neighbor. It now considers the actual side of a single real route neighbor and/or an adjacent node together, defaulting to a straight tile when they're in line, the one corner touching both when they're perpendicular, and a corner touching the node's real side when there's no route neighbor at all. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -268,6 +273,82 @@ No treasury deducted.
 
 This prevents a visually valid branch from existing when the required hub could not be created.
 
+### Route tile directional shape (added in v0.4, revised in v0.4)
+
+A route tile's rendered shape follows its real connections, but only when
+the tile is directly adjacent to a source or settlement node. For a
+node-adjacent tile:
+
+- Two opposite connections (e.g. a tile with a built neighbor on both its
+  east and west side) force a straight tile matching that axis.
+- Two adjacent connections (e.g. north and east) force an L-corner tile
+  matching those exact two sides.
+- Three or more connections are unchanged from existing behavior: either a
+  Small Hub auto-forms (§4.4), or, if the network is at its hub cap, the
+  tile stays a plain `hub_capped` tile with today's rendering.
+- Zero or one real connection has no single correct shape, so it defaults
+  to whichever shape actually reflects the real geometry touching it (see
+  below) and the player can tap it to cycle through every shape.
+
+**Every other route tile -- regardless of its real connection count -- is
+always player-choosable by tap** (revised in v0.4): tapping a built route
+tile that isn't adjacent to any source or settlement cycles it through all
+6 shapes (both straight facings, all 4 corners), so the player can flip it
+to any shape they want. Before the first tap, it still defaults to
+whichever shape matches its real connections (a plain straight run still
+looks correct without any manual correction); once tapped, the player's
+choice is kept even if later connections would otherwise suggest a
+different natural shape. This is a purely cosmetic choice: it never
+changes the tile's upkeep, capacity, or its adjacency contribution to
+hub-formation math.
+
+**The default for a tile with only one real anchor is direction-aware, not
+arbitrary** (revised in v0.4): a lone stub's default shape considers both
+its single real route neighbor (if any) and an adjacent node's side (if
+any), rather than always picking the same fixed shape regardless of where
+those neighbors actually are.
+
+- A real route neighbor and a node on the *opposite* side (e.g. a source
+  to the west and a route continuing east) default to the matching
+  straight tile -- the road visually continues in a line past the node.
+- A real route neighbor and a node on an *adjacent* side (e.g. a route to
+  the west and a settlement to the north) default to the one corner that
+  actually touches both sides, so the tile visually bends toward the node
+  from the direction the road is really coming from, instead of showing a
+  corner that touches neither real neighbor.
+- A node with no real route neighbor at all still defaults to a corner
+  touching the node's actual side (there's no second real anchor to pick
+  between the two candidate corners, so the choice is an arbitrary but
+  consistent tie-break).
+- With neither a real route neighbor nor a node touching it, the default
+  is a plain left-right straight tile.
+
+### Drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.4)
+
+Tapping still places one tile at a time, exactly as in §2.1's basic model.
+Pressing and holding a buildable cell for a short moment (roughly a third
+of a second) without releasing switches into drag mode: dragging the
+pointer traces a candidate path across further cells, drawn live as a
+translucent line so the player can see it before committing to anything.
+
+**Nothing is written to the map while dragging.** The whole traced path is
+validated as a unit -- every new tile in it must connect (to the existing
+network or to an earlier tile already queued in the same path), none may
+push a junction past the hub cap, and the total cost must fit the current
+treasury (already-built tiles and nodes the path happens to cross are
+harmless waypoints, not failures). The preview line renders green while
+the path is valid and red the moment it isn't, explaining why in a toast
+if the player releases while it's red. **Only a fully valid path is built,
+and only on release** -- an invalid path places nothing at all, matching
+§4.1's existing transactional single-tile placement. On a valid release,
+every queued tile is written at once and the hub-formation pass runs a
+single time for the whole path, the same as it would after any tap; each
+tile then renders with the shape that matches its final real connections,
+exactly as if it had been placed one tap at a time. A press that releases
+before the hold threshold, or one that never actually drags to a second
+cell, is an ordinary tap (place one tile, or cycle a tappable tile's
+shape), unchanged.
+
 ---
 
 # 4.2 Food Freshness System
@@ -474,7 +555,9 @@ A hub is not primarily for freshness. It is for network organization, flow visib
 
 ### Automatic hub formation
 
-A Small Hub is required on any newly built route tile that would have 3 or more connections. Connections include adjacent routes, storage, hubs, food sources, and settlements.
+A Small Hub is required on any newly built route tile that would have 3 or more connections. Connections include adjacent routes, storage, hubs, and settlements.
+
+**Neither food sources nor settlements count toward this threshold (added in v0.4).** Both are pure endpoints that a delivery path can never enter or pass through (§4.7: a path starts at exactly one source, ends at exactly one settlement, and may not use any other node as a transit shortcut), so a tile that only reaches "3 connections" because a node happens to sit beside it isn't actually organizing a branching junction -- it's a plain 2-way pass-through with a node attached, and neither requires a hub nor gets blocked by the network's hub cap on that basis. Only converging route/storage/hub tiles create a real branch.
 
 The hub and route placement are one atomic construction action:
 
@@ -1185,6 +1268,7 @@ A fixed panel in the top-left corner of the screen provides map navigation that 
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
+- **Bubbles On/Off (added in v0.4):** a toggle button hides or shows every source/settlement speech bubble (§10.1/UI-01) at once. A busy network can crowd many bubbles together; toggling them off leaves the routes, storage, and hubs visible without needing to zoom out or pan away.
 
 These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
 
