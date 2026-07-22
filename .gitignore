@@ -26,6 +26,7 @@ test.mp3.import
 .godot/
 *.import
 build/
+godot-smoke-test.log
 
 # IDE & OS
 .vscode/
