@@ -60,6 +60,7 @@ var _tool := "route"
 var _nodes_by_pos: Dictionary = {}
 var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
+var _bubbles_visible := true
 
 var _funds_label: Label
 var _day_label: Label
@@ -68,6 +69,7 @@ var _best_score_label: Label
 var _avg_score_label: Label
 var _hint_label: Label
 var _toast: Label
+var _bubbles_button: Button
 var _tool_buttons: Dictionary = {}
 var _tip_panel: PanelContainer
 var _tip_label: RichTextLabel
@@ -390,7 +392,8 @@ func _render_grid() -> void:
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
-	_render_supply_bubbles()
+	if _bubbles_visible:
+		_render_supply_bubbles()
 
 ## Always-on speech bubbles showing "current/max" for every source and
 ## settlement: a source's amount drawn today vs. its daily produce
@@ -583,6 +586,11 @@ func _set_tool(tool: String) -> void:
 	for key in _tool_buttons:
 		_tool_buttons[key].button_pressed = key == tool
 	_hint_label.text = TOOL_HINTS.get(tool, "")
+
+func _on_bubbles_toggled(pressed: bool) -> void:
+	_bubbles_visible = pressed
+	_bubbles_button.text = "On" if pressed else "Off"
+	_render_grid()
 
 func _update_ui() -> void:
 	if _funds_label == null:
@@ -799,6 +807,21 @@ func _build_map_controls(root: Control) -> void:
 	pan_grid.add_child(_pan_spacer())
 	_add_pan_button(pan_grid, "v", Vector2(0, -1))
 	pan_grid.add_child(_pan_spacer())
+
+	var bubbles_row := HBoxContainer.new()
+	bubbles_row.add_theme_constant_override("separation", 4)
+	box.add_child(bubbles_row)
+	var bubbles_label := Label.new()
+	bubbles_label.text = "Bubbles"
+	bubbles_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bubbles_row.add_child(bubbles_label)
+	_bubbles_button = Button.new()
+	_bubbles_button.toggle_mode = true
+	_bubbles_button.button_pressed = true
+	_bubbles_button.text = "On"
+	_bubbles_button.custom_minimum_size = Vector2(52, 36)
+	_bubbles_button.toggled.connect(_on_bubbles_toggled)
+	bubbles_row.add_child(_bubbles_button)
 
 const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
 const CONTROLLER_FONT_SIZE := 24
