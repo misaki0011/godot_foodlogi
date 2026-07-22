@@ -54,12 +54,6 @@ static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 			sides[dir_keys[d]] = true
 	return sides
 
-static func _is_node_adjacent(pos: Vector2i, nodes_by_pos: Dictionary) -> bool:
-	for n in neighbors(pos, GameBalance.GRID_SIZE):
-		if nodes_by_pos.has(n):
-			return true
-	return false
-
 ## The shape that truthfully matches this tile's real connections, or {} if
 ## the count (0, 1, or 3+) doesn't uniquely determine one.
 static func _natural_facing(sides: Dictionary) -> Dictionary:
@@ -92,64 +86,35 @@ static func _single_real_side(sides: Dictionary) -> String:
 			found = side
 	return found if count == 1 else ""
 
-## The compass side of the first source/settlement node touching this tile,
-## or "" if none does.
-static func _node_side(pos: Vector2i, nodes_by_pos: Dictionary) -> String:
-	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
-	for d in DIRECTIONS:
-		if nodes_by_pos.has(pos + d):
-			return dir_keys[d]
-	return ""
-
-const OPPOSITE_SIDE := {"n": "s", "s": "n", "e": "w", "w": "e"}
-
 ## Best-effort default facing for a tile whose shape isn't forced (see
-## route_shape()) and has no stored tap override yet: prefers whatever
-## shape is truthful to the real geometry actually touching it, rather than
-## an arbitrary fixed choice -- a single real route side and an adjacent
-## node on the *opposite* side reads as a straight through-line (e.g. a
-## source to the west and a route continuing east); a single real route
-## side and a node on an *adjacent* side reads as a corner bending toward
-## the node; a node with no real route side at all still bends toward the
-## node, just with no second side to disambiguate; only when there's
-## nothing nearby to go on at all does this fall back to a plain "lr".
-static func _best_default_facing(sides: Dictionary, pos: Vector2i, nodes_by_pos: Dictionary) -> String:
+## route_shape()) and has no stored tap override yet. Derived purely from the
+## tile's real route/storage/hub neighbors -- adjacent source/settlement nodes
+## are deliberately ignored so a road never bends toward or "connects to" a
+## node it happens to sit beside (the node has its own marker; the road only
+## traces real route geometry). A lone stub with one real route side reads as
+## a straight running along that side; with nothing real to go on it falls
+## back to a plain "lr". Any tile stays freely tap-cycleable to any of the 6
+## shapes from here (see is_shape_ambiguous/cycle_shape_facing).
+static func _best_default_facing(sides: Dictionary) -> String:
 	var route_side := _single_real_side(sides)
-	var node_side := _node_side(pos, nodes_by_pos)
-	if route_side != "" and node_side != "":
-		if OPPOSITE_SIDE[route_side] == node_side:
-			return "ud" if (route_side == "n" or route_side == "s") else "lr"
-		for facing in CORNER_FACINGS:
-			if facing.find(route_side) != -1 and facing.find(node_side) != -1:
-				return facing
-		return "lr" # unreachable: every side pairs with exactly one corner
-	if node_side != "":
-		for facing in CORNER_FACINGS:
-			if facing.find(node_side) != -1:
-				return facing
 	if route_side != "":
 		return "ud" if (route_side == "n" or route_side == "s") else "lr"
 	return "lr"
 
 ## Auto-derives a route tile's visual shape from its real connections (see
 ## AGENTS.md route-direction feature and the v0.4 "tap and hold to draw"
-## changelog entry). Only a tile adjacent to a source or settlement node can
-## have its shape forced: 2 real route/storage/hub connections force the
-## matching straight/corner, 3+ force the existing plain junction/hub_capped
-## fallback. Every other tile -- regardless of its real connection count --
-## is always player-choosable by tap, defaulting to whatever shape best
-## matches its real connections when nothing's been tapped yet, or the
-## stored override once it has (see is_shape_ambiguous/cycle_shape_facing).
-static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+## changelog entry). Shape depends ONLY on real route/storage/hub neighbors --
+## an adjacent source or settlement never forces, locks, or bends the tile
+## (revised in v0.4: nodes were previously allowed to pull a road-stub toward
+## themselves, which read as the road always "connecting" to the node it sat
+## beside). Every route tile -- regardless of its real connection count and
+## regardless of any neighboring node -- is always player-choosable by tap,
+## defaulting to whatever shape matches its real route connections when
+## nothing's been tapped yet, or the stored override once it has (see
+## is_shape_ambiguous/cycle_shape_facing). `_nodes_by_pos` is kept on the
+## signature for call-site stability but no longer influences the shape.
+static func route_shape(pos: Vector2i, state: GameState, _nodes_by_pos: Dictionary) -> Dictionary:
 	var sides := _grid_only_sides(pos, state)
-	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
-	var node_adjacent := _is_node_adjacent(pos, nodes_by_pos)
-
-	if node_adjacent and count >= 3:
-		return {"family": "junction", "facing": ""}
-	if node_adjacent and count == 2:
-		return _natural_facing(sides)
-
 	var cycle := _shape_cycle()
 	var stored = state.grid.get(pos, {}).get("facing", "")
 	if cycle.has(stored):
@@ -157,17 +122,15 @@ static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionar
 	var natural := _natural_facing(sides)
 	if not natural.is_empty():
 		return natural
-	var facing: String = _best_default_facing(sides, pos, nodes_by_pos)
+	var facing: String = _best_default_facing(sides)
 	return {"family": "corner" if CORNER_FACINGS.has(facing) else "straight", "facing": facing}
 
 ## True when tapping this route tile should cycle its shape instead of
-## no-opping. A tile with no source/settlement touching it is always
-## tappable, regardless of its real connection count; a node-adjacent tile
-## is only tappable when it has 0-1 real connections (otherwise its shape
-## is forced -- see route_shape()).
-static func is_shape_ambiguous(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> bool:
-	if _is_node_adjacent(pos, nodes_by_pos):
-		return tile_degree(pos, state) <= 1
+## no-opping. Every route tile is now freely tappable regardless of its real
+## connection count or any neighboring source/settlement -- nodes no longer
+## lock a tile's shape (see route_shape()). `_state`/`_nodes_by_pos` are kept
+## on the signature for call-site stability.
+static func is_shape_ambiguous(_pos: Vector2i, _state: GameState, _nodes_by_pos: Dictionary) -> bool:
 	return true
 
 ## Returns the next facing to store for an ambiguous route tile (caller

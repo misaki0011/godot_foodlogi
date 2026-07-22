@@ -209,15 +209,41 @@ func _end_press(screen_position: Vector2) -> void:
 	_handle_click(_screen_to_cell(screen_position), screen_position)
 
 ## Grows the in-progress drag path with a newly-entered cell (duplicates of
-## the current tail are ignored) and refreshes the preview. Nothing is
-## written to _state.grid here -- see the class-level comment above
+## the current tail are ignored) and refreshes the preview. A fast drag only
+## fires a mouse-motion event every few cells, so the pointer can jump more
+## than one cell (or diagonally) between events; we fill in every orthogonal
+## cell between the previous tail and the new one so the recorded path is
+## always a continuous, orthogonally-connected line -- otherwise the skipped
+## middle cells never get built and the route comes out with holes in it.
+## Nothing is written to _state.grid here -- see the class-level comment above
 ## _press_eligible for why the whole path is only committed on release.
 func _extend_drag_path(cell: Vector2i) -> void:
 	if not _cell_in_bounds(cell) or (not _drag_path.is_empty() and _drag_path[-1] == cell):
 		return
-	_drag_path.append(cell)
+	if _drag_path.is_empty():
+		_drag_path.append(cell)
+	else:
+		for step in _cells_between(_drag_path[-1], cell):
+			_drag_path.append(step)
 	_recompute_drag_validity()
 	_update_drag_preview()
+
+## The orthogonally-connected cells from `a` (exclusive) to `b` (inclusive):
+## each returned cell is one grid step from the previous, so a jump of any
+## length or direction is expanded into a gap-free line. Steps along the
+## larger remaining axis first, matching how a finger usually traces a path.
+func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	var current := a
+	while current != b:
+		var dx := b.x - current.x
+		var dy := b.y - current.y
+		if absi(dx) >= absi(dy):
+			current.x += signi(dx)
+		else:
+			current.y += signi(dy)
+		result.append(current)
+	return result
 
 ## Re-derives, from scratch, which cells in _drag_path are real new tiles to
 ## build (_drag_new_cells) and whether the whole path is valid: every new

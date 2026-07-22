@@ -90,15 +90,15 @@ func _test_route_shape() -> void:
 		nodes_by_pos[node.grid_position] = node
 	var farm := _node(map, "farm")
 
-	# A lone stub built directly east of Farm: its only real connection is
-	# the source node (to its west), so it should default to a corner that
-	# actually touches that side ("sw", the first CORNER_FACINGS entry
-	# containing "w"), not an arbitrary one that ignores where the node is.
+	# A lone stub built directly east of Farm with no real route neighbor at
+	# all (only the source node to its west): nodes no longer influence shape,
+	# so it defaults to a plain "lr" straight rather than bending toward the
+	# source it happens to sit beside.
 	var stub_by_node := farm.grid_position + Vector2i(1, 0)
 	var state_a := GameState.new()
 	state_a.grid[stub_by_node] = {"kind": "route", "level": "dirt"}
 	var shape_a := SimulationEngine.route_shape(stub_by_node, state_a, nodes_by_pos)
-	assert(shape_a.family == "corner" and shape_a.facing == "sw", "A stub adjacent only to a source/settlement should default to a corner touching the node's actual side")
+	assert(shape_a.family == "straight" and shape_a.facing == "lr", "A stub with no real route neighbor must default to a plain straight, ignoring any adjacent source/settlement")
 
 	# A lone stub next to another route tile (not a node) should default to
 	# straight instead.
@@ -108,17 +108,18 @@ func _test_route_shape() -> void:
 	var shape_b := SimulationEngine.route_shape(Vector2i(2, 13), state_b, {})
 	assert(shape_b.family == "straight" and shape_b.facing == "lr", "A stub adjacent only to another route tile should default to straight")
 
-	# Adjacent to a node (Farm) with two opposite real connections: still
-	# forced -- the auto-tile rule only ever locks a shape next to a
-	# source/settlement, and this ignores any stored override.
+	# Adjacent to a node (Farm) with two opposite real connections and a stored
+	# override: nodes no longer force or lock a shape, so this behaves exactly
+	# like a tile out in the open -- the stored "ne" override wins and the tile
+	# stays tappable.
 	var mid_by_node := farm.grid_position + Vector2i(1, 0) # east of Farm
 	var state_c := GameState.new()
 	state_c.grid[mid_by_node + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
-	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt", "facing": "ne"} # stored override, must be ignored
+	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt", "facing": "ne"} # stored override, must win
 	state_c.grid[mid_by_node + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
 	var shape_c := SimulationEngine.route_shape(mid_by_node, state_c, nodes_by_pos)
-	assert(shape_c.family == "straight" and shape_c.facing == "ud", "A node-adjacent tile with 2 opposite connections must stay forced, ignoring any stored override")
-	assert(not SimulationEngine.is_shape_ambiguous(mid_by_node, state_c, nodes_by_pos), "A node-adjacent forced tile must not be tappable")
+	assert(shape_c.family == "corner" and shape_c.facing == "ne", "A node-adjacent tile's stored override must win -- nodes no longer force a shape")
+	assert(SimulationEngine.is_shape_ambiguous(mid_by_node, state_c, nodes_by_pos), "A node-adjacent tile must be tappable -- nodes no longer lock a shape")
 
 	# The same two-opposite-connections shape, but nowhere near a node: no
 	# longer forced -- a stored override must now be honored instead of the
@@ -154,9 +155,8 @@ func _test_route_shape() -> void:
 
 	# Regression: a route tile with a node on one side (west) and a real
 	# route tile continuing on an *adjacent* side (south) must NOT be forced
-	# into a corner -- only route/storage/hub neighbors can force a shape
-	# next to a node. It should default to a corner but stay tappable all
-	# the way to "ud".
+	# by the node -- shape ignores nodes entirely, so the tile stays freely
+	# tappable all the way to "ud".
 	var stub_by_node_and_route := farm.grid_position + Vector2i(1, 0) # node to the west
 	var state_f := GameState.new()
 	state_f.grid[stub_by_node_and_route] = {"kind": "route", "level": "dirt"}
@@ -171,24 +171,24 @@ func _test_route_shape() -> void:
 			break
 	assert(reachable_ud, "A node-adjacent ambiguous tile must be able to cycle all the way to a straight up-down facing")
 
-	# Regression: a straight-drawn run where one end sits beside a source and
-	# the other beside a settlement must default to shapes that reflect the
-	# real neighbor on each side (opposite -> straight through, adjacent ->
-	# the matching corner), not an arbitrary fixed choice.
+	# A tile's default shape reflects only its real route neighbors, never an
+	# adjacent node: a single real route neighbor always reads as a straight
+	# running along that side, regardless of which side a source/settlement
+	# happens to sit on.
 	var village_a := _node(map, "villageA")
 	var tile_by_source := farm.grid_position + Vector2i(1, 0) # source west, route east
 	var state_g := GameState.new()
 	state_g.grid[tile_by_source] = {"kind": "route", "level": "dirt"}
 	state_g.grid[tile_by_source + Vector2i(1, 0)] = {"kind": "route", "level": "dirt"}
 	var shape_g := SimulationEngine.route_shape(tile_by_source, state_g, nodes_by_pos)
-	assert(shape_g.family == "straight" and shape_g.facing == "lr", "A source to the west and a route to the east must default to a left-right straight tile, not an arbitrary corner")
+	assert(shape_g.family == "straight" and shape_g.facing == "lr", "A route neighbor to the east must default to a left-right straight tile, ignoring the source to the west")
 
 	var tile_by_settlement := village_a.grid_position + Vector2i(0, 1) # settlement north, route west
 	var state_h := GameState.new()
 	state_h.grid[tile_by_settlement] = {"kind": "route", "level": "dirt"}
 	state_h.grid[tile_by_settlement + Vector2i(-1, 0)] = {"kind": "route", "level": "dirt"}
 	var shape_h := SimulationEngine.route_shape(tile_by_settlement, state_h, nodes_by_pos)
-	assert(shape_h.family == "corner" and shape_h.facing == "nw", "A settlement to the north and a route to the west must default to the NW corner that actually touches both real sides")
+	assert(shape_h.family == "straight" and shape_h.facing == "lr", "A single route neighbor to the west must default to a left-right straight, ignoring the settlement to the north")
 
 func _test_node_adjacency_excluded_from_hub_degree() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
