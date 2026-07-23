@@ -667,13 +667,18 @@ func _render_established_routes() -> void:
 		_add_established_marker(here)
 		for d in DIRECTIONS:
 			var n: Vector2i = cell + d
-			# One bar per undirected pair (only step east/south) toward another
-			# established tile, or toward a node this established tile feeds.
-			if d != Vector2i(1, 0) and d != Vector2i(0, 1):
-				continue
-			var links := established.has(n) or (_nodes_by_pos.has(n) and _feeds_established(n, established))
-			if links:
-				var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
+			var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
+			if established.has(n):
+				# Tile<->tile: draw one bar per undirected pair (east/south only),
+				# since the other tile will iterate and draw the matching half.
+				if d == Vector2i(1, 0) or d == Vector2i(0, 1):
+					_add_established_segment(here, there)
+			elif _nodes_by_pos.has(n):
+				# Tile->node: a source/settlement isn't an established tile and
+				# never iterates to draw its own half, so draw the bar into it
+				# from ANY direction -- this is what makes the line actually
+				# start from the source (and reach the settlement) instead of
+				# stopping at the node-adjacent tile.
 				_add_established_segment(here, there)
 
 ## The set (Vector2i -> true) of built tiles on some complete source->
@@ -681,14 +686,6 @@ func _render_established_routes() -> void:
 ## exact rule (road-only connectivity that must start at a source).
 func _established_route_cells() -> Dictionary:
 	return SimulationEngine.established_route_cells(_state, _nodes_by_pos)
-
-## True when node `node_pos` (a source/settlement) is adjacent to at least
-## one kept established tile -- i.e. the overlay line should reach into it.
-func _feeds_established(node_pos: Vector2i, established: Dictionary) -> bool:
-	for d in DIRECTIONS:
-		if established.has(node_pos + d):
-			return true
-	return false
 
 ## Always-on speech bubbles showing "current/max" for every source and
 ## settlement: a source's amount drawn today vs. its daily produce
