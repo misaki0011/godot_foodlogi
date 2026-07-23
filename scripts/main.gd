@@ -27,8 +27,12 @@ const ROUTE_CORNER_SCENES := {
 ## Y-axis yaw for each facing. Straight blocks' tread already runs N-S at 0
 ## rotation (see generate_blocks.py), so "ud" needs none and "lr" needs a
 ## quarter turn. Corner blocks are authored connecting N+E ("ne") at 0
-## rotation; each other facing is one further quarter turn clockwise.
-const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "se": 90.0, "sw": 180.0, "nw": 270.0}
+## rotation. A positive rotation_degrees.y is counter-clockwise as seen by
+## this top-down camera (world +Z is south, so +Y points toward the viewer),
+## so each quarter turn advances N+E counter-clockwise: 90 -> N+W ("nw"),
+## 180 -> S+W ("sw"), 270 -> S+E ("se"). (Earlier "se"/"nw" were swapped,
+## which rendered a down-right corner as an up-left one and vice versa.)
+const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "nw": 90.0, "sw": 180.0, "se": 270.0}
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
@@ -803,8 +807,12 @@ func _node_at(cell: Vector2i) -> NodeData:
 
 func _set_tool(tool: String) -> void:
 	_tool = tool
+	# A tool can have more than one button (the sidebar copy plus a shortcut on
+	# the top-left controller panel), so keep every button for the active tool
+	# pressed and every other tool's buttons released.
 	for key in _tool_buttons:
-		_tool_buttons[key].button_pressed = key == tool
+		for button in _tool_buttons[key]:
+			button.button_pressed = key == tool
 	_hint_label.text = TOOL_HINTS.get(tool, "")
 
 func _on_bubbles_toggled(pressed: bool) -> void:
@@ -1043,6 +1051,18 @@ func _build_map_controls(root: Control) -> void:
 	_bubbles_button.toggled.connect(_on_bubbles_toggled)
 	bubbles_row.add_child(_bubbles_button)
 
+	# Shortcuts for the two most-used build tools, so drawing and erasing
+	# routes don't require reaching over to the right-hand sidebar. These
+	# register alongside the sidebar's own Draw Route / Bulldoze buttons (see
+	# _add_tool_button), and _set_tool keeps every copy of a tool in sync.
+	box.add_child(HSeparator.new())
+	_add_section_title(box, "BUILD")
+	var build_row := HBoxContainer.new()
+	build_row.add_theme_constant_override("separation", 4)
+	box.add_child(build_row)
+	_add_controller_tool_button(build_row, "Route", "route")
+	_add_controller_tool_button(build_row, "Erase", "remove")
+
 const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
 const CONTROLLER_FONT_SIZE := 24
 
@@ -1053,6 +1073,20 @@ func _pan_spacer() -> Control:
 
 func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
 	_add_hold_button(parent, text, func() -> void: _pan_dir += dir, func() -> void: _pan_dir -= dir)
+
+## A compact toggle button on the top-left controller panel that selects a
+## build tool, mirroring the right-hand sidebar's tool button for the same
+## tool (both register in _tool_buttons, so _set_tool keeps them in sync).
+func _add_controller_tool_button(parent: Container, text: String, tool: String) -> void:
+	var button := Button.new()
+	button.text = text
+	button.toggle_mode = true
+	button.custom_minimum_size = Vector2(52, 40)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.add_theme_font_size_override("font_size", 14)
+	button.pressed.connect(_set_tool.bind(tool))
+	parent.add_child(button)
+	_tool_buttons.get_or_add(tool, []).append(button)
 
 func _add_hold_button(parent: Container, text: String, on_press: Callable, on_release: Callable) -> Button:
 	var button := Button.new()
@@ -1089,7 +1123,7 @@ func _add_tool_button(parent: VBoxContainer, text: String, tool: String) -> void
 	button.custom_minimum_size.y = 36
 	button.pressed.connect(_set_tool.bind(tool))
 	parent.add_child(button)
-	_tool_buttons[tool] = button
+	_tool_buttons.get_or_add(tool, []).append(button)
 
 func _add_legend_row(parent: VBoxContainer, color: Color, text: String) -> void:
 	var row := HBoxContainer.new()
