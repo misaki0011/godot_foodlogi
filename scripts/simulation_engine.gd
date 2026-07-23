@@ -16,33 +16,35 @@ static func neighbors(pos: Vector2i, grid_size: Vector2i) -> Array[Vector2i]:
 			result.append(n)
 	return result
 
-## Hub-formation degree: how many of this tile's sides are real
-## route/storage/hub neighbors (see check_auto_hubs/would_exceed_hub_cap).
-## Neither source nor settlement nodes count (added in v0.4): per §4.7,
-## both are pure endpoints a delivery path can never enter or pass through
-## (a path starts at exactly one source, ends at exactly one settlement,
-## and may not use any other node as a transit shortcut), so a tile that
-## only reaches "3 connections" because a node happens to sit beside it
-## isn't actually organizing a branching junction -- it's a plain
-## pass-through with a node attached, and shouldn't require (or be blocked
-## by) a hub. Only converging route/storage/hub tiles do that.
-static func tile_degree(pos: Vector2i, state: GameState) -> int:
-	var sides := _grid_only_sides(pos, state)
-	return int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
+## Hub-formation degree: how many of this tile's sides are neighbors that a
+## delivery can flow to/from -- route/storage/hub tiles AND source/settlement
+## nodes (see check_auto_hubs/would_exceed_hub_cap). Adjacent nodes DO count
+## (revised in v0.4): a hub is any tile where a source's (or settlement's)
+## delivery fans out to more than one path, and the player doesn't care
+## whether one of those three-plus branches happens to be a node rather than
+## another road -- a tile fed by a source that then splits toward two roads
+## is exactly the branching junction a hub represents. (This reverses the
+## earlier v0.4 rule that excluded nodes; see the changelog.)
+static func tile_degree(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> int:
+	var count := 0
+	for d in DIRECTIONS:
+		var n := pos + d
+		if n.x < 0 or n.y < 0 or n.x >= GameBalance.GRID_SIZE.x or n.y >= GameBalance.GRID_SIZE.y:
+			continue
+		if state.grid.has(n) or nodes_by_pos.has(n):
+			count += 1
+	return count
 
 const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
 const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
 
-## Which of this tile's sides are real route/storage/hub neighbors (used
-## both for tile_degree()'s hub-formation threshold and for auto-deriving
-## visual shape in route_shape()). A nearby source/settlement node is
-## deliberately excluded -- see tile_degree()'s doc comment -- and, for
-## shape purposes specifically, a node also has its own separate marker
-## and shouldn't lock the road into visually bending toward it; node
-## adjacency only ever affects the *default* shown for an already-ambiguous
-## tile (see route_shape()), and never blocks tap-cycling. Keyed by compass
-## side: (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west, matching how
-## world Z increases with grid Y (see main.gd's map_to_local usage).
+## Which of this tile's sides are real route/storage/hub neighbors, used for
+## auto-deriving visual shape in route_shape(). Source/settlement nodes are
+## excluded here on purpose: a node has its own separate marker and shouldn't
+## drive the road's rendered shape (unlike tile_degree(), which counts nodes
+## for hub-formation). Keyed by compass side: (0,-1)=north, (1,0)=east,
+## (0,1)=south, (-1,0)=west, matching how world Z increases with grid Y (see
+## main.gd's map_to_local usage).
 static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 	var sides := {"n": false, "e": false, "s": false, "w": false}
 	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
@@ -201,13 +203,13 @@ static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new
 			hub_counts[c] = hub_counts.get(c, 0) + 1
 
 	var new_junctions: Array[Vector2i] = []
-	if tile_degree(new_cell, temp_state) >= 3:
+	if tile_degree(new_cell, temp_state, nodes_by_pos) >= 3:
 		new_junctions.append(new_cell)
 	for n in neighbors(new_cell, GameBalance.GRID_SIZE):
 		var cell = state.grid.get(n)
 		if cell == null or cell.kind != "route":
 			continue
-		if tile_degree(n, state) < 3 and tile_degree(n, temp_state) >= 3:
+		if tile_degree(n, state, nodes_by_pos) < 3 and tile_degree(n, temp_state, nodes_by_pos) >= 3:
 			new_junctions.append(n)
 
 	for pos in new_junctions:
@@ -233,7 +235,7 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 		var cell = state.grid[pos]
 		if cell.kind != "route":
 			continue
-		var degree := tile_degree(pos, state)
+		var degree := tile_degree(pos, state, nodes_by_pos)
 		if degree >= 3:
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)

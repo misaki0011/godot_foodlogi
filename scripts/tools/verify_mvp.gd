@@ -10,7 +10,7 @@ func _initialize() -> void:
 	_test_daily_simulation()
 	_test_hub_auto_formation_and_cap()
 	_test_route_shape()
-	_test_node_adjacency_excluded_from_hub_degree()
+	_test_node_adjacency_counts_toward_hub_degree()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -190,7 +190,7 @@ func _test_route_shape() -> void:
 	var shape_h := SimulationEngine.route_shape(tile_by_settlement, state_h, nodes_by_pos)
 	assert(shape_h.family == "straight" and shape_h.facing == "lr", "A single route neighbor to the west must default to a left-right straight, ignoring the settlement to the north")
 
-func _test_node_adjacency_excluded_from_hub_degree() -> void:
+func _test_node_adjacency_counts_toward_hub_degree() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
 	var nodes_by_pos := {}
 	for node in map.node_placements:
@@ -198,35 +198,30 @@ func _test_node_adjacency_excluded_from_hub_degree() -> void:
 	var farm := _node(map, "farm")
 	var village_a := _node(map, "villageA")
 
-	# A route tile straight-through (route north + route south) that also
-	# happens to sit beside Farm (a source) should NOT count the source as
-	# a 3rd connection -- neither sources nor settlements are real branch
-	# points, since a delivery path can never enter or pass through either
-	# (§4.7): this must stay a plain 2-way pass-through, not a forced hub.
+	# A route tile with a road branch north and south that also sits beside
+	# Farm (a source) is a tile where the source's delivery fans out to two
+	# roads: the adjacent node DOES count toward hub-formation degree (revised
+	# in v0.4), so this reads as a 3-way junction and auto-forms a Small Hub.
 	var mid_source := farm.grid_position + Vector2i(1, 0) # east of Farm
 	var state_source := GameState.new()
 	state_source.grid[mid_source + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
 	state_source.grid[mid_source] = {"kind": "route", "level": "dirt"}
 	state_source.grid[mid_source + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
-	assert(SimulationEngine.tile_degree(mid_source, state_source) == 2, "A source beside a tile must not count toward its hub-formation degree")
+	assert(SimulationEngine.tile_degree(mid_source, state_source, nodes_by_pos) == 3, "A source beside a tile MUST count toward its hub-formation degree")
 	SimulationEngine.check_auto_hubs(state_source, nodes_by_pos)
-	assert(state_source.grid[mid_source].kind == "route", "A tile with only 2 real route connections plus an adjacent source must not auto-form a hub")
-	var shape_source := SimulationEngine.route_shape(mid_source, state_source, nodes_by_pos)
-	assert(shape_source.family == "straight" and shape_source.facing == "ud", "The same tile should render as a normal straight tile, not the junction/hub_capped fallback")
+	assert(state_source.grid[mid_source].kind == "hub", "A tile branching a source's delivery to two roads must auto-form a hub")
 
 	# Same scenario, but the adjacent node is a settlement (Village A) instead
-	# of a source -- must behave identically, since a settlement is just as
-	# much a terminal endpoint as a source is.
+	# of a source -- behaves identically, since the player wants a hub wherever
+	# a delivery fans out, regardless of which endpoint kind sits beside it.
 	var mid_settlement := village_a.grid_position + Vector2i(1, 0) # east of Village A
 	var state_settlement := GameState.new()
 	state_settlement.grid[mid_settlement + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"}
 	state_settlement.grid[mid_settlement] = {"kind": "route", "level": "dirt"}
 	state_settlement.grid[mid_settlement + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"}
-	assert(SimulationEngine.tile_degree(mid_settlement, state_settlement) == 2, "A settlement beside a tile must not count toward its hub-formation degree")
+	assert(SimulationEngine.tile_degree(mid_settlement, state_settlement, nodes_by_pos) == 3, "A settlement beside a tile MUST count toward its hub-formation degree")
 	SimulationEngine.check_auto_hubs(state_settlement, nodes_by_pos)
-	assert(state_settlement.grid[mid_settlement].kind == "route", "A tile with only 2 real route connections plus an adjacent settlement must not auto-form a hub")
-	var shape_settlement := SimulationEngine.route_shape(mid_settlement, state_settlement, nodes_by_pos)
-	assert(shape_settlement.family == "straight" and shape_settlement.facing == "ud", "The same tile should render as a normal straight tile, not the junction/hub_capped fallback")
+	assert(state_settlement.grid[mid_settlement].kind == "hub", "A tile branching toward a settlement plus two roads must auto-form a hub")
 
 func _node(map: MapData, node_id: String) -> NodeData:
 	for node in map.node_placements:

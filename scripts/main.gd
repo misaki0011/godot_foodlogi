@@ -123,6 +123,12 @@ var _drag_preview_visuals: Node3D
 const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
 const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
 
+## Overlay marking established (source->settlement) routes -- a bright, mostly
+## opaque gold line floating just above the road surface (see
+## _render_established_routes).
+const ESTABLISHED_ROUTE_COLOR := Color(1.0, 0.83, 0.29, 0.9)
+const ESTABLISHED_ROUTE_Y := 1.55
+
 func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
 	_state.balance = GameBalance.STARTING_FUNDS
@@ -354,6 +360,29 @@ func _drag_preview_material(color: Color) -> StandardMaterial3D:
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	return material
+
+## A small gold node dot for the established-route overlay. Added to
+## _grid_visuals so it's cleared and rebuilt on every _render_grid.
+func _add_established_marker(pos: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.34, 0.1, 0.34)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
+	_grid_visuals.add_child(mesh_instance)
+
+## A thin gold bar joining two adjacent established points (tile-tile or
+## tile-node); `a` and `b` are one grid step apart, so it's axis-aligned.
+func _add_established_segment(a: Vector3, b: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	var diff := b - a
+	mesh.size = Vector3(absf(diff.x) + 0.18, 0.08, absf(diff.z) + 0.18) if absf(diff.x) > absf(diff.z) else Vector3(0.18, 0.08, absf(diff.z) + 0.18)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = (a + b) * 0.5
+	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
+	_grid_visuals.add_child(mesh_instance)
 
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
@@ -616,8 +645,83 @@ func _render_grid() -> void:
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
+	_render_established_routes()
 	if _bubbles_visible:
 		_render_supply_bubbles()
+
+## Continuously overlays a bright line along every tile that lies on a
+## complete source->settlement path (an "established route"), so the player
+## can see at a glance which roads actually link a source to a customer.
+## Dead-end stubs -- roads that branch off but reach no settlement (or no
+## source) -- are pruned out and left unmarked. Rebuilt every _render_grid,
+## so it stays live as the network is edited or simulated.
+func _render_established_routes() -> void:
+	var established := _established_route_cells()
+	if established.is_empty():
+		return
+	# Draw a dot on each established tile and a bar to each established
+	# orthogonal neighbor (tile or node), so the marks read as one connected
+	# line running through the road and into the source/settlement it links.
+	for cell in established:
+		var here: Vector3 = _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
+		_add_established_marker(here)
+		for d in DIRECTIONS:
+			var n: Vector2i = cell + d
+			# One bar per undirected pair (only step east/south) toward another
+			# established tile, or toward a node this established tile feeds.
+			if d != Vector2i(1, 0) and d != Vector2i(0, 1):
+				continue
+			var links := established.has(n) or (_nodes_by_pos.has(n) and _feeds_established(n, established))
+			if links:
+				var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
+				_add_established_segment(here, there)
+
+## The set (Vector2i -> true) of built tiles on some complete source->
+## settlement path. Computed as: keep only tiles whose connected network
+## (built tiles + adjacent nodes, per SimulationEngine.build_graph) holds at
+## least one source AND one settlement, then iteratively drop any kept tile
+## that dead-ends (one or zero links to another kept tile or a node), which
+## strips off stub branches and leaves the through-paths between endpoints.
+func _established_route_cells() -> Dictionary:
+	var comp_of := SimulationEngine.compute_components(_state, _nodes_by_pos)
+	var comp_has_source := {}
+	var comp_has_settlement := {}
+	for pos in _nodes_by_pos:
+		var comp = comp_of.get(pos, -1)
+		if comp == -1:
+			continue
+		if _nodes_by_pos[pos].node_type == GameEnums.NodeType.SOURCE:
+			comp_has_source[comp] = true
+		else:
+			comp_has_settlement[comp] = true
+	var kept := {}
+	for pos in _state.grid:
+		var comp = comp_of.get(pos, -1)
+		if comp_has_source.get(comp, false) and comp_has_settlement.get(comp, false):
+			kept[pos] = true
+	# Iteratively prune dead-end tiles. A tile survives only while it links to
+	# 2+ things (kept tiles or nodes) -- i.e. it's mid-path, not a stub tip.
+	var changed := true
+	while changed:
+		changed = false
+		for pos in kept.keys():
+			var degree := 0
+			for d in DIRECTIONS:
+				var n: Vector2i = pos + d
+				if kept.has(n) or _nodes_by_pos.has(n):
+					degree += 1
+			if degree <= 1:
+				kept.erase(pos)
+				changed = true
+	return kept
+
+## True when node `node_pos` (a source/settlement) is adjacent to at least
+## one kept established tile -- i.e. the overlay line should reach into it.
+func _feeds_established(node_pos: Vector2i, established: Dictionary) -> bool:
+	for d in DIRECTIONS:
+		if established.has(node_pos + d):
+			return true
+	return false
 
 ## Always-on speech bubbles showing "current/max" for every source and
 ## settlement: a source's amount drawn today vs. its daily produce

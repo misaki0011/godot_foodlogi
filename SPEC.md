@@ -24,6 +24,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 7. **A lone stub's default shape is direction-aware.** Item 6's "defaulting sensibly" previously meant an arbitrary fixed shape regardless of where a tile's one real neighbor (route or node) actually was, which could default to a corner touching neither real neighbor. It now considers the actual side of a single real route neighbor and/or an adjacent node together, defaulting to a straight tile when they're in line, the one corner touching both when they're perpendicular, and a corner touching the node's real side when there's no route neighbor at all. See §4.1.
 8. **Route tile shape now ignores adjacent nodes entirely, and a fast drag no longer leaves gaps.** Two drawing-mode fixes. First, items 3/6/7 let an adjacent source or settlement force or bend a tile's shape, so a road always appeared to "connect" to the node it sat beside; a tile's shape is now derived purely from its real route/storage/hub neighbors, never from a node, and every route tile (including node-adjacent ones) is freely tappable to any of the 6 shapes. Second, dragging a route quickly used to skip the cells between two mouse-motion samples, leaving unbuilt holes in the middle of the path; the drag now fills in every orthogonal cell between samples so the traced path is always gap-free. See §4.1.
 9. **Corner tiles now bend the correct way, and Route/Erase shortcuts join the map control panel.** Two fixes. First, the "se" (down-right) and "nw" (up-left) L-corner rotations were swapped, so a corner that should bend down-and-right rendered as up-and-left and vice versa; the yaw table now matches the counter-clockwise sense of the top-down camera. Second, the Draw Route and Bulldoze tools now also appear as compact buttons on the top-left control panel, so the most common build/erase actions are reachable without crossing to the right sidebar. See §4.1, §10.7.
+10. **Sources/settlements count toward hub-formation degree again, and an established-route overlay is added.** Two changes. First, this reverses item 4: a hub is any tile where a delivery fans out to more than one path, so an adjacent food source or settlement DOES count toward a tile's 3-connection hub threshold — a road fed by a source that splits toward two directions now auto-forms a hub, regardless of the node beside it. Second, a bright gold line is continuously overlaid along every route tile that lies on a complete source→settlement path (dead-end stubs pruned out), so the player can see at a glance which roads actually link a source to a customer. See §4.4, §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -336,6 +337,31 @@ before the hold threshold, or one that never actually drags to a second
 cell, is an ordinary tap (place one tile, or cycle a tappable tile's
 shape), unchanged.
 
+### Established-route overlay (added in v0.4)
+
+A bright gold line is continuously overlaid on top of the map along every
+route tile that lies on a **complete source→settlement path**, so the
+player can see at a glance which roads actually link a source to a customer
+rather than dangling unfinished. It is purely informational and never
+changes simulation or cost.
+
+The set of highlighted tiles is derived from the same connectivity graph
+the simulation uses (built tiles plus their adjacent nodes):
+
+- Keep only tiles whose connected network contains **at least one source
+  and at least one settlement** -- a network with no customer, or no
+  supplier, is not an established route and stays unmarked.
+- Within those networks, iteratively drop any tile that dead-ends (one or
+  zero links to another kept tile or a node). This strips off stub
+  branches that lead nowhere, leaving only the through-paths that actually
+  run between endpoints.
+- The line reaches into the source and settlement nodes each kept tile
+  connects to, so a finished route reads as one continuous strand from
+  supplier to customer.
+
+The overlay is rebuilt on every render, so it stays live as the player
+edits the network or runs a day.
+
 ---
 
 # 4.2 Food Freshness System
@@ -542,9 +568,9 @@ A hub is not primarily for freshness. It is for network organization, flow visib
 
 ### Automatic hub formation
 
-A Small Hub is required on any newly built route tile that would have 3 or more connections. Connections include adjacent routes, storage, hubs, and settlements.
+A Small Hub is required on any newly built route tile that would have 3 or more connections. Connections include adjacent routes, storage, hubs, food sources, and settlements.
 
-**Neither food sources nor settlements count toward this threshold (added in v0.4).** Both are pure endpoints that a delivery path can never enter or pass through (§4.7: a path starts at exactly one source, ends at exactly one settlement, and may not use any other node as a transit shortcut), so a tile that only reaches "3 connections" because a node happens to sit beside it isn't actually organizing a branching junction -- it's a plain 2-way pass-through with a node attached, and neither requires a hub nor gets blocked by the network's hub cap on that basis. Only converging route/storage/hub tiles create a real branch.
+**Food sources and settlements DO count toward this threshold (revised in v0.4).** A hub represents any tile where a delivery fans out to more than one path, and the player wants a hub wherever that happens regardless of what kind of neighbor supplies or receives the flow: a tile fed by an adjacent source that then splits toward two roads is exactly the branching junction a hub organizes. So an adjacent source/settlement node counts toward the degree just like a road, storage, or hub does. (This reverses the earlier v0.4 rule that excluded nodes as "pure endpoints"; see the changelog.)
 
 The hub and route placement are one atomic construction action:
 
