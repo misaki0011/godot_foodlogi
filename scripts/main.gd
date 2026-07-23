@@ -677,43 +677,10 @@ func _render_established_routes() -> void:
 				_add_established_segment(here, there)
 
 ## The set (Vector2i -> true) of built tiles on some complete source->
-## settlement path. Computed as: keep only tiles whose connected network
-## (built tiles + adjacent nodes, per SimulationEngine.build_graph) holds at
-## least one source AND one settlement, then iteratively drop any kept tile
-## that dead-ends (one or zero links to another kept tile or a node), which
-## strips off stub branches and leaves the through-paths between endpoints.
+## settlement path -- see SimulationEngine.established_route_cells for the
+## exact rule (road-only connectivity that must start at a source).
 func _established_route_cells() -> Dictionary:
-	var comp_of := SimulationEngine.compute_components(_state, _nodes_by_pos)
-	var comp_has_source := {}
-	var comp_has_settlement := {}
-	for pos in _nodes_by_pos:
-		var comp = comp_of.get(pos, -1)
-		if comp == -1:
-			continue
-		if _nodes_by_pos[pos].node_type == GameEnums.NodeType.SOURCE:
-			comp_has_source[comp] = true
-		else:
-			comp_has_settlement[comp] = true
-	var kept := {}
-	for pos in _state.grid:
-		var comp = comp_of.get(pos, -1)
-		if comp_has_source.get(comp, false) and comp_has_settlement.get(comp, false):
-			kept[pos] = true
-	# Iteratively prune dead-end tiles. A tile survives only while it links to
-	# 2+ things (kept tiles or nodes) -- i.e. it's mid-path, not a stub tip.
-	var changed := true
-	while changed:
-		changed = false
-		for pos in kept.keys():
-			var degree := 0
-			for d in DIRECTIONS:
-				var n: Vector2i = pos + d
-				if kept.has(n) or _nodes_by_pos.has(n):
-					degree += 1
-			if degree <= 1:
-				kept.erase(pos)
-				changed = true
-	return kept
+	return SimulationEngine.established_route_cells(_state, _nodes_by_pos)
 
 ## True when node `node_pos` (a source/settlement) is adjacent to at least
 ## one kept established tile -- i.e. the overlay line should reach into it.

@@ -179,6 +179,72 @@ static func compute_components(state: GameState, nodes_by_pos: Dictionary) -> Di
 		comp_id += 1
 	return comp_of
 
+## The set (Vector2i -> true) of built tiles on some complete source->
+## settlement path -- a path that starts at a source, so a road network no
+## source can reach is never included (used for main.gd's established-route
+## overlay).
+##
+## A delivery path can never pass through a node (a source/settlement is a
+## pure endpoint, §4.7), so connectivity is computed over built tiles ALONE:
+## two roads link only when orthogonally adjacent, never "through" a node
+## they both touch. A road network qualifies only when it touches at least
+## one source AND at least one settlement -- this is what keeps a
+## settlement-to-settlement road (reachable from no source) out, even when
+## some unrelated source sits elsewhere on the map. Within a qualifying
+## network, dead-end stubs are pruned: a tile survives only while it still
+## links to 2+ things (another kept tile, or a node it anchors to), leaving
+## the through-paths that run from a source to a settlement.
+static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+	# Road-only connected components (nodes are not transit vertices).
+	var comp_of := {}
+	var comp_id := 0
+	for start in state.grid:
+		if comp_of.has(start):
+			continue
+		var queue: Array[Vector2i] = [start]
+		comp_of[start] = comp_id
+		while not queue.is_empty():
+			var u: Vector2i = queue.pop_front()
+			for d in DIRECTIONS:
+				var v: Vector2i = u + d
+				if state.grid.has(v) and not comp_of.has(v):
+					comp_of[v] = comp_id
+					queue.append(v)
+		comp_id += 1
+	# Which road networks touch a source / a settlement (adjacency to a node).
+	var comp_has_source := {}
+	var comp_has_settlement := {}
+	for pos in state.grid:
+		var comp = comp_of[pos]
+		for d in DIRECTIONS:
+			var node: NodeData = nodes_by_pos.get(pos + d)
+			if node == null:
+				continue
+			if node.node_type == GameEnums.NodeType.SOURCE:
+				comp_has_source[comp] = true
+			else:
+				comp_has_settlement[comp] = true
+	var kept := {}
+	for pos in state.grid:
+		var comp = comp_of[pos]
+		if comp_has_source.get(comp, false) and comp_has_settlement.get(comp, false):
+			kept[pos] = true
+	# Iteratively prune dead-end tiles. A tile survives only while it links to
+	# 2+ things (kept tiles or nodes) -- i.e. it's mid-path, not a stub tip.
+	var changed := true
+	while changed:
+		changed = false
+		for pos in kept.keys():
+			var degree := 0
+			for d in DIRECTIONS:
+				var n: Vector2i = pos + d
+				if kept.has(n) or nodes_by_pos.has(n):
+					degree += 1
+			if degree <= 1:
+				kept.erase(pos)
+				changed = true
+	return kept
+
 ## Read-only preview for main.gd's route-placement validation: would
 ## building a route tile at new_cell push some junction (the new tile
 ## itself, or an existing route tile newly connected through it) to 3+

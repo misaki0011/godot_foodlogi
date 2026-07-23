@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_hub_auto_formation_and_cap()
 	_test_route_shape()
 	_test_node_adjacency_counts_toward_hub_degree()
+	_test_established_route_cells()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -222,6 +223,39 @@ func _test_node_adjacency_counts_toward_hub_degree() -> void:
 	assert(SimulationEngine.tile_degree(mid_settlement, state_settlement, nodes_by_pos) == 3, "A settlement beside a tile MUST count toward its hub-formation degree")
 	SimulationEngine.check_auto_hubs(state_settlement, nodes_by_pos)
 	assert(state_settlement.grid[mid_settlement].kind == "hub", "A tile branching toward a settlement plus two roads must auto-form a hub")
+
+func _test_established_route_cells() -> void:
+	# Synthetic layout (col,row): a source S at (0,0) linked by a vertical road
+	# down to settlement A at (0,4); a dead-end stub off the middle; a
+	# settlement-to-settlement road (B..C) with no source anywhere on it; and a
+	# source-fed road (from D) that reaches no settlement.
+	var nodes_by_pos := {}
+	nodes_by_pos[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S
+	nodes_by_pos[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # A
+	nodes_by_pos[Vector2i(5, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # B
+	nodes_by_pos[Vector2i(5, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # C
+	nodes_by_pos[Vector2i(8, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # D
+
+	var state := GameState.new()
+	for cell in [Vector2i(0, 1), Vector2i(0, 2), Vector2i(0, 3)]: # S -> A path
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.grid[Vector2i(1, 2)] = {"kind": "route", "level": "dirt"} # dead-end stub
+	for cell in [Vector2i(5, 1), Vector2i(5, 2), Vector2i(5, 3)]: # B <-> C, no source
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	for cell in [Vector2i(8, 1), Vector2i(8, 2)]: # from D, reaches no settlement
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+
+	var est := SimulationEngine.established_route_cells(state, nodes_by_pos)
+	assert(est.has(Vector2i(0, 1)) and est.has(Vector2i(0, 2)) and est.has(Vector2i(0, 3)), "The whole source->settlement path must be established")
+	assert(not est.has(Vector2i(1, 2)), "A dead-end stub off the path must be pruned out")
+	assert(not est.has(Vector2i(5, 1)) and not est.has(Vector2i(5, 2)) and not est.has(Vector2i(5, 3)), "A settlement-to-settlement road with no source must not be established")
+	assert(not est.has(Vector2i(8, 1)) and not est.has(Vector2i(8, 2)), "A source-fed road that reaches no settlement must not be established")
+	assert(est.size() == 3, "Only the three source->settlement tiles should be established")
+
+func _make_node(type: GameEnums.NodeType) -> NodeData:
+	var n := NodeData.new()
+	n.node_type = type
+	return n
 
 func _node(map: MapData, node_id: String) -> NodeData:
 	for node in map.node_placements:
