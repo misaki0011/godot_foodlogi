@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_route_shape()
 	_test_established_route_cells()
 	_test_hub_only_on_completed_route_fork()
+	_test_delivery_does_not_transit_nodes()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -227,22 +228,34 @@ func _test_established_route_cells() -> void:
 	assert(est.size() == 3, "Only the three source->settlement tiles should be established")
 
 func _test_hub_only_on_completed_route_fork() -> void:
-	# A straight completed route (source -> settlement) has no 3-road fork, so
-	# no hub forms -- not even on the tile that sits directly beside a source.
-	var straight_nodes := {}
-	straight_nodes[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # west of (1,0)
-	straight_nodes[Vector2i(4, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east of (3,0)
-	straight_nodes[Vector2i(2, 1)] = _make_node(GameEnums.NodeType.SOURCE)      # beside mid tile
-	var straight := GameState.new()
+	# Case 1: a plain straight completed route (source -> settlement) with
+	# nothing branching off it forms no hub -- no tile reaches 3 branches.
+	var n1 := {}
+	n1[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # west of (1,0)
+	n1[Vector2i(4, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east of (3,0)
+	var s1 := GameState.new()
 	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
-		straight.grid[cell] = {"kind": "route", "level": "dirt"}
-	SimulationEngine.check_auto_hubs(straight, straight_nodes)
+		s1.grid[cell] = {"kind": "route", "level": "dirt"}
+	SimulationEngine.check_auto_hubs(s1, n1)
 	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
-		assert(straight.grid[cell].kind == "route", "A straight completed route (even beside a source) must not form a hub")
+		assert(s1.grid[cell].kind == "route", "A straight completed route with no branch must not form a hub")
 
-	# A genuine 3-road fork that reaches no settlement (an unfinished route)
-	# also forms no hub -- hubs only appear on completed source->settlement
-	# routes.
+	# Case 2: a source feeding a tile that splits toward two settlements IS a
+	# hub -- the source's delivery fans out (the adjacent source counts as a
+	# branch alongside the two roads). The start/end tiles are not hubs.
+	var n2 := {}
+	n2[Vector2i(5, 1)] = _make_node(GameEnums.NodeType.SOURCE)      # below the fork
+	n2[Vector2i(3, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # west end
+	n2[Vector2i(7, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east end
+	var s2 := GameState.new()
+	for cell in [Vector2i(4, 0), Vector2i(5, 0), Vector2i(6, 0)]:
+		s2.grid[cell] = {"kind": "route", "level": "dirt"}
+	SimulationEngine.check_auto_hubs(s2, n2)
+	assert(s2.grid[Vector2i(5, 0)].kind == "hub", "A source feeding a tile that splits toward two roads must form a hub")
+	assert(s2.grid[Vector2i(4, 0)].kind == "route" and s2.grid[Vector2i(6, 0)].kind == "route", "A route's start/end tiles (beside a node, one road) are not hubs")
+
+	# Case 3: a 3-road fork that reaches no settlement (an unfinished route)
+	# forms no hub -- hubs only appear on completed source->settlement routes.
 	var only_source := {Vector2i(10, 10): _make_node(GameEnums.NodeType.SOURCE)}
 	var incomplete := GameState.new()
 	incomplete.grid[Vector2i(10, 11)] = {"kind": "route", "level": "dirt"} # touches the source
@@ -251,6 +264,23 @@ func _test_hub_only_on_completed_route_fork() -> void:
 	incomplete.grid[Vector2i(10, 12)] = {"kind": "route", "level": "dirt"}
 	SimulationEngine.check_auto_hubs(incomplete, only_source)
 	assert(incomplete.grid[Vector2i(10, 11)].kind == "route", "A 3-road fork that reaches no settlement must not form a hub")
+
+func _test_delivery_does_not_transit_nodes() -> void:
+	# S -- road -- M(settlement) -- road -- D(settlement), all in a line. The
+	# only road chain from S to D would have to pass THROUGH settlement M, which
+	# a delivery may never do (a node is a start/end point, never a transit
+	# shortcut), so D is unreachable from S.
+	var grain: FoodData = GameBalance.food_types().grain
+	var nodes := {}
+	nodes[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S
+	nodes[Vector2i(0, 2)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # M, in the middle
+	nodes[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # D, the target
+	var state := GameState.new()
+	state.grid[Vector2i(0, 1)] = {"kind": "route", "level": "dirt"}
+	state.grid[Vector2i(0, 3)] = {"kind": "route", "level": "dirt"}
+	assert(SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 4), grain).is_empty(), "A delivery must not route through an intermediate settlement/source node")
+	# The source still reaches the settlement it connects to over clear road.
+	assert(not SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 2), grain).is_empty(), "A source must still reach a settlement over a clear road path")
 
 func _make_node(type: GameEnums.NodeType) -> NodeData:
 	var n := NodeData.new()

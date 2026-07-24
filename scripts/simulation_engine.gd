@@ -216,27 +216,33 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 				changed = true
 	return kept
 
-## How many of `pos`'s orthogonal neighbors are themselves on an established
-## route (in `established`). This counts the real delivery branches meeting at
-## pos: a source/settlement node is never counted (it's a terminal endpoint,
-## not a branch), only established road/storage/hub tiles are.
-static func established_branch_count(pos: Vector2i, established: Dictionary) -> int:
+## The number of delivery branches meeting at `pos`: how many of its orthogonal
+## neighbors are either on an established route (road/storage/hub) OR a
+## source/settlement node. Adjacent nodes count so that a tile where a source's
+## delivery fans out (source + 2+ roads), or where multiple sources' deliveries
+## converge, reads as a branch -- a node is an endpoint of flow, and a tile
+## sitting between an endpoint and 2+ roads is a split/merge point.
+static func hub_branch_count(pos: Vector2i, established: Dictionary, nodes_by_pos: Dictionary) -> int:
 	var count := 0
 	for d in DIRECTIONS:
-		if established.has(pos + d):
+		var n: Vector2i = pos + d
+		if established.has(n) or nodes_by_pos.has(n):
 			count += 1
 	return count
 
 ## Mutates state.grid/state.balance: auto-forms a Small Hub at every tile where
-## a COMPLETED route branches. A route tile becomes a hub only when it (a) lies
-## on an established source->settlement route (see established_route_cells) and
-## (b) has 3+ neighbors that are also on an established route -- a genuine fork
-## in a finished delivery route. A straight run, an isolated/unfinished road,
-## and a road merely sitting beside a source/settlement never form a hub (nodes
-## don't count -- revised in v0.4: hubs are tied to completed-route forks, not
-## raw connection degree). Capped at HUB_CAP_PER_NETWORK per road network
-## (over-cap forks stay hub_capped); a fork the player can't afford yet is
-## flagged needs_hub. Returns "ok:"/"warn:" toast lines for newly-changed tiles.
+## a COMPLETED route branches -- where a source's delivery splits toward
+## multiple paths, or where multiple sources' deliveries converge. A route tile
+## becomes a hub only when it (a) lies on an established source->settlement
+## route (see established_route_cells) and (b) has 3+ branches meeting at it
+## (hub_branch_count: established road neighbors plus adjacent source/settlement
+## nodes). A straight run and an isolated/unfinished road never form a hub, but
+## a road beside a source that also continues in 2+ directions does (revised in
+## v0.4: hubs = completed-route split/merge points; adjacent nodes count again,
+## now gated on the route actually being finished). Capped at
+## HUB_CAP_PER_NETWORK per road network (over-cap forks stay hub_capped); a fork
+## the player can't afford yet is flagged needs_hub. Returns "ok:"/"warn:" toast
+## lines for newly-changed tiles.
 static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array[String]:
 	var messages: Array[String] = []
 	var comp_of := road_components(state)
@@ -251,7 +257,7 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 		var cell = state.grid[pos]
 		if cell.kind != "route":
 			continue
-		var is_fork: bool = established.has(pos) and established_branch_count(pos, established) >= 3
+		var is_fork: bool = established.has(pos) and hub_branch_count(pos, established, nodes_by_pos) >= 3
 		if is_fork:
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)
@@ -276,7 +282,10 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 	return messages
 
 ## Dijkstra minimizing cumulative freshness-decay weight; ties broken
-## naturally by whichever path accumulates less decay first.
+## naturally by whichever path accumulates less decay first. A delivery path
+## may only touch a node at its two ends (start = source, end = settlement) --
+## a source/settlement is a terminal endpoint, never a transit shortcut
+## (§4.7), so any node reached mid-search is a dead end and is never expanded.
 static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vector2i, to_pos: Vector2i, food: FoodData) -> Array[Vector2i]:
 	var adj := build_graph(state, nodes_by_pos)
 	if not adj.has(from_pos) or not adj.has(to_pos):
@@ -295,6 +304,11 @@ static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vect
 		visited[u] = true
 		if u == to_pos:
 			break
+		# A node other than the delivery's own source is an endpoint, not a
+		# through-route: reach it if it's the destination, but never route past
+		# it into its other adjacent roads.
+		if nodes_by_pos.has(u) and u != from_pos:
+			continue
 		for v in adj.get(u, []):
 			if visited.has(v):
 				continue
