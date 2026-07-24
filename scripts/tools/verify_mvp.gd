@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_route_shape()
 	_test_node_adjacency_counts_toward_hub_degree()
 	_test_established_route_cells()
+	_test_hub_cap_is_per_road_network()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -251,6 +252,31 @@ func _test_established_route_cells() -> void:
 	assert(not est.has(Vector2i(5, 1)) and not est.has(Vector2i(5, 2)) and not est.has(Vector2i(5, 3)), "A settlement-to-settlement road with no source must not be established")
 	assert(not est.has(Vector2i(8, 1)) and not est.has(Vector2i(8, 2)), "A source-fed road that reaches no settlement must not be established")
 	assert(est.size() == 3, "Only the three source->settlement tiles should be established")
+
+func _test_hub_cap_is_per_road_network() -> void:
+	# A road network's hub cap must not leak across a shared node: a delivery
+	# can't pass through a source, so two road groups that only touch the same
+	# source are SEPARATE networks, each with its own hub budget.
+	var nodes_by_pos := {}
+	var s := Vector2i(5, 5)
+	nodes_by_pos[s] = _make_node(GameEnums.NodeType.SOURCE)
+	var state := GameState.new()
+	# Group A: a vertical road touching S from the north (route (5,4)) that runs
+	# up into two hubs -- the network is already at the 2-hub cap.
+	state.grid[Vector2i(5, 4)] = {"kind": "route", "level": "dirt"}
+	state.grid[Vector2i(5, 3)] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
+	state.grid[Vector2i(5, 2)] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
+	# Group B: a separate road touching S from the south. Road-only it never
+	# reaches group A (the source node between them is not a transit tile).
+	state.grid[Vector2i(5, 6)] = {"kind": "route", "level": "dirt"}
+	state.grid[Vector2i(5, 7)] = {"kind": "route", "level": "dirt"}
+	# Placing a tile that turns (5,6) into a 3-way junction (source + two roads)
+	# must be allowed: group B holds no hubs of its own, even though group A --
+	# which shares only the source node -- is at the cap.
+	assert(not SimulationEngine.would_exceed_hub_cap(state, nodes_by_pos, Vector2i(4, 6)), "A capped road network must not block a separate one that only shares a source node")
+	# Sanity: turning route (5,4) into a junction inside group A (already 2
+	# hubs) IS still blocked -- the cap works within a road network.
+	assert(SimulationEngine.would_exceed_hub_cap(state, nodes_by_pos, Vector2i(6, 4)), "A junction inside an already-capped road network must still be blocked")
 
 func _make_node(type: GameEnums.NodeType) -> NodeData:
 	var n := NodeData.new()

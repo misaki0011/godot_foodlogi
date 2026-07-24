@@ -161,19 +161,25 @@ static func build_graph(state: GameState, nodes_by_pos: Dictionary) -> Dictionar
 				adj.get_or_add(n, []).append(pos)
 	return adj
 
-static func compute_components(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
-	var adj := build_graph(state, nodes_by_pos)
+## Connected components over BUILT TILES ALONE (route/storage/hub) -- nodes are
+## NOT transit vertices, since a delivery can never pass through a
+## source/settlement (§4.7). Two road groups that touch only a shared node are
+## therefore SEPARATE networks. Used for hub-cap/formation (each road network
+## gets its own hub budget) and, via established_route_cells, the overlay.
+## Vector2i tile -> component id.
+static func road_components(state: GameState) -> Dictionary:
 	var comp_of := {}
 	var comp_id := 0
-	for start in adj.keys():
+	for start in state.grid:
 		if comp_of.has(start):
 			continue
-		var queue: Array = [start]
+		var queue: Array[Vector2i] = [start]
 		comp_of[start] = comp_id
 		while not queue.is_empty():
-			var u = queue.pop_front()
-			for v in adj.get(u, []):
-				if not comp_of.has(v):
+			var u: Vector2i = queue.pop_front()
+			for d in DIRECTIONS:
+				var v: Vector2i = u + d
+				if state.grid.has(v) and not comp_of.has(v):
 					comp_of[v] = comp_id
 					queue.append(v)
 		comp_id += 1
@@ -195,22 +201,7 @@ static func compute_components(state: GameState, nodes_by_pos: Dictionary) -> Di
 ## links to 2+ things (another kept tile, or a node it anchors to), leaving
 ## the through-paths that run from a source to a settlement.
 static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
-	# Road-only connected components (nodes are not transit vertices).
-	var comp_of := {}
-	var comp_id := 0
-	for start in state.grid:
-		if comp_of.has(start):
-			continue
-		var queue: Array[Vector2i] = [start]
-		comp_of[start] = comp_id
-		while not queue.is_empty():
-			var u: Vector2i = queue.pop_front()
-			for d in DIRECTIONS:
-				var v: Vector2i = u + d
-				if state.grid.has(v) and not comp_of.has(v):
-					comp_of[v] = comp_id
-					queue.append(v)
-		comp_id += 1
+	var comp_of := road_components(state)
 	# Which road networks touch a source / a settlement (adjacency to a node).
 	var comp_has_source := {}
 	var comp_has_settlement := {}
@@ -260,7 +251,7 @@ static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new
 	var temp_state := GameState.new()
 	temp_state.grid = temp_grid
 
-	var comp_of := compute_components(temp_state, nodes_by_pos)
+	var comp_of := road_components(temp_state)
 	var hub_counts := {}
 	for pos in state.grid.keys():
 		var cell = state.grid[pos]
@@ -290,7 +281,7 @@ static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new
 ## Returns "ok:<msg>" / "warn:<msg>" toast lines for newly-changed tiles.
 static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array[String]:
 	var messages: Array[String] = []
-	var comp_of := compute_components(state, nodes_by_pos)
+	var comp_of := road_components(state)
 	var hub_counts := {}
 	for pos in state.grid.keys():
 		var cell = state.grid[pos]
