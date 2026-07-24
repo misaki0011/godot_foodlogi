@@ -10,9 +10,8 @@ func _initialize() -> void:
 	_test_daily_simulation()
 	_test_hub_auto_formation_and_cap()
 	_test_route_shape()
-	_test_node_adjacency_counts_toward_hub_degree()
 	_test_established_route_cells()
-	_test_hub_cap_is_per_road_network()
+	_test_hub_only_on_completed_route_fork()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -59,15 +58,22 @@ func _test_daily_simulation() -> void:
 	assert(state.day == 1, "run_day must not itself advance the day counter (Main._close_report does)")
 
 func _test_hub_auto_formation_and_cap() -> void:
+	# A completed route: a source feeds a horizontal spine that runs to a
+	# settlement (E), with three branches dropping to three more settlements.
+	# Each branch parent is a genuine 3-road fork ON the finished route, so a
+	# hub forms there -- capped at HUB_CAP_PER_NETWORK per road network.
 	var state := GameState.new()
-	var nodes_by_pos := {} # Empty margin area far from any real node/river.
-	var spine: Array[Vector2i] = [Vector2i(4, 12), Vector2i(5, 12), Vector2i(6, 12), Vector2i(7, 12), Vector2i(8, 12), Vector2i(9, 12)]
+	var nodes_by_pos := {}
+	nodes_by_pos[Vector2i(1, 10)] = _make_node(GameEnums.NodeType.SOURCE)      # S, west of spine
+	nodes_by_pos[Vector2i(8, 10)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # E, east of spine
+	var spine: Array[Vector2i] = [Vector2i(2, 10), Vector2i(3, 10), Vector2i(4, 10), Vector2i(5, 10), Vector2i(6, 10), Vector2i(7, 10)]
 	for cell in spine:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
-	var forks: Array[Vector2i] = [Vector2i(5, 12), Vector2i(6, 12), Vector2i(7, 12)]
+	var forks: Array[Vector2i] = [Vector2i(3, 10), Vector2i(4, 10), Vector2i(5, 10)]
 	for parent in forks:
 		var branch := parent + Vector2i(0, 1)
 		state.grid[branch] = {"kind": "route", "level": "dirt"}
+		nodes_by_pos[branch + Vector2i(0, 1)] = _make_node(GameEnums.NodeType.SETTLEMENT)
 
 	var starting_balance := state.balance
 	SimulationEngine.check_auto_hubs(state, nodes_by_pos)
@@ -82,7 +88,7 @@ func _test_hub_auto_formation_and_cap() -> void:
 			capped_count += 1
 	print("Hubs formed: %d, capped junctions: %d (cap is %d)" % [hub_count, capped_count, GameBalance.HUB_CAP_PER_NETWORK])
 	assert(hub_count == GameBalance.HUB_CAP_PER_NETWORK, "Exactly HUB_CAP_PER_NETWORK hubs should auto-form on one connected network")
-	assert(capped_count == forks.size() - GameBalance.HUB_CAP_PER_NETWORK, "Any further 3-way junction must be rejected as hub_capped, not silently formed")
+	assert(capped_count == forks.size() - GameBalance.HUB_CAP_PER_NETWORK, "Any further completed-route fork must be rejected as hub_capped, not silently formed")
 	assert(is_equal_approx(state.balance, starting_balance - GameBalance.HUB_CAP_PER_NETWORK * GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build))
 
 func _test_route_shape() -> void:
@@ -192,39 +198,6 @@ func _test_route_shape() -> void:
 	var shape_h := SimulationEngine.route_shape(tile_by_settlement, state_h, nodes_by_pos)
 	assert(shape_h.family == "straight" and shape_h.facing == "lr", "A single route neighbor to the west must default to a left-right straight, ignoring the settlement to the north")
 
-func _test_node_adjacency_counts_toward_hub_degree() -> void:
-	var map: MapData = load("res://data/maps/region_1_map.tres")
-	var nodes_by_pos := {}
-	for node in map.node_placements:
-		nodes_by_pos[node.grid_position] = node
-	var farm := _node(map, "farm")
-	var village_a := _node(map, "villageA")
-
-	# A route tile with a road branch north and south that also sits beside
-	# Farm (a source) is a tile where the source's delivery fans out to two
-	# roads: the adjacent node DOES count toward hub-formation degree (revised
-	# in v0.4), so this reads as a 3-way junction and auto-forms a Small Hub.
-	var mid_source := farm.grid_position + Vector2i(1, 0) # east of Farm
-	var state_source := GameState.new()
-	state_source.grid[mid_source + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
-	state_source.grid[mid_source] = {"kind": "route", "level": "dirt"}
-	state_source.grid[mid_source + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
-	assert(SimulationEngine.tile_degree(mid_source, state_source, nodes_by_pos) == 3, "A source beside a tile MUST count toward its hub-formation degree")
-	SimulationEngine.check_auto_hubs(state_source, nodes_by_pos)
-	assert(state_source.grid[mid_source].kind == "hub", "A tile branching a source's delivery to two roads must auto-form a hub")
-
-	# Same scenario, but the adjacent node is a settlement (Village A) instead
-	# of a source -- behaves identically, since the player wants a hub wherever
-	# a delivery fans out, regardless of which endpoint kind sits beside it.
-	var mid_settlement := village_a.grid_position + Vector2i(1, 0) # east of Village A
-	var state_settlement := GameState.new()
-	state_settlement.grid[mid_settlement + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"}
-	state_settlement.grid[mid_settlement] = {"kind": "route", "level": "dirt"}
-	state_settlement.grid[mid_settlement + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"}
-	assert(SimulationEngine.tile_degree(mid_settlement, state_settlement, nodes_by_pos) == 3, "A settlement beside a tile MUST count toward its hub-formation degree")
-	SimulationEngine.check_auto_hubs(state_settlement, nodes_by_pos)
-	assert(state_settlement.grid[mid_settlement].kind == "hub", "A tile branching toward a settlement plus two roads must auto-form a hub")
-
 func _test_established_route_cells() -> void:
 	# Synthetic layout (col,row): a source S at (0,0) linked by a vertical road
 	# down to settlement A at (0,4); a dead-end stub off the middle; a
@@ -253,30 +226,31 @@ func _test_established_route_cells() -> void:
 	assert(not est.has(Vector2i(8, 1)) and not est.has(Vector2i(8, 2)), "A source-fed road that reaches no settlement must not be established")
 	assert(est.size() == 3, "Only the three source->settlement tiles should be established")
 
-func _test_hub_cap_is_per_road_network() -> void:
-	# A road network's hub cap must not leak across a shared node: a delivery
-	# can't pass through a source, so two road groups that only touch the same
-	# source are SEPARATE networks, each with its own hub budget.
-	var nodes_by_pos := {}
-	var s := Vector2i(5, 5)
-	nodes_by_pos[s] = _make_node(GameEnums.NodeType.SOURCE)
-	var state := GameState.new()
-	# Group A: a vertical road touching S from the north (route (5,4)) that runs
-	# up into two hubs -- the network is already at the 2-hub cap.
-	state.grid[Vector2i(5, 4)] = {"kind": "route", "level": "dirt"}
-	state.grid[Vector2i(5, 3)] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
-	state.grid[Vector2i(5, 2)] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
-	# Group B: a separate road touching S from the south. Road-only it never
-	# reaches group A (the source node between them is not a transit tile).
-	state.grid[Vector2i(5, 6)] = {"kind": "route", "level": "dirt"}
-	state.grid[Vector2i(5, 7)] = {"kind": "route", "level": "dirt"}
-	# Placing a tile that turns (5,6) into a 3-way junction (source + two roads)
-	# must be allowed: group B holds no hubs of its own, even though group A --
-	# which shares only the source node -- is at the cap.
-	assert(not SimulationEngine.would_exceed_hub_cap(state, nodes_by_pos, Vector2i(4, 6)), "A capped road network must not block a separate one that only shares a source node")
-	# Sanity: turning route (5,4) into a junction inside group A (already 2
-	# hubs) IS still blocked -- the cap works within a road network.
-	assert(SimulationEngine.would_exceed_hub_cap(state, nodes_by_pos, Vector2i(6, 4)), "A junction inside an already-capped road network must still be blocked")
+func _test_hub_only_on_completed_route_fork() -> void:
+	# A straight completed route (source -> settlement) has no 3-road fork, so
+	# no hub forms -- not even on the tile that sits directly beside a source.
+	var straight_nodes := {}
+	straight_nodes[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # west of (1,0)
+	straight_nodes[Vector2i(4, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east of (3,0)
+	straight_nodes[Vector2i(2, 1)] = _make_node(GameEnums.NodeType.SOURCE)      # beside mid tile
+	var straight := GameState.new()
+	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
+		straight.grid[cell] = {"kind": "route", "level": "dirt"}
+	SimulationEngine.check_auto_hubs(straight, straight_nodes)
+	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
+		assert(straight.grid[cell].kind == "route", "A straight completed route (even beside a source) must not form a hub")
+
+	# A genuine 3-road fork that reaches no settlement (an unfinished route)
+	# also forms no hub -- hubs only appear on completed source->settlement
+	# routes.
+	var only_source := {Vector2i(10, 10): _make_node(GameEnums.NodeType.SOURCE)}
+	var incomplete := GameState.new()
+	incomplete.grid[Vector2i(10, 11)] = {"kind": "route", "level": "dirt"} # touches the source
+	incomplete.grid[Vector2i(11, 11)] = {"kind": "route", "level": "dirt"}
+	incomplete.grid[Vector2i(9, 11)] = {"kind": "route", "level": "dirt"}
+	incomplete.grid[Vector2i(10, 12)] = {"kind": "route", "level": "dirt"}
+	SimulationEngine.check_auto_hubs(incomplete, only_source)
+	assert(incomplete.grid[Vector2i(10, 11)].kind == "route", "A 3-road fork that reaches no settlement must not form a hub")
 
 func _make_node(type: GameEnums.NodeType) -> NodeData:
 	var n := NodeData.new()

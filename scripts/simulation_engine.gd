@@ -16,35 +16,15 @@ static func neighbors(pos: Vector2i, grid_size: Vector2i) -> Array[Vector2i]:
 			result.append(n)
 	return result
 
-## Hub-formation degree: how many of this tile's sides are neighbors that a
-## delivery can flow to/from -- route/storage/hub tiles AND source/settlement
-## nodes (see check_auto_hubs/would_exceed_hub_cap). Adjacent nodes DO count
-## (revised in v0.4): a hub is any tile where a source's (or settlement's)
-## delivery fans out to more than one path, and the player doesn't care
-## whether one of those three-plus branches happens to be a node rather than
-## another road -- a tile fed by a source that then splits toward two roads
-## is exactly the branching junction a hub represents. (This reverses the
-## earlier v0.4 rule that excluded nodes; see the changelog.)
-static func tile_degree(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> int:
-	var count := 0
-	for d in DIRECTIONS:
-		var n := pos + d
-		if n.x < 0 or n.y < 0 or n.x >= GameBalance.GRID_SIZE.x or n.y >= GameBalance.GRID_SIZE.y:
-			continue
-		if state.grid.has(n) or nodes_by_pos.has(n):
-			count += 1
-	return count
-
 const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
 const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
 
 ## Which of this tile's sides are real route/storage/hub neighbors, used for
 ## auto-deriving visual shape in route_shape(). Source/settlement nodes are
 ## excluded here on purpose: a node has its own separate marker and shouldn't
-## drive the road's rendered shape (unlike tile_degree(), which counts nodes
-## for hub-formation). Keyed by compass side: (0,-1)=north, (1,0)=east,
-## (0,1)=south, (-1,0)=west, matching how world Z increases with grid Y (see
-## main.gd's map_to_local usage).
+## drive the road's rendered shape. Keyed by compass side: (0,-1)=north,
+## (1,0)=east, (0,1)=south, (-1,0)=west, matching how world Z increases with
+## grid Y (see main.gd's map_to_local usage).
 static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 	var sides := {"n": false, "e": false, "s": false, "w": false}
 	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
@@ -236,52 +216,31 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 				changed = true
 	return kept
 
-## Read-only preview for main.gd's route-placement validation: would
-## building a route tile at new_cell push some junction (the new tile
-## itself, or an existing route tile newly connected through it) to 3+
-## connections inside a network that's already at HUB_CAP_PER_NETWORK
-## hubs? Only tiles whose degree actually changes because of this one
-## placement are considered, so an already-hub_capped junction elsewhere
-## doesn't block unrelated route building.
-static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new_cell: Vector2i) -> bool:
-	if state.grid.has(new_cell):
-		return false
-	var temp_grid := state.grid.duplicate()
-	temp_grid[new_cell] = {"kind": "route", "level": "dirt"}
-	var temp_state := GameState.new()
-	temp_state.grid = temp_grid
+## How many of `pos`'s orthogonal neighbors are themselves on an established
+## route (in `established`). This counts the real delivery branches meeting at
+## pos: a source/settlement node is never counted (it's a terminal endpoint,
+## not a branch), only established road/storage/hub tiles are.
+static func established_branch_count(pos: Vector2i, established: Dictionary) -> int:
+	var count := 0
+	for d in DIRECTIONS:
+		if established.has(pos + d):
+			count += 1
+	return count
 
-	var comp_of := road_components(temp_state)
-	var hub_counts := {}
-	for pos in state.grid.keys():
-		var cell = state.grid[pos]
-		if cell.kind == "hub":
-			var c = comp_of.get(pos, -1)
-			hub_counts[c] = hub_counts.get(c, 0) + 1
-
-	var new_junctions: Array[Vector2i] = []
-	if tile_degree(new_cell, temp_state, nodes_by_pos) >= 3:
-		new_junctions.append(new_cell)
-	for n in neighbors(new_cell, GameBalance.GRID_SIZE):
-		var cell = state.grid.get(n)
-		if cell == null or cell.kind != "route":
-			continue
-		if tile_degree(n, state, nodes_by_pos) < 3 and tile_degree(n, temp_state, nodes_by_pos) >= 3:
-			new_junctions.append(n)
-
-	for pos in new_junctions:
-		var comp = comp_of.get(pos, -1)
-		if hub_counts.get(comp, 0) >= GameBalance.HUB_CAP_PER_NETWORK:
-			return true
-	return false
-
-## Mutates state.grid/state.balance: auto-forms a Small Hub on any route
-## tile with 3+ connections, unless its connected network already has
-## HUB_CAP_PER_NETWORK hubs (hub_capped) or funds are short (needs_hub).
-## Returns "ok:<msg>" / "warn:<msg>" toast lines for newly-changed tiles.
+## Mutates state.grid/state.balance: auto-forms a Small Hub at every tile where
+## a COMPLETED route branches. A route tile becomes a hub only when it (a) lies
+## on an established source->settlement route (see established_route_cells) and
+## (b) has 3+ neighbors that are also on an established route -- a genuine fork
+## in a finished delivery route. A straight run, an isolated/unfinished road,
+## and a road merely sitting beside a source/settlement never form a hub (nodes
+## don't count -- revised in v0.4: hubs are tied to completed-route forks, not
+## raw connection degree). Capped at HUB_CAP_PER_NETWORK per road network
+## (over-cap forks stay hub_capped); a fork the player can't afford yet is
+## flagged needs_hub. Returns "ok:"/"warn:" toast lines for newly-changed tiles.
 static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array[String]:
 	var messages: Array[String] = []
 	var comp_of := road_components(state)
+	var established := established_route_cells(state, nodes_by_pos)
 	var hub_counts := {}
 	for pos in state.grid.keys():
 		var cell = state.grid[pos]
@@ -292,8 +251,8 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 		var cell = state.grid[pos]
 		if cell.kind != "route":
 			continue
-		var degree := tile_degree(pos, state, nodes_by_pos)
-		if degree >= 3:
+		var is_fork: bool = established.has(pos) and established_branch_count(pos, established) >= 3
+		if is_fork:
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)
 			if count >= GameBalance.HUB_CAP_PER_NETWORK:
@@ -308,7 +267,7 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 				state.balance -= cost
 				state.grid[pos] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
 				hub_counts[comp] = count + 1
-				messages.append("ok:Junction formed — Small Hub auto-built for §%d." % roundi(cost))
+				messages.append("ok:Route fork — Small Hub auto-built for §%d." % roundi(cost))
 			else:
 				cell.needs_hub = true
 		else:

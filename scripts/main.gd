@@ -258,18 +258,17 @@ func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 ## Re-derives, from scratch, which cells in _drag_path are real new tiles to
 ## build (_drag_new_cells) and whether the whole path is valid: every new
 ## cell must connect to the existing network or an earlier tile already
-## queued in this same drag, none may push a junction past the hub cap, and
-## the total cost must fit the current treasury. Node cells and cells
-## already built are harmless pass-through waypoints, not failures. Runs
-## against a scratch grid copy, matching would_exceed_hub_cap's own
-## preview-without-mutating pattern -- _state.grid is never touched here.
+## queued in this same drag, and the total cost must fit the current
+## treasury. Node cells and cells already built are harmless pass-through
+## waypoints, not failures. The hub cap never blocks a placement -- hubs
+## auto-form (or stay capped) only after the route is built, when it's a
+## completed-route fork (see SimulationEngine.check_auto_hubs). Runs against a
+## scratch grid copy -- _state.grid is never touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
 	_drag_new_cells.clear()
 	var temp_grid: Dictionary = _state.grid.duplicate()
-	var temp_state := GameState.new()
-	temp_state.grid = temp_grid
 	var total_cost := 0.0
 	for cell in _drag_path:
 		if _node_at(cell) or temp_grid.has(cell):
@@ -282,10 +281,6 @@ func _recompute_drag_validity() -> void:
 		if not adjacent:
 			_drag_valid = false
 			_drag_invalid_reason = "That path isn't connected -- try dragging more slowly."
-			break
-		if SimulationEngine.would_exceed_hub_cap(temp_state, _nodes_by_pos, cell):
-			_drag_valid = false
-			_drag_invalid_reason = "That path would need a hub beyond the network's cap."
 			break
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
 		temp_grid[cell] = {"kind": "route", "level": "dirt"}
@@ -421,9 +416,6 @@ func _do_build_route(cell: Vector2i) -> void:
 		return
 	if not _adjacent_to_network(cell):
 		_show_toast("Route must connect to a node or existing route.", true)
-		return
-	if SimulationEngine.would_exceed_hub_cap(_state, _nodes_by_pos, cell):
-		_show_toast("Can't place this road: it would need a 3rd hub, but each connected network can only support %d. Try routing around this junction." % GameBalance.HUB_CAP_PER_NETWORK, true)
 		return
 	var cost := SimulationEngine.route_build_cost(cell, _map_data)
 	if _state.balance < cost:
