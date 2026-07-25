@@ -2,13 +2,13 @@ extends Node3D
 
 ## Fresh Routes -- 3D isometric port of fresh-routes-mvp.html. The world is
 ## a tile grid (see GameState.grid / SimulationEngine). Routes are drag-only
-## (v0.5): press-and-hold on an existing node or route tile, then drag to
+## (v0.5): press-and-hold on a source node or a built hub, then drag to
 ## build and explicitly connect new tiles -- physical adjacency alone never
 ## implies a connection (see GameState.connections). Other tools (storage,
 ## hub, upgrade, bulldoze) remain a single tap on an existing route tile.
-## Completed-route forks are flagged automatically but a Small Hub is only
-## built there when the player picks the Build Hub tool and pays for it
-## (v0.4 item 14; see SPEC.md §4.4). Hovering (desktop) or tapping (mobile,
+## A Small Hub can be built on any existing route tile with the Build Hub
+## tool, capped at GameBalance.HUB_CAP_PER_NETWORK per connected road network
+## (v0.5 revision -- see SPEC.md §4.4). Hovering (desktop) or tapping (mobile,
 ## no dialog) any tile or node shows a live info tooltip. A top-left panel
 ## provides touch zoom/pan controls for exploring the map on mobile.
 
@@ -51,13 +51,13 @@ const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Press and hold on an existing node or route tile, then drag to an adjacent tile to build (or link to) it -- release to commit the whole path. Nothing connects just by touching; every link is a drag. Tap a built route tile (without dragging) to flip its shape.",
+	"route": "Press and hold on a source or a built hub, then drag to an adjacent tile to build (or link to) it -- release to commit the whole path. Nothing connects just by touching; every link is a drag. Tap a built route tile (without dragging) to flip its shape.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"freeze": "Click an existing route tile to build Freeze Storage there (good for seafood -- some foods dislike freezing).",
-	"hubBuild": "Click a flagged completed-route fork (⚙ in its tip) to build a Small Hub there for §150.",
-	"hubRegional": "Click an existing Small Hub (formed at a completed-route fork) to upgrade it to Regional for §200.",
+	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
+	"hubRegional": "Click an existing Small Hub to upgrade it to Regional for §200.",
 	"remove": "Click a built tile to bulldoze it (no refund).",
 }
 
@@ -97,9 +97,12 @@ var _zoom_dir := 0.0
 ## ---------- route draw: tap-to-cycle vs. drag-to-build-and-connect ----------
 ## v0.5: tile creation is drag-only -- tapping never places a new tile.
 ## Connectivity is never implied by adjacency (GameState.connections):
-## a press must start ON an existing anchor (a node or an already-built
-## tile) while the "route" tool is active, since every link, including a new
-## tile's link back to what it extends from, has to be an explicit drag.
+## a press must start ON a source node or a built hub tile (v0.5 revision --
+## routes always trace back to a supply point) while the "route" tool is
+## active, since every link, including a new tile's link back to what it
+## extends from, has to be an explicit drag. The drag can still cross and
+## link to any settlement/route tile it passes over -- only where it starts
+## is restricted.
 ## _process() promotes an eligible press to _drag_active once held past
 ## HOLD_TO_DRAG_MSEC without releasing. A release before that threshold --
 ## or a release without ever dragging to a second cell -- is a plain tap on
@@ -217,11 +220,18 @@ func _start_press(screen_position: Vector2) -> void:
 	_press_cell = cell
 	_press_start_msec = Time.get_ticks_msec()
 	_drag_active = false
-	# A drag can only start FROM an existing anchor -- a node or an already-
-	# built tile -- never from empty ground, since every new tile's
-	# connection back to the network has to be an explicit drag (v0.5).
-	# Other tools behave exactly as a normal click on release.
-	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (_node_at(cell) != null or _state.grid.has(cell))
+	# A route drag can only start FROM a source node or a built hub tile --
+	# never from empty ground, a settlement, or a plain route tile -- so every
+	# route always traces back to a supply point (v0.5 revision). The drag can
+	# still cross and link to any existing tile/node along the way; only the
+	# starting anchor is restricted. Other tools behave exactly as a normal
+	# click on release.
+	var node := _node_at(cell)
+	var cell_data = _state.grid.get(cell)
+	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (
+		(node != null and node.node_type == GameEnums.NodeType.SOURCE) or
+		(cell_data != null and cell_data.kind == "hub")
+	)
 
 func _end_press(screen_position: Vector2) -> void:
 	if _drag_active:
@@ -457,7 +467,7 @@ const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (Nort
 ## _start_press/_commit_drag). Tapping empty ground just explains that.
 func _do_tap_route_tile(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
-		_show_toast("Press and hold on an existing node or route tile, then drag here to build and connect a new one.", true)
+		_show_toast("Press and hold on a source or a built hub, then drag here to build and connect a new one.", true)
 		return
 	var cell_data = _state.grid[cell]
 	if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
@@ -498,16 +508,19 @@ func _do_build_storage(cell: Vector2i) -> void:
 	_state.grid[cell] = {"kind": "storage", "stype": stype}
 	_show_toast("%s built for §%d." % [st.name, roundi(st.build)])
 
+## Any built route tile can become a Small Hub -- the player draws a route
+## first, then picks the Build Hub tool and clicks the tile they want to
+## convert (v0.5 revision: no more "must be a completed-route fork" gate).
+## The per-network hub cap (GameBalance.HUB_CAP_PER_NETWORK) still applies,
+## checked live against the tile's connected road network rather than a
+## precomputed per-cell flag.
 func _do_build_hub(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
 	if cell_data == null or cell_data.kind != "route":
 		_show_toast("Select a route tile to build a hub.", true)
 		return
-	if not cell_data.get("junction", false):
-		if cell_data.get("hub_capped", false):
-			_show_toast("This road already has %d hubs -- the cap is reached." % GameBalance.HUB_CAP_PER_NETWORK, true)
-		else:
-			_show_toast("This tile isn't a completed-route fork yet.", true)
+	if SimulationEngine.network_at_hub_cap(_state, cell):
+		_show_toast("This road already has %d hub%s -- the cap is reached." % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"], true)
 		return
 	var cost: float = GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
 	if _state.balance < cost:
@@ -539,10 +552,6 @@ func _do_bulldoze(cell: Vector2i) -> void:
 	_show_toast("Tile cleared.")
 
 func _after_action() -> void:
-	var messages := SimulationEngine.check_junctions(_state, _nodes_by_pos)
-	for m in messages:
-		var sep := m.find(":")
-		_show_toast(m.substr(sep + 1), not m.begins_with("ok:"))
 	_render_grid()
 	_update_ui()
 
@@ -578,10 +587,10 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 		if cell_data.kind == "route":
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
 			text = "[b]%s Route[/b]\nCapacity: %d/day\nUpkeep ×%.1f" % [lvl.label, roundi(lvl.cap), lvl.upkeep_mult]
-			if cell_data.get("junction", false):
-				text += "\n[color=#4FA8A0]⚙ Completed-route fork -- Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
-			elif cell_data.get("hub_capped", false):
-				text += "\n[color=orange]⚠ Completed-route fork -- this road already has %d hubs[/color]" % GameBalance.HUB_CAP_PER_NETWORK
+			if SimulationEngine.network_at_hub_cap(_state, cell):
+				text += "\n[color=orange]⚠ This road already has %d hub%s -- the cap is reached[/color]" % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"]
+			else:
+				text += "\n[color=#4FA8A0]⚙ Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
 		elif cell_data.kind == "storage":
 			var st = GameBalance.STORAGE_TYPES[cell_data.stype]
 			text = "[b]%s[/b]\nUpkeep: §%d/day\nProtects next %d tiles at %d%% decay" % [st.name, roundi(st.upkeep), st.protection, roundi(st.mult * 100)]
@@ -682,10 +691,6 @@ func _render_grid() -> void:
 			else:
 				var shape := SimulationEngine.route_shape(pos, _state, _nodes_by_pos)
 				_add_route_block(world_pos, cell.level, shape.family, shape.facing)
-			if cell.get("junction", false):
-				_add_warning_ring(world_pos, Color("4FA8A0"))
-			elif cell.get("hub_capped", false):
-				_add_warning_ring(world_pos, Color("8B6B9C"))
 		elif cell.kind == "storage":
 			var marker: NodeMarker = STORAGE_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
@@ -867,21 +872,6 @@ func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	mesh_instance.material_override = material
 	_grid_visuals.add_child(mesh_instance)
 
-func _add_warning_ring(pos: Vector3, color: Color) -> void:
-	var mesh_instance := MeshInstance3D.new()
-	var mesh := TorusMesh.new()
-	mesh.inner_radius = 0.35
-	mesh.outer_radius = 0.5
-	mesh_instance.mesh = mesh
-	mesh_instance.position = pos + Vector3(0, 0.3, 0)
-	mesh_instance.rotation_degrees = Vector3(90, 0, 0)
-	var material := StandardMaterial3D.new()
-	color.a = 0.85
-	material.albedo_color = color
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mesh_instance.material_override = material
-	_grid_visuals.add_child(mesh_instance)
-
 func _add_congestion_marker(pos: Vector3, over: bool) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
@@ -1017,7 +1007,7 @@ func _build_ui() -> void:
 	_add_section_title(side_box, "BUILD -- HUBS")
 	var hub_note := Label.new()
 	hub_note.autowrap_mode = TextServer.AUTOWRAP_WORD
-	hub_note.text = "Completed-route forks are flagged automatically -- use Build Hub to place a Small Hub there when you want it. Each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
+	hub_note.text = "Use Build Hub to place a Small Hub on any existing route tile. Each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
 	hub_note.add_theme_font_size_override("font_size", 11)
 	side_box.add_child(hub_note)
 	_add_tool_button(side_box, "Build Small Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild")

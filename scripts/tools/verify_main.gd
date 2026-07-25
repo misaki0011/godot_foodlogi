@@ -68,6 +68,31 @@ func _report() -> void:
 	assert(state.has_connection(farm.grid_position, build_cell), "Dragging from a node must record an explicit connection to the new tile")
 	assert(is_equal_approx(state.balance, starting_balance - GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted")
 
+	# Route drag can only START from a source or a built hub (v0.5 revision) --
+	# pressing on a settlement or a plain (non-hub) route tile must not begin
+	# a drag, even though a drag from a valid anchor can still cross and link
+	# to either one.
+	var build_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(build_cell.x, 0, build_cell.y)) + Vector3.UP)
+	_main.call("_start_press", build_cell_screen)
+	assert(not _main.get("_press_eligible"), "Pressing on a plain route tile must not start a route drag")
+	_main.call("_start_press", village_screen)
+	assert(not _main.get("_press_eligible"), "Pressing on a settlement must not start a route drag")
+	_main.call("_start_press", farm_screen)
+	assert(_main.get("_press_eligible"), "Pressing on a source must start a route drag")
+
+	# Build a hub on the freshly-dragged route tile, then confirm a press on
+	# that hub tile now becomes a valid drag-start anchor too.
+	var hub_cell: Vector2i = farm.grid_position + Vector2i(-1, 0)
+	var hub_drag_path: Array[Vector2i] = [farm.grid_position, hub_cell]
+	_main.set("_drag_path", hub_drag_path)
+	_main.call("_recompute_drag_validity")
+	_main.call("_commit_drag")
+	_main.call("_do_build_hub", hub_cell)
+	assert(state.grid[hub_cell].kind == "hub", "Build Hub must work on any existing route tile, not just a flagged fork")
+	var hub_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(hub_cell.x, 0, hub_cell.y)) + Vector3.UP)
+	_main.call("_start_press", hub_cell_screen)
+	assert(_main.get("_press_eligible"), "Pressing on a built hub must start a route drag")
+
 	# Storage tool: only buildable on an existing route tile.
 	_main.call("_set_tool", "cool")
 	_main.call("_handle_click", build_cell)
@@ -80,6 +105,8 @@ func _report() -> void:
 	_main.call("_handle_click", build_cell)
 	assert(not state.grid.has(build_cell))
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
+	_main.call("_handle_click", hub_cell)
+	assert(not state.grid.has(hub_cell))
 
 	# Tapping a settlement (any tool) shows its info tip, not a dialog.
 	var tip_panel: PanelContainer = _main.get("_tip_panel")

@@ -6,10 +6,9 @@ class_name SimulationEngine
 ## node-to-node route-segment graph. Connectivity is never implied by mere
 ## tile adjacency: only an explicit GameState.connections edge (drawn by
 ## dragging, see Main._commit_drag) links two cells, so side-by-side but
-## unconnected routes stay separate networks (v0.5). Completed-route forks
-## are flagged (and capped per connected network), but building the hub there
-## is a separate, manual, player-paid action -- see check_junctions and
-## SPEC.md §4.4 (v0.4 item 14).
+## unconnected routes stay separate networks (v0.5). A Small Hub can be built
+## on any existing route tile (Main._do_build_hub), capped per connected
+## network -- see network_at_hub_cap and SPEC.md §4.4 (v0.5 revision).
 
 const DIRECTIONS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
@@ -213,67 +212,19 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 				changed = true
 	return kept
 
-## The number of delivery branches meeting at `pos`: how many of its
-## EXPLICITLY CONNECTED neighbors are either on an established route
-## (road/storage/hub) OR a source/settlement node. A merely-adjacent-but-
-## unconnected neighbor never counts (v0.5). Connected nodes count so that a
-## tile where a source's delivery fans out (source + 2+ roads), or where
-## multiple sources' deliveries converge, reads as a branch -- a node is an
-## endpoint of flow, and a tile sitting between an endpoint and 2+ roads is a
-## split/merge point.
-static func hub_branch_count(pos: Vector2i, established: Dictionary, nodes_by_pos: Dictionary, state: GameState) -> int:
-	var count := 0
-	for n in state.connections.get(pos, {}).keys():
-		if established.has(n) or nodes_by_pos.has(n):
-			count += 1
-	return count
-
-## Mutates state.grid: flags every tile where a COMPLETED route branches --
-## where a source's delivery splits toward multiple paths, or where multiple
-## sources' deliveries converge -- as a buildable junction (cell.junction =
-## true), unless its road network is already at HUB_CAP_PER_NETWORK hubs, in
-## which case it's marked hub_capped instead and can never receive one.
-## A route tile qualifies only when it (a) lies on an established
-## source->settlement route (see established_route_cells) and (b) has 3+
-## branches meeting at it (hub_branch_count: established road neighbors plus
-## adjacent source/settlement nodes). A straight run and an isolated/
-## unfinished road never qualify, but a road beside a source that also
-## continues in 2+ directions does. Building the Small Hub itself is a
-## separate, player-initiated action (see Main._do_build_hub, added v0.4 item
-## 14) -- this function never mutates state.balance or state.grid[pos].kind.
-## Returns "ok:"/"warn:" toast lines for newly-changed tiles.
-static func check_junctions(state: GameState, nodes_by_pos: Dictionary) -> Array[String]:
-	var messages: Array[String] = []
+## True when `pos`'s connected road network (see road_components) already has
+## HUB_CAP_PER_NETWORK built hubs, so Main._do_build_hub must refuse a new one
+## there. A hub can be built on any route tile (v0.5 revision -- no more
+## completed-route-fork requirement); this cap is the only remaining
+## constraint, and it's checked live rather than cached on the cell.
+static func network_at_hub_cap(state: GameState, pos: Vector2i) -> bool:
 	var comp_of := road_components(state)
-	var established := established_route_cells(state, nodes_by_pos)
-	var hub_counts := {}
-	for pos in state.grid.keys():
-		var cell = state.grid[pos]
-		if cell.kind == "hub":
-			var c = comp_of.get(pos, -1)
-			hub_counts[c] = hub_counts.get(c, 0) + 1
-	for pos in state.grid.keys():
-		var cell = state.grid[pos]
-		if cell.kind != "route":
-			continue
-		var is_fork: bool = established.has(pos) and hub_branch_count(pos, established, nodes_by_pos, state) >= 3
-		if is_fork:
-			var comp = comp_of.get(pos, -1)
-			var count: int = hub_counts.get(comp, 0)
-			if count >= GameBalance.HUB_CAP_PER_NETWORK:
-				cell.junction = false
-				if not cell.get("hub_capped", false):
-					messages.append("warn:Hub limit reached — this road already has %d hub%s. This junction stays capacity-limited." % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"])
-				cell.hub_capped = true
-			else:
-				cell.hub_capped = false
-				if not cell.get("junction", false):
-					messages.append("ok:Route fork — build a Small Hub here for §%d whenever you're ready." % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build))
-				cell.junction = true
-		else:
-			cell.junction = false
-			cell.hub_capped = false
-	return messages
+	var comp = comp_of.get(pos, -1)
+	var count := 0
+	for p in state.grid.keys():
+		if state.grid[p].kind == "hub" and comp_of.get(p, -2) == comp:
+			count += 1
+	return count >= GameBalance.HUB_CAP_PER_NETWORK
 
 ## Dijkstra minimizing cumulative freshness-decay weight; ties broken
 ## naturally by whichever path accumulates less decay first. A delivery path

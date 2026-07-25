@@ -4,7 +4,7 @@
 **Working title:** Fresh Routes  
 **Genre:** Cozy logistics / routing puzzle / light management  
 **Target platform:** PC / Steam (MVP prototype: browser)  
-**Core player actions:** Draw routes, place storage, build hubs at flagged completed-route forks  
+**Core player actions:** Draw routes (drag-only, starting from a source or hub), place storage, build hubs on any route tile  
 **Explicitly out of scope:** Vehicle management, cooking simulation, staff management, complex traffic simulation
 
 ---
@@ -31,6 +31,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 14. **Hub construction is now a manual, player-paid action, not automatic.** Two independently-drawn complete routes still merge into one road network the moment they touch (orthogonal adjacency is what defines a network, regardless of which route a tile was "meant" to belong to), and a touching tile that happens to qualify as a completed-route fork (item 13's rule) used to auto-build a Small Hub there and auto-charge the player, whether they wanted a hub at that spot or not -- this actively fought a common, entirely reasonable layout: two routes running side by side. The fork-detection and per-network hub cap are unchanged (still real constraints on connectivity), but building the hub itself is now the player's choice: a qualifying tile is flagged as a buildable junction instead of auto-converting, and a new Build Hub tool lets the player pay §150 to place a Small Hub there whenever they decide to. A junction in a network already at its hub cap is marked `hub_capped` and the Build Hub tool refuses it, exactly as the old auto-formation did. This reintroduces player-directed hub placement (reversing the v0.1→v0.2 decision) specifically to fix the auto-charge/auto-cap side effect of side-by-side routes. See §4.4.
 15. **Connectivity is explicit, drag-only, and tap no longer creates a tile at all.** Item 14 fixed the *charge*, but two side-by-side routes still merged into one road network just by touching -- physical adjacency was, and always had been, the entire definition of "connected" (pathfinding, hub-cap networks, established routes, upkeep discount, route shape). This item removes that assumption everywhere: a `GameState.connections` edge, drawn only by the player dragging across a tile-tile or tile-node boundary, is now what connects two cells; sitting next to something never does. Concretely: (a) tapping a route tile only cycles its shape (or shows a hint on empty ground) -- creating a new tile is drag-only, starting from a press on an existing node or route tile and building/connecting every cell the drag crosses, releasing to commit the whole path atomically, same as before; (b) dragging across an *existing* tile or node (no new tile needed) is a free, explicit "connect" gesture -- this is how two separately-built roads, or a road and a node it happens to sit beside, get linked on purpose; (c) `SimulationEngine.build_graph`, `road_components`, `established_route_cells`, `hub_branch_count`, `route_shape`, and the hub upkeep-discount check all consult `state.connections` instead of raw grid/node adjacency. Bulldozing a tile removes every connection edge touching it. Other tools (storage, hub, upgrade, bulldoze) are unaffected -- they still act on a single existing route tile with one tap. See §2.1, §4.1, §4.4, §16.
 16. **The established-route overlay marks its two ends distinctly.** The gold line from item 10 read as one uniform strand end to end; now the source end shows a green cone arrow pointing the direction delivery actually flows (source → first tile) and the settlement end shows a red bar instead of gold, so start and finish are readable at a glance without tracing the whole line. Purely visual -- no simulation or cost change. See §4.1.
+17. **A hub can be built on any route tile, not just a flagged completed-route fork.** This drops item 12/13's "3+ branch, established-route" requirement entirely: the player draws a route, picks the Build Hub tool, and clicks any existing route tile -- straight, isolated, unfinished, it doesn't matter -- to place a Small Hub there for §150. The per-network cap (still 2 hubs, item 11) is the only remaining constraint, checked live against the tile's connected road network rather than a precomputed `junction`/`hub_capped` flag. This simplifies a rule that had grown through several revisions (items 4, 10, 12, 13) into something the player can reliably predict: any road, anywhere, up to two hubs per network. See §4.4.
+18. **A route drag can only start from a source or a built hub.** Previously a drag could start from any existing node or route tile (item 15), letting the player extend a route from any point already on the map. Routes must now always trace back to a supply point: press-and-hold is only a valid drag anchor on a source node or a hub tile, never on a settlement or a plain route tile. The drag itself is unrestricted once started -- it can still cross and link to any settlement or route tile along the way -- only the starting cell is restricted. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -83,12 +85,12 @@ The player is not a driver, chef, or factory worker. The player is a regional fo
 
 The player only needs a few actions:
 
-1. Draw a route.
+1. Draw a route (drag-only, starting from a source or a built hub).
 2. Place storage on an existing route.
-3. Build a hub at a flagged completed-route fork (v0.4 item 14: manual, capped at 2 per network).
+3. Build a hub on any existing route tile (v0.5 item 17: manual, capped at 2 per network).
 4. Upgrade or remove route and hub infrastructure.
 
-Depth comes from food freshness, storage choice, route length, hub-forming junctions, terrain, and settlement demand.
+Depth comes from food freshness, storage choice, route length, hub placement, terrain, and settlement demand.
 
 ### 2.2 Food freshness is the main pressure
 
@@ -272,7 +274,7 @@ The route tile is established only when both rules hold:
 
 If either check fails, nothing is created and no treasury is deducted.
 
-**The hub cap no longer gates placement (revised in v0.4).** Hubs are no longer created atomically with the route tile; they form afterward, only where a *completed* route branches (see §4.4). So a placement is never rejected for creating or over-filling a junction — the road is always buildable, and any resulting fork forms a hub (or stays `hub_capped`) once the route is complete.
+**The hub cap no longer gates placement (revised in v0.4).** Hubs are a separate, player-initiated action on any existing route tile (see §4.4), never created as part of placing the route tile itself. So a route placement is never rejected on hub-cap grounds — the road is always buildable, and building a hub on any of its tiles afterward is a distinct decision subject only to the per-network cap.
 
 ### Route tile directional shape (added in v0.4, revised in v0.4)
 
@@ -307,12 +309,12 @@ see "Explicit connections" below):
   running along that neighbor's axis.
 - With no real connected neighbor at all, the default is a plain left-right
   straight tile.
-- Three or more real connections are unchanged from existing behavior:
-  either the tile is flagged as a buildable junction for the Build Hub tool
-  (§4.4), or, if the network is at its hub cap, the tile stays a plain
-  `hub_capped` tile with today's rendering.
+- Three or more real connections render the same as any other route tile --
+  shape no longer has anything to do with hub eligibility (v0.5 item 17): any
+  route tile, regardless of connection count, can be built into a hub with
+  the Build Hub tool, subject only to the per-network cap (§4.4).
 
-### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5)
+### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5, drag-start restricted in v0.5 item 18)
 
 **Connectivity is never implied by two cells simply sitting next to each
 other.** Two route tiles, or a route tile and a node, are only linked for
@@ -328,10 +330,11 @@ route asked for.
 explains that a drag is needed) -- it never places or connects a new tile.
 All route creation is drag-only:
 
-1. Press and hold on an existing anchor -- a node, or an already-built route
-   tile -- for a short moment (roughly a third of a second) without
-   releasing to switch into drag mode. A press anywhere else (empty ground)
-   is not drag-eligible.
+1. Press and hold on a valid anchor -- a source node, or a built hub tile --
+   for a short moment (roughly a third of a second) without releasing to
+   switch into drag mode. A press on a settlement, a plain route tile, or
+   empty ground is not drag-eligible: every route must trace back to a
+   supply point (v0.5 item 18).
 2. Dragging the pointer traces a candidate path across further cells, drawn
    live as a translucent line so the player can see it before committing to
    anything.
@@ -594,23 +597,13 @@ A hub is not primarily for freshness. It is for network organization, flow visib
 - Increase junction flow capacity.
 - Encourage regional planning.
 
-### Junction flagging and manual hub construction (revised in v0.4 item 14)
+### Manual hub construction on any route tile (revised in v0.4 item 14, simplified in v0.5 item 17)
 
-A tile is flagged as a **buildable junction** wherever a **completed route branches** -- where a source's delivery splits toward multiple paths, or where multiple sources' deliveries converge. A route tile qualifies only when both hold:
+A Small Hub can be built on **any existing route tile** with a dedicated **Build Hub** tool: the player draws a route first, picks the tool, then clicks the route tile they want to convert, paying §150. There is no "completed-route fork" or branch-count requirement any more -- a plain straight run, an isolated stub, or an unfinished route that reaches no settlement are all valid hub sites, exactly like any other route tile.
 
-1. It lies on an **established source→settlement route** -- a road network that actually connects at least one source to at least one settlement, with dead-end stubs pruned out (see §4.1's established-route overlay and ROUTE-08).
-2. **3 or more branches meet at it** -- counting its explicitly-connected neighbours that are on an established route AND any explicitly-connected source/settlement node (v0.5: adjacency alone is never enough, see the "Explicit connections" rule in §4.1). A connected node counts because a source feeding a tile that also continues in 2+ road directions is a split point, and a tile where several road arms converge on a settlement is a merge point.
+The **only** remaining constraint is the per-network hub cap (below), checked live against the tile's connected road network at the moment the player clicks -- there's no precomputed `junction`/`hub_capped` flag to go stale. If the network is already at its cap, the Build Hub tool refuses with an explanation instead of charging anything.
 
-A plain straight run (2 through-connections) and an unfinished/isolated road (not an established route) are never flagged; a road sitting beside a source but only continuing one way is the route's start, not a branch, so it isn't flagged either.
-
-Flagging happens **after** a build/erase action (or a simulated day), not as part of placing the tile, and never costs anything by itself:
-
-1. Recompute which tiles are on established routes and which of those are forks.
-2. For each fork, determine its road network and current (actually-built) hub count.
-3. If the network is under its hub cap, mark the tile `junction` (buildable, no charge yet); if the network is already at the cap, mark it `hub_capped` instead.
-4. The player builds the Small Hub with a dedicated **Build Hub** tool, tapping a flagged junction tile to pay §150. Nothing is auto-built or auto-charged just by completing a route -- two independently-drawn routes can now touch or run side by side without being forced into (and charged for) a junction neither one needed. `hub_capped` tiles refuse the Build Hub tool with an explanation.
-
-**Route placement itself is never blocked by the hub cap**, and now never blocked by hub cost either -- the player can always draw roads; a fork is simply flagged (or capped) once the route is complete, and building the hub there is entirely optional.
+**Route placement itself is never blocked by the hub cap**, and never blocked by hub cost either -- the player can always draw roads; building a hub anywhere on one is a separate, always-available action subject only to the cap.
 
 ```text
 hub_adjusted_route_upkeep = adjacent_route_upkeep * (1 - hub_discount)
@@ -621,7 +614,7 @@ net_savings = route_discount_savings - hub_daily_upkeep
 
 Each connected road network can support at most **2 built hubs**. A network is a maximal set of orthogonally-connected built tiles (route, storage, and hub). Source and settlement nodes are terminal endpoints for flow, not transit tiles, so they never join two road groups into one network: **two road groups that touch only a shared source/settlement are separate networks with separate hub budgets** (revised in v0.4). A delivery can't cross a node, so the cap can't leak across one -- building a junction on a small road hanging off a source is never blocked just because some other road on that same source is already at the cap.
 
-- A completed-route fork beyond the cap stays a plain, capacity-limited route tile marked `hub_capped` -- the Build Hub tool refuses it there, and no cost is charged for the flag itself.
+- Any route tile in a network already at the cap stays a plain, capacity-limited route tile -- the Build Hub tool refuses it there, and no cost is charged for the attempt.
 - The player receives a clear explanation that the network has reached its hub cap.
 - Route placement is never blocked by the cap; the player can reroute, keep networks separate, or remove an existing hub-bearing branch to free budget.
 - Existing networks created by older versions or imported data should be validated separately; the MVP does not need migration logic.
@@ -665,7 +658,7 @@ Rules:
 
 ### Hub placement decision
 
-A hub should usually become worthwhile when it serves 3 or more connections or when it organizes several long routes. As of v0.4 item 14, the player places it manually with the Build Hub tool once a tile is flagged as a junction -- they choose both whether to create the junction (by how they route) and whether to actually pay for the hub there.
+A hub should usually become worthwhile when it serves 3 or more connections or when it organizes several long routes, but nothing enforces that -- as of v0.5 item 17, the player can build a Small Hub on any existing route tile with the Build Hub tool, so the decision of *where* it's actually worth the §150 and daily upkeep is entirely theirs.
 
 Direct route network:
 
@@ -1244,12 +1237,12 @@ Estimated net value: +62/day
 
 ### 10.4 Hub information UI
 
-As of v0.4 item 14 there is a manual hub-placement tool (Build Hub) -- see "Junction flagging and manual hub construction" under §4.4. Before route construction, the route preview should still warn when the new tile would become a flagged junction and show what a Small Hub would cost there, so the player can decide whether to build one afterward.
+As of v0.5 item 17 there is a manual hub-placement tool (Build Hub) -- see "Manual hub construction on any route tile" under §4.4. Selecting an existing route tile with the Build Hub tool should show what a Small Hub would cost there and the network's current hub count, so the player can decide whether it's worth building.
 
 ```text
-This junction would flag a buildable fork
+Build a Small Hub on this route tile?
 Route: 8
-Small Hub (optional, via Build Hub): 150
+Small Hub (via Build Hub): 150
 Network hubs if built: 2 / 2
 ```
 
@@ -1383,14 +1376,14 @@ One region with:
 - Normal Storage
 - Cool Storage
 - Freeze Storage
-- Hub — built manually at a flagged completed-route fork, always as a Small Hub (see §4.4). Regional Hub is a manual upgrade path from an existing Small Hub, not a placeable building in its own right.
+- Hub — built manually on any existing route tile, always as a Small Hub (see §4.4). Regional Hub is a manual upgrade path from an existing Small Hub, not a placeable building in its own right.
 
 ### MVP systems
 
-- Route drawing
+- Route drawing (drag-only, starting from a source or a built hub)
 - Route upkeep
 - Route capacity (tight enough to be a routine bottleneck, not an edge case — see §4.1)
-- Junction flagging at completed-route forks with manual hub construction and a per-connected-network cap of 2 (see §4.4)
+- Manual hub construction on any route tile, with a per-connected-network cap of 2 (see §4.4)
 - Settlement-only delivery destinations; sources and non-target settlements cannot be transit nodes
 - Demand-pull food assignment from sources to settlements
 - Freshness decay
@@ -1444,13 +1437,12 @@ automatically constructs a bridge for an additional 40. Basic upgrades are
 Dirt -> Paved -> Main routes and (hub-upgrade only) Small -> Regional hubs.
 Storage types are separate buildings rather than an upgrade chain.
 
-A tile is flagged as a buildable junction after a route is built, at each
-tile where a completed source→settlement route branches into 3+
-established-route neighbours; the player then builds a Small Hub (150)
-there manually with the Build Hub tool, capped at 2 hubs per road network.
-Placing a route tile is only gated by its own cost (route plus optional
-bridge); the hub cap never blocks placement, and an over-cap fork stays a
-plain `hub_capped` tile that the Build Hub tool refuses (§4.4).
+A Small Hub (150) can be built manually with the Build Hub tool on any
+existing route tile, capped at 2 hubs per road network -- no fork or
+branch-count requirement. Placing a route tile is only gated by its own cost
+(route plus optional bridge); the hub cap never blocks placement, and once a
+network is at its cap the Build Hub tool simply refuses any further tile on
+it (§4.4).
 
 The first playable version has no save persistence, delivery animation,
 chapter tutorial sequence, Central Hub, source upgrades, or random events. It
