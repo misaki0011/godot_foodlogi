@@ -140,7 +140,8 @@ const ROUTE_END_COLOR := Color(0.93, 0.24, 0.28, 0.95)
 ## fraction of the step between them: 0.5 is exactly on the shared tile edge,
 ## so this leaves the cap just inside the road tile. Keeping the caps out at
 ## the edge (rather than at the tile center) is what makes them read as the
-## ends of the strand instead of as two more dots along it.
+## ends of the strand instead of as two more dots along it. The gold line runs
+## exactly this far and no further, so it spans arrow to bar.
 const ROUTE_CAP_EDGE_T := 0.44
 ## Lifted a hair above the gold line (which already floats ESTABLISHED_ROUTE_Y
 ## above the tile) so the line never z-fights the cap drawn on top of it.
@@ -392,8 +393,9 @@ func _add_established_marker(pos: Vector3) -> void:
 	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
 	_grid_visuals.add_child(mesh_instance)
 
-## A thin gold bar joining two adjacent established points (tile-tile or
-## tile-node); `a` and `b` are one grid step apart, so it's axis-aligned.
+## A thin gold bar joining two established points: tile-tile (a full grid step
+## apart) or tile-cap (a partial step out to the tile edge where a strand ends).
+## Either way the two lie on one axis, so the bar needs no rotation.
 func _add_established_segment(a: Vector3, b: Vector3) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
@@ -677,8 +679,9 @@ func _render_established_routes() -> void:
 	if established.is_empty():
 		return
 	# Draw a dot on each established tile and a bar to each established
-	# orthogonal neighbor (tile or node), so the marks read as one connected
-	# line running through the road and into the source/settlement it links.
+	# orthogonal neighbor, so the marks read as one connected line running the
+	# length of the road -- from the green start arrow at its source to the red
+	# end bar at its settlement (see _add_route_cap).
 	for cell in established:
 		var here: Vector3 = _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
 		_add_established_marker(here)
@@ -692,29 +695,29 @@ func _render_established_routes() -> void:
 					_add_established_segment(here, there)
 			elif _nodes_by_pos.has(n):
 				# Tile->node: a source/settlement isn't an established tile and
-				# never iterates to draw its own half, so draw the bar into it
-				# from ANY direction -- this is what makes the line actually
-				# start from the source (and reach the settlement) instead of
-				# stopping at the node-adjacent tile.
-				_add_established_segment(here, there)
-				_add_route_cap(here, there, _nodes_by_pos[n])
+				# never iterates to draw its own half, so this side is drawn
+				# from ANY direction. The strand's end is its cap on the shared
+				# tile edge, so the bar runs from this tile exactly up to that
+				# cap and stops -- the line is the stretch from the green arrow
+				# to the red bar, and never runs on into the node's own marker.
+				var cap: Vector3 = here.lerp(there, ROUTE_CAP_EDGE_T)
+				_add_established_segment(here, cap)
+				_add_route_cap(cap, there - here, _nodes_by_pos[n])
 
-## The strand's two ends: a green arrow on the tile edge facing a source (food
-## starts here, pointing the way it travels) and a red bar across the road on
-## the tile edge facing a settlement (food ends here). Both sit out at the
-## shared tile edge rather than at the tile's center, so each end of a route is
-## obvious even where several strands run side by side. A tile can touch more
-## than one node, in which case it gets one cap per node.
-func _add_route_cap(tile_center: Vector3, node_center: Vector3, node_data: NodeData) -> void:
-	var at: Vector3 = tile_center.lerp(node_center, ROUTE_CAP_EDGE_T)
-	at.y += ROUTE_CAP_LIFT
-	# Unit step from the road tile toward the node it caps against.
-	var toward_node := (node_center - tile_center).normalized()
+## The strand's two ends, drawn at `at` (the point on the tile edge where the
+## gold line stops): a green arrow where the road touches a source (food starts
+## here, pointing the way it travels) and a red bar across the road where it
+## touches a settlement (food ends here). `step_to_node` is the vector from the
+## road tile to the node it caps against. A tile can touch more than one node,
+## in which case it gets one cap per node.
+func _add_route_cap(at: Vector3, step_to_node: Vector3, node_data: NodeData) -> void:
+	var toward_node := step_to_node.normalized()
+	var pos := at + Vector3(0, ROUTE_CAP_LIFT, 0)
 	if node_data.node_type == GameEnums.NodeType.SOURCE:
 		# Food flows out of a source, so the arrow points away from it.
-		_add_route_start_cap(at, -toward_node)
+		_add_route_start_cap(pos, -toward_node)
 	else:
-		_add_route_end_cap(at, toward_node)
+		_add_route_end_cap(pos, toward_node)
 
 ## An arrowhead pointing along `forward`, so the start cap also shows which way
 ## the food travels. A PrismMesh is a triangle in its local X/Y plane (apex at
