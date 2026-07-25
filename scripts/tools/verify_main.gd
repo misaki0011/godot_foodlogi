@@ -1,10 +1,11 @@
 extends SceneTree
 
 ## One-shot dev check (not part of the game): loads Main.tscn, lets it run
-## _ready() for one frame, and asserts terrain + markers were populated and
-## that clicking behaves like fresh-routes-mvp.html (single-tile placement,
-## tapping a source/settlement shows its info tip instead of building or
-## opening a dialog).
+## _ready() for one frame, and asserts terrain + markers were populated;
+## that route creation is drag-only (v0.5) and explicitly connects the new
+## tile to the anchor it was dragged from, never merely by adjacency; and
+## that tapping a source/settlement shows its info tip instead of building or
+## opening a dialog.
 ## Run via: godot --headless --script res://scripts/tools/verify_main.gd
 
 var _main: Node
@@ -45,14 +46,26 @@ func _report() -> void:
 	assert(_main.call("_screen_to_cell", farm_screen) == farm.grid_position)
 	assert(_main.call("_screen_to_cell", village_screen) == village_a.grid_position)
 
-	# Route tool: a single click places exactly one tile, adjacent to a node.
+	# Route tool: tap-only creation is retired (v0.5) -- a plain click on
+	# empty ground must build nothing.
 	_main.call("_set_tool", "route")
 	var state: GameState = _main.get("_state")
 	var starting_balance: float = state.balance
 	var build_cell: Vector2i = farm.grid_position + Vector2i(1, 0)
 	_main.call("_handle_click", build_cell)
-	assert(state.grid.size() == 1, "A single click must place exactly one route tile")
+	assert(state.grid.is_empty(), "A plain tap on empty ground must never place a tile")
+	assert(is_equal_approx(state.balance, starting_balance), "A plain tap must never charge the player")
+
+	# Dragging from the farm node to an adjacent empty cell builds exactly one
+	# new tile AND records an explicit connection back to the node -- mere
+	# adjacency is never enough (see GameState.connections).
+	var drag_path: Array[Vector2i] = [farm.grid_position, build_cell]
+	_main.set("_drag_path", drag_path)
+	_main.call("_recompute_drag_validity")
+	_main.call("_commit_drag")
+	assert(state.grid.size() == 1, "A drag from an existing anchor must place exactly one route tile")
 	assert(state.grid[build_cell].kind == "route")
+	assert(state.is_connected(farm.grid_position, build_cell), "Dragging from a node must record an explicit connection to the new tile")
 	assert(is_equal_approx(state.balance, starting_balance - GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted")
 
 	# Storage tool: only buildable on an existing route tile.

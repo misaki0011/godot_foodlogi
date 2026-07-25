@@ -1,13 +1,16 @@
 extends Node3D
 
 ## Fresh Routes -- 3D isometric port of fresh-routes-mvp.html. The world is
-## a tile grid (see GameState.grid / SimulationEngine): clicking places one
-## tile at a time per the active tool. Completed-route forks are flagged
-## automatically but a Small Hub is only built there when the player picks
-## the Build Hub tool and pays for it (v0.4 item 14; see SPEC.md §4.4).
-## Hovering (desktop) or tapping (mobile, no dialog) any tile or node
-## shows a live info tooltip. A top-left panel provides touch zoom/pan
-## controls for exploring the map on mobile.
+## a tile grid (see GameState.grid / SimulationEngine). Routes are drag-only
+## (v0.5): press-and-hold on an existing node or route tile, then drag to
+## build and explicitly connect new tiles -- physical adjacency alone never
+## implies a connection (see GameState.connections). Other tools (storage,
+## hub, upgrade, bulldoze) remain a single tap on an existing route tile.
+## Completed-route forks are flagged automatically but a Small Hub is only
+## built there when the player picks the Build Hub tool and pays for it
+## (v0.4 item 14; see SPEC.md §4.4). Hovering (desktop) or tapping (mobile,
+## no dialog) any tile or node shows a live info tooltip. A top-left panel
+## provides touch zoom/pan controls for exploring the map on mobile.
 
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
@@ -48,7 +51,7 @@ const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Tap an empty tile adjacent to a node or existing route to place one, or tap a built tile to flip its shape. Press and hold, then drag, to preview a whole path -- release to build it (nothing is built if the path isn't valid).",
+	"route": "Press and hold on an existing node or route tile, then drag to an adjacent tile to build (or link to) it -- release to commit the whole path. Nothing connects just by touching; every link is a drag. Tap a built route tile (without dragging) to flip its shape.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
@@ -91,34 +94,36 @@ var _map_bounds_max: Vector2
 var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
-## ---------- route draw: tap-to-cycle vs. hold-and-drag ----------
-## A press on a non-node cell while the "route" tool is active starts out
-## eligible for hold-to-drag; _process() promotes it to _drag_active once
-## held past HOLD_TO_DRAG_MSEC without releasing. A release before that
-## threshold -- or a release without ever dragging to a second cell -- is a
-## normal tap (dispatched to _handle_click as before). This is why a plain
-## tap's build/cycle action now fires on release rather than on press --
-## until release (or the hold threshold), there's no way to know whether
-## the gesture will turn into a drag.
+## ---------- route draw: tap-to-cycle vs. drag-to-build-and-connect ----------
+## v0.5: tile creation is drag-only -- tapping never places a new tile.
+## Connectivity is never implied by adjacency (GameState.connections):
+## a press must start ON an existing anchor (a node or an already-built
+## tile) while the "route" tool is active, since every link, including a new
+## tile's link back to what it extends from, has to be an explicit drag.
+## _process() promotes an eligible press to _drag_active once held past
+## HOLD_TO_DRAG_MSEC without releasing. A release before that threshold --
+## or a release without ever dragging to a second cell -- is a plain tap on
+## the anchor itself: for a node that's the usual info tip, for an existing
+## route tile that's the shape-cycle tap (see _do_tap_route_tile), never a
+## build.
 ##
-## While dragging, nothing is written to _state.grid: _drag_path just
-## records every cell the pointer has crossed, _recompute_drag_validity()
-## re-derives which of those are real new tiles to build (skipping nodes
-## and already-built cells as harmless pass-through waypoints) and
-## whether the whole path is affordable/connected/under the hub cap, and
-## _update_drag_preview() draws a translucent line so the player can see
-## the path (green) or why it's rejected (red) before committing anything.
-## The actual tiles -- with their final, correct auto-tile shapes, since
-## _render_grid() always recomputes those from the real grid -- are only
-## written to _state.grid on release, and only if the whole path is valid;
-## an invalid path builds nothing at all, matching ROUTE-01's single-tile
-## transactional placement.
+## While dragging, nothing is written to _state.grid or .connections:
+## _drag_path just records every cell the pointer has crossed (path[0] is
+## always the pre-existing anchor), _recompute_drag_validity() re-derives,
+## for every consecutive pair, whether the second cell is a genuinely new
+## tile to build (_drag_new_cells) and records the pair as a connection to
+## make (_drag_new_connections) -- an existing tile/node visited mid-drag is
+## a free link, not a new build. _update_drag_preview() draws a translucent
+## line so the player can see the path (green) or why it's rejected (red,
+## only for affordability) before committing anything. Tiles and connections
+## are only written on release, and only if the whole path is valid.
 var _press_eligible := false
 var _press_cell := Vector2i(-1, -1)
 var _press_start_msec := 0
 var _drag_active := false
 var _drag_path: Array[Vector2i] = []
 var _drag_new_cells: Array[Vector2i] = []
+var _drag_new_connections: Array[Array] = [] # [[Vector2i, Vector2i], ...]
 var _drag_valid := true
 var _drag_invalid_reason := ""
 var _drag_preview_visuals: Node3D
@@ -200,18 +205,20 @@ func _start_press(screen_position: Vector2) -> void:
 	_press_cell = cell
 	_press_start_msec = Time.get_ticks_msec()
 	_drag_active = false
-	# Only a route-tool press on a real, buildable (non-node) cell can turn
-	# into a drag -- other tools and node taps behave exactly as a normal
-	# click on release, same as before hold-to-drag existed.
-	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and _node_at(cell) == null
+	# A drag can only start FROM an existing anchor -- a node or an already-
+	# built tile -- never from empty ground, since every new tile's
+	# connection back to the network has to be an explicit drag (v0.5).
+	# Other tools behave exactly as a normal click on release.
+	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (_node_at(cell) != null or _state.grid.has(cell))
 
 func _end_press(screen_position: Vector2) -> void:
 	if _drag_active:
 		_drag_active = false
 		_press_eligible = false
 		# A hold-then-release without ever dragging to a second cell is a
-		# plain tap on the pressed cell (build, or cycle its shape) --
-		# holding still shouldn't behave differently from tapping.
+		# plain tap on the anchor (info tip for a node, shape-cycle for an
+		# existing route tile) -- holding still shouldn't behave differently
+		# from tapping.
 		if _drag_path.size() > 1:
 			_commit_drag()
 		else:
@@ -258,64 +265,68 @@ func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 		result.append(current)
 	return result
 
-## Re-derives, from scratch, which cells in _drag_path are real new tiles to
-## build (_drag_new_cells) and whether the whole path is valid: every new
-## cell must connect to the existing network or an earlier tile already
-## queued in this same drag, and the total cost must fit the current
-## treasury. Node cells and cells already built are harmless pass-through
-## waypoints, not failures. The hub cap never blocks a placement -- a
-## completed-route fork is only flagged (or capped) after the route is
-## built, and building the hub itself is a separate manual action (see
-## SimulationEngine.check_junctions). Runs against a scratch grid copy --
-## _state.grid is never touched here.
+## Re-derives, from scratch, which consecutive pairs in _drag_path are new
+## connections to make (_drag_new_connections) and which of their second
+## cells are genuinely new tiles to build (_drag_new_cells), plus whether the
+## whole path is affordable. path[0] is always a pre-existing anchor (see
+## _start_press), so every step from here on is inherently a valid link --
+## there's no separate "is this adjacent" check anymore, since the path
+## itself IS the connection being drawn. A step onto an existing tile or node
+## (mid-drag pass-through) is a free link, no new tile, no cost. Runs against
+## a scratch grid copy -- _state.grid/.connections are never touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
 	_drag_new_cells.clear()
+	_drag_new_connections.clear()
 	var temp_grid: Dictionary = _state.grid.duplicate()
 	var total_cost := 0.0
-	for cell in _drag_path:
+	for i in range(1, _drag_path.size()):
+		var prev: Vector2i = _drag_path[i - 1]
+		var cell: Vector2i = _drag_path[i]
+		if prev == cell:
+			continue
+		_drag_new_connections.append([prev, cell])
 		if _node_at(cell) or temp_grid.has(cell):
 			continue
-		var adjacent := false
-		for n in _neighbor_cells(cell):
-			if temp_grid.has(n) or _nodes_by_pos.has(n):
-				adjacent = true
-				break
-		if not adjacent:
-			_drag_valid = false
-			_drag_invalid_reason = "That path isn't connected -- try dragging more slowly."
-			break
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
 		temp_grid[cell] = {"kind": "route", "level": "dirt"}
 		_drag_new_cells.append(cell)
-	if _drag_valid and total_cost > _state.balance:
+	if total_cost > _state.balance:
 		_drag_valid = false
 		_drag_invalid_reason = "Not enough treasury for the whole path (§%d needed)." % roundi(total_cost)
 
-## Writes every queued new tile from a valid drag path to _state.grid in one
+## Writes every queued new tile and connection from a valid drag path in one
 ## batch, then runs the usual post-build pass once for the whole gesture
 ## (hub formation, re-render -- which recomputes each tile's shape from its
-## final real adjacency, so the path renders with correct shapes exactly as
-## if each tile had been tapped individually). An invalid path, or one with
-## nothing new to build, places nothing at all.
+## final real connections, so the path renders with correct shapes exactly as
+## if each tile had been dragged individually). An invalid path, or one with
+## nothing new to build or connect, does nothing at all.
 func _commit_drag() -> void:
 	if not _drag_valid:
 		_show_toast(_drag_invalid_reason if _drag_invalid_reason != "" else "That path is invalid -- nothing built.", true)
 		return
-	if _drag_new_cells.is_empty():
-		_show_toast("Nothing new to build along that path.", true)
+	if _drag_new_cells.is_empty() and _drag_new_connections.is_empty():
+		_show_toast("Nothing new to build or connect along that path.", true)
 		return
 	for cell in _drag_new_cells:
 		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
 		_state.grid[cell] = {"kind": "route", "level": "dirt"}
-	_show_toast("Route drawn: %d tile%s." % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	for pair in _drag_new_connections:
+		_state.connect(pair[0], pair[1])
+	var parts: Array[String] = []
+	if not _drag_new_cells.is_empty():
+		parts.append("%d new tile%s" % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	if not _drag_new_connections.is_empty():
+		parts.append("%d connection%s" % [_drag_new_connections.size(), "" if _drag_new_connections.size() == 1 else "s"])
+	_show_toast("Built %s." % " and ".join(parts))
 	_after_action()
 
 func _clear_drag_preview() -> void:
 	_clear_children(_drag_preview_visuals)
 	_drag_path.clear()
 	_drag_new_cells.clear()
+	_drag_new_connections.clear()
 
 ## Translucent green (valid) or red (invalid) boxes on every crossed cell,
 ## connected by thin bars between orthogonal neighbors, so the path reads
@@ -395,7 +406,7 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	_tip_panel.visible = false
 	match _tool:
 		"route":
-			_do_build_route(cell)
+			_do_tap_route_tile(cell)
 		"upgrade":
 			_do_upgrade_route(cell)
 		"normal", "cool", "freeze":
@@ -410,26 +421,20 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 
 const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (North-East)", "se": "corner (South-East)", "sw": "corner (South-West)", "nw": "corner (North-West)"}
 
-func _do_build_route(cell: Vector2i) -> void:
-	if _state.grid.has(cell):
-		var cell_data = _state.grid[cell]
-		if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
-			var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
-			cell_data.facing = facing
-			_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))
-			return
-		_show_toast("Already built here.", true)
+## A plain tap (no drag) on a route tile only cycles its shape -- creating a
+## new tile, or linking to one, always requires a drag (v0.5: see
+## _start_press/_commit_drag). Tapping empty ground just explains that.
+func _do_tap_route_tile(cell: Vector2i) -> void:
+	if not _state.grid.has(cell):
+		_show_toast("Press and hold on an existing node or route tile, then drag here to build and connect a new one.", true)
 		return
-	if not _adjacent_to_network(cell):
-		_show_toast("Route must connect to a node or existing route.", true)
+	var cell_data = _state.grid[cell]
+	if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
+		var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
+		cell_data.facing = facing
+		_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))
 		return
-	var cost := SimulationEngine.route_build_cost(cell, _map_data)
-	if _state.balance < cost:
-		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
-		return
-	_state.balance -= cost
-	_state.grid[cell] = {"kind": "route", "level": "dirt"}
-	_show_toast("Route built for §%d." % roundi(cost))
+	_show_toast("Already built here.", true)
 
 func _do_upgrade_route(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
@@ -499,6 +504,7 @@ func _do_bulldoze(cell: Vector2i) -> void:
 		_show_toast("Nothing to remove here.", true)
 		return
 	_state.grid.erase(cell)
+	_state.disconnect_all(cell)
 	_show_toast("Tile cleared.")
 
 func _after_action() -> void:
@@ -684,6 +690,8 @@ func _render_established_routes() -> void:
 		_add_established_marker(here)
 		for d in DIRECTIONS:
 			var n: Vector2i = cell + d
+			if not _state.is_connected(cell, n):
+				continue
 			var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
 			if established.has(n):
 				# Tile<->tile: draw one bar per undirected pair (east/south only),
@@ -846,21 +854,7 @@ func _add_congestion_marker(pos: Vector3, over: bool) -> void:
 
 ## ---------- grid/graph helpers ----------
 
-func _adjacent_to_network(cell: Vector2i) -> bool:
-	for n in _neighbor_cells(cell):
-		if _state.grid.has(n) or _nodes_by_pos.has(n):
-			return true
-	return false
-
 const DIRECTIONS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-
-func _neighbor_cells(cell: Vector2i) -> Array[Vector2i]:
-	var result: Array[Vector2i] = []
-	for d in DIRECTIONS:
-		var n := cell + d
-		if _cell_in_bounds(n):
-			result.append(n)
-	return result
 
 func _screen_to_cell(screen_position: Vector2) -> Vector2i:
 	var origin := _camera.project_ray_origin(screen_position)

@@ -29,6 +29,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 12. **Hubs form at completed-route forks, not from raw connection degree; route placement is never blocked by the cap.** This supersedes items 4/10's degree rules and the earlier "atomic route+hub placement" behaviour (§4.4). A Small Hub now auto-forms only where a *finished* delivery route branches: a tile that lies on an established source→settlement route AND has 3+ neighbours that are also on an established route. Adjacent sources/settlements no longer count (a node is a terminal endpoint, not a branch), so a straight road, an unfinished/isolated road, or a road merely sitting beside a source never forms a hub — fixing hubs that were appearing on straight roads next to sources. Because hubs form after the route is built, drawing roads is never blocked by the hub cap; an over-cap fork just stays a plain `hub_capped` tile. See §4.4, §4.1.
 13. **Hubs mark completed-route split/merge points, and deliveries never transit a node.** Two changes. First, this refines item 12's fork rule: a hub is where a source's delivery splits toward multiple paths or where multiple sources converge, so on an *established* source→settlement route a tile counts a branch for each established-route neighbour AND each adjacent source/settlement node — a source beside a tile that also continues in 2+ road directions now forms a hub (the "established route" gate still keeps hubs off straight/unfinished roads). Second, delivery pathfinding no longer routes *through* a source or settlement: a node is only ever a path's start or end, never a transit shortcut, so grain can no longer reach a settlement by passing through another node in the middle. See §4.4, §4.7.
 14. **Hub construction is now a manual, player-paid action, not automatic.** Two independently-drawn complete routes still merge into one road network the moment they touch (orthogonal adjacency is what defines a network, regardless of which route a tile was "meant" to belong to), and a touching tile that happens to qualify as a completed-route fork (item 13's rule) used to auto-build a Small Hub there and auto-charge the player, whether they wanted a hub at that spot or not -- this actively fought a common, entirely reasonable layout: two routes running side by side. The fork-detection and per-network hub cap are unchanged (still real constraints on connectivity), but building the hub itself is now the player's choice: a qualifying tile is flagged as a buildable junction instead of auto-converting, and a new Build Hub tool lets the player pay §150 to place a Small Hub there whenever they decide to. A junction in a network already at its hub cap is marked `hub_capped` and the Build Hub tool refuses it, exactly as the old auto-formation did. This reintroduces player-directed hub placement (reversing the v0.1→v0.2 decision) specifically to fix the auto-charge/auto-cap side effect of side-by-side routes. See §4.4.
+15. **Connectivity is explicit, drag-only, and tap no longer creates a tile at all.** Item 14 fixed the *charge*, but two side-by-side routes still merged into one road network just by touching -- physical adjacency was, and always had been, the entire definition of "connected" (pathfinding, hub-cap networks, established routes, upkeep discount, route shape). This item removes that assumption everywhere: a `GameState.connections` edge, drawn only by the player dragging across a tile-tile or tile-node boundary, is now what connects two cells; sitting next to something never does. Concretely: (a) tapping a route tile only cycles its shape (or shows a hint on empty ground) -- creating a new tile is drag-only, starting from a press on an existing node or route tile and building/connecting every cell the drag crosses, releasing to commit the whole path atomically, same as before; (b) dragging across an *existing* tile or node (no new tile needed) is a free, explicit "connect" gesture -- this is how two separately-built roads, or a road and a node it happens to sit beside, get linked on purpose; (c) `SimulationEngine.build_graph`, `road_components`, `established_route_cells`, `hub_branch_count`, `route_shape`, and the hub upkeep-discount check all consult `state.connections` instead of raw grid/node adjacency. Bulldozing a tile removes every connection edge touching it. Other tools (storage, hub, upgrade, bulldoze) are unaffected -- they still act on a single existing route tile with one tap. See §2.1, §4.1, §4.4, §16.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -293,46 +294,68 @@ connections would otherwise suggest a different natural shape. This is a
 purely cosmetic choice: it never changes the tile's upkeep, capacity, or
 its adjacency contribution to hub-formation math.
 
-**The default shape reflects the real route neighbors only:**
+**The default shape reflects the real, EXPLICITLY CONNECTED route neighbors
+only** (v0.5: a tile merely sitting next to another one is never enough --
+see "Explicit connections" below):
 
-- Two opposite real connections (e.g. a built neighbor on both the east and
-  west side) default to a straight tile matching that axis.
+- Two opposite real connections (e.g. a connected neighbor on both the east
+  and west side) default to a straight tile matching that axis.
 - Two adjacent real connections (e.g. north and east) default to the
   L-corner tile matching those exact two sides.
-- A lone stub with a single real route neighbor defaults to a straight
+- A lone stub with a single real connected neighbor defaults to a straight
   running along that neighbor's axis.
-- With no real route neighbor at all, the default is a plain left-right
+- With no real connected neighbor at all, the default is a plain left-right
   straight tile.
 - Three or more real connections are unchanged from existing behavior:
   either the tile is flagged as a buildable junction for the Build Hub tool
   (§4.4), or, if the network is at its hub cap, the tile stays a plain
   `hub_capped` tile with today's rendering.
 
-### Drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.4)
+### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5)
 
-Tapping still places one tile at a time, exactly as in §2.1's basic model.
-Pressing and holding a buildable cell for a short moment (roughly a third
-of a second) without releasing switches into drag mode: dragging the
-pointer traces a candidate path across further cells, drawn live as a
-translucent line so the player can see it before committing to anything.
+**Connectivity is never implied by two cells simply sitting next to each
+other.** Two route tiles, or a route tile and a node, are only linked for
+gameplay purposes (pathfinding, hub-cap networks, established routes,
+upkeep discount, route shape) if the player has explicitly drawn that link
+by dragging across the boundary between them (see §16's `connections`).
+This replaced the original position-adjacency model specifically because it
+let two independently-drawn, side-by-side routes merge into one network
+just by touching, sharing a hub-cap budget and upkeep discounts neither
+route asked for.
 
-**Nothing is written to the map while dragging.** The whole traced path is
-validated as a unit -- every new tile in it must connect (to the existing
-network or to an earlier tile already queued in the same path), and the
-total cost must fit the current treasury (the hub cap never blocks a
-placement -- see §4.4; already-built tiles and nodes the path happens to cross are
-harmless waypoints, not failures). The preview line renders green while
-the path is valid and red the moment it isn't, explaining why in a toast
-if the player releases while it's red. **Only a fully valid path is built,
-and only on release** -- an invalid path places nothing at all, matching
-§4.1's existing transactional single-tile placement. On a valid release,
-every queued tile is written at once and the hub-formation pass runs a
-single time for the whole path, the same as it would after any tap; each
-tile then renders with the shape that matches its final real connections,
-exactly as if it had been placed one tap at a time. A press that releases
-before the hold threshold, or one that never actually drags to a second
-cell, is an ordinary tap (place one tile, or cycle a tappable tile's
-shape), unchanged.
+**Tapping a route tile only cycles its shape** (or, on empty ground,
+explains that a drag is needed) -- it never places or connects a new tile.
+All route creation is drag-only:
+
+1. Press and hold on an existing anchor -- a node, or an already-built route
+   tile -- for a short moment (roughly a third of a second) without
+   releasing to switch into drag mode. A press anywhere else (empty ground)
+   is not drag-eligible.
+2. Dragging the pointer traces a candidate path across further cells, drawn
+   live as a translucent line so the player can see it before committing to
+   anything.
+3. **Nothing is written to the map while dragging.** For every consecutive
+   pair of cells the path crosses, the second cell is either a new tile to
+   build (if it's empty) or an existing tile/node to link to for free (if
+   it's already there) -- either way, that pair becomes a connection to
+   record. The running cost only counts genuinely new tiles, and must fit
+   the current treasury (the hub cap never blocks a placement -- see §4.4).
+   The preview line renders green while affordable and red the moment it
+   isn't, explaining why in a toast if the player releases while it's red.
+4. **Only a fully valid path is committed, and only on release** -- an
+   invalid path places and connects nothing at all. On a valid release,
+   every queued tile and connection is written at once and the hub-formation
+   pass runs a single time for the whole gesture; each tile then renders
+   with the shape that matches its final real connections. A press that
+   releases before the hold threshold, or one that never actually drags to
+   a second cell, is an ordinary tap on the anchor (info tip for a node,
+   shape-cycle for a route tile) -- never a build.
+
+Dragging across an *existing* tile or node (nothing new to build there) is
+how two separately-built roads, or a road and a node it happens to sit
+beside, get linked on purpose -- this is the same gesture as building, just
+with no new tile and no cost, since the boundary being crossed already
+exists on both sides.
 
 ### Established-route overlay (added in v0.4)
 
@@ -343,7 +366,8 @@ rather than dangling unfinished. It is purely informational and never
 changes simulation or cost.
 
 The set of highlighted tiles is derived from the same connectivity graph
-the simulation uses (built tiles plus their adjacent nodes):
+the simulation uses (built tiles plus the nodes they're explicitly
+connected to -- see "Explicit connections" above and §16):
 
 - Keep only tiles whose connected network contains **at least one source
   and at least one settlement** -- a network with no customer, or no
@@ -568,7 +592,7 @@ A hub is not primarily for freshness. It is for network organization, flow visib
 A tile is flagged as a **buildable junction** wherever a **completed route branches** -- where a source's delivery splits toward multiple paths, or where multiple sources' deliveries converge. A route tile qualifies only when both hold:
 
 1. It lies on an **established source→settlement route** -- a road network that actually connects at least one source to at least one settlement, with dead-end stubs pruned out (see §4.1's established-route overlay and ROUTE-08).
-2. **3 or more branches meet at it** -- counting its neighbours that are on an established route AND any adjacent source/settlement node. An adjacent node counts because a source feeding a tile that also continues in 2+ road directions is a split point, and a tile where several road arms converge on a settlement is a merge point.
+2. **3 or more branches meet at it** -- counting its explicitly-connected neighbours that are on an established route AND any explicitly-connected source/settlement node (v0.5: adjacency alone is never enough, see the "Explicit connections" rule in §4.1). A connected node counts because a source feeding a tile that also continues in 2+ road directions is a split point, and a tile where several road arms converge on a settlement is a merge point.
 
 A plain straight run (2 through-connections) and an unfinished/isolated road (not an established route) are never flagged; a road sitting beside a source but only continuing one way is the route's start, not a branch, so it isn't flagged either.
 
@@ -1550,7 +1574,14 @@ loses no money, and can reroute or keep networks separate.
 
 ## 16. Technical Data Model Draft
 
-This section is not final implementation, but it gives structure.
+This section is not final implementation, but it gives structure. (The
+actual Godot port uses a plain tile grid, `GameState.grid`, rather than the
+RouteSegment graph below -- see §12, §4.1. As of v0.4 item 15 it also has a
+`GameState.connections` field: `Vector2i -> Dictionary[Vector2i, bool]`, a
+symmetric adjacency-set of explicit, player-dragged links between cells.
+This is what "connected" means everywhere in SimulationEngine now -- mere
+grid adjacency never is. See §4.1's "Explicit connections" for how it's
+populated.)
 
 ### Node
 

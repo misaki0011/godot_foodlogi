@@ -47,8 +47,12 @@ func _test_daily_simulation() -> void:
 	var farm := _node(map, "farm")
 	var village_a := _node(map, "villageA")
 	# A short dirt-route path connecting Farm to Village A.
-	for cell in [Vector2i(4, 4), Vector2i(4, 3), Vector2i(5, 3)]:
+	var route_path: Array[Vector2i] = [Vector2i(4, 4), Vector2i(4, 3), Vector2i(5, 3)]
+	for cell in route_path:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.connect(farm.grid_position, route_path[0])
+	_connect_chain(state, route_path)
+	state.connect(route_path[-1], village_a.grid_position)
 	var report := SimulationEngine.run_day(state, map.node_placements)
 	var grain_status: Dictionary = state.last_settlement_status[village_a.node_id].grain
 	print("Village A grain: %.1f / %.1f delivered" % [grain_status.delivered, grain_status.requested])
@@ -71,11 +75,17 @@ func _test_hub_junction_flagging_and_cap() -> void:
 	var spine: Array[Vector2i] = [Vector2i(2, 10), Vector2i(3, 10), Vector2i(4, 10), Vector2i(5, 10), Vector2i(6, 10), Vector2i(7, 10)]
 	for cell in spine:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.connect(Vector2i(1, 10), spine[0])
+	_connect_chain(state, spine)
+	state.connect(spine[-1], Vector2i(8, 10))
 	var forks: Array[Vector2i] = [Vector2i(3, 10), Vector2i(4, 10), Vector2i(5, 10)]
 	for parent in forks:
 		var branch := parent + Vector2i(0, 1)
 		state.grid[branch] = {"kind": "route", "level": "dirt"}
-		nodes_by_pos[branch + Vector2i(0, 1)] = _make_node(GameEnums.NodeType.SETTLEMENT)
+		state.connect(parent, branch)
+		var settlement_pos := branch + Vector2i(0, 1)
+		nodes_by_pos[settlement_pos] = _make_node(GameEnums.NodeType.SETTLEMENT)
+		state.connect(branch, settlement_pos)
 
 	var starting_balance := state.balance
 	SimulationEngine.check_junctions(state, nodes_by_pos)
@@ -132,6 +142,7 @@ func _test_route_shape() -> void:
 	var state_b := GameState.new()
 	state_b.grid[Vector2i(2, 13)] = {"kind": "route", "level": "dirt"}
 	state_b.grid[Vector2i(3, 13)] = {"kind": "route", "level": "dirt"}
+	state_b.connect(Vector2i(2, 13), Vector2i(3, 13))
 	var shape_b := SimulationEngine.route_shape(Vector2i(2, 13), state_b, {})
 	assert(shape_b.family == "straight" and shape_b.facing == "lr", "A stub adjacent only to another route tile should default to straight")
 
@@ -144,6 +155,8 @@ func _test_route_shape() -> void:
 	state_c.grid[mid_by_node + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
 	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt", "facing": "ne"} # stored override, must win
 	state_c.grid[mid_by_node + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
+	state_c.connect(mid_by_node, mid_by_node + Vector2i(0, -1))
+	state_c.connect(mid_by_node, mid_by_node + Vector2i(0, 1))
 	var shape_c := SimulationEngine.route_shape(mid_by_node, state_c, nodes_by_pos)
 	assert(shape_c.family == "corner" and shape_c.facing == "ne", "A node-adjacent tile's stored override must win -- nodes no longer force a shape")
 	assert(SimulationEngine.is_shape_ambiguous(mid_by_node, state_c, nodes_by_pos), "A node-adjacent tile must be tappable -- nodes no longer lock a shape")
@@ -156,6 +169,8 @@ func _test_route_shape() -> void:
 	state_d.grid[Vector2i(4, 13)] = {"kind": "route", "level": "dirt"}
 	state_d.grid[Vector2i(5, 13)] = {"kind": "route", "level": "dirt", "facing": "ne"}
 	state_d.grid[Vector2i(6, 13)] = {"kind": "route", "level": "dirt"}
+	state_d.connect(Vector2i(4, 13), Vector2i(5, 13))
+	state_d.connect(Vector2i(5, 13), Vector2i(6, 13))
 	var shape_d := SimulationEngine.route_shape(Vector2i(5, 13), state_d, {})
 	assert(shape_d.family == "corner" and shape_d.facing == "ne", "Away from any node, a stored override must win over the naturally-matching straight shape")
 	assert(SimulationEngine.is_shape_ambiguous(Vector2i(5, 13), state_d, {}), "A tile with no node touching it must always be tappable, even with 2 real connections")
@@ -165,6 +180,8 @@ func _test_route_shape() -> void:
 	state_d_default.grid[Vector2i(4, 13)] = {"kind": "route", "level": "dirt"}
 	state_d_default.grid[Vector2i(5, 13)] = {"kind": "route", "level": "dirt"}
 	state_d_default.grid[Vector2i(6, 13)] = {"kind": "route", "level": "dirt"}
+	state_d_default.connect(Vector2i(4, 13), Vector2i(5, 13))
+	state_d_default.connect(Vector2i(5, 13), Vector2i(6, 13))
 	var shape_d_default := SimulationEngine.route_shape(Vector2i(5, 13), state_d_default, {})
 	assert(shape_d_default.family == "straight" and shape_d_default.facing == "lr", "With nothing tapped yet, a non-node tile still defaults to the shape matching its real connections")
 
@@ -188,6 +205,7 @@ func _test_route_shape() -> void:
 	var state_f := GameState.new()
 	state_f.grid[stub_by_node_and_route] = {"kind": "route", "level": "dirt"}
 	state_f.grid[stub_by_node_and_route + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # route to the south
+	state_f.connect(stub_by_node_and_route, stub_by_node_and_route + Vector2i(0, 1))
 	assert(SimulationEngine.is_shape_ambiguous(stub_by_node_and_route, state_f, nodes_by_pos), "A node beside a tile must never force its shape, even with a real route neighbor on an adjacent side")
 	var reachable_ud := false
 	for _i in range(6):
@@ -207,6 +225,7 @@ func _test_route_shape() -> void:
 	var state_g := GameState.new()
 	state_g.grid[tile_by_source] = {"kind": "route", "level": "dirt"}
 	state_g.grid[tile_by_source + Vector2i(1, 0)] = {"kind": "route", "level": "dirt"}
+	state_g.connect(tile_by_source, tile_by_source + Vector2i(1, 0))
 	var shape_g := SimulationEngine.route_shape(tile_by_source, state_g, nodes_by_pos)
 	assert(shape_g.family == "straight" and shape_g.facing == "lr", "A route neighbor to the east must default to a left-right straight tile, ignoring the source to the west")
 
@@ -214,6 +233,7 @@ func _test_route_shape() -> void:
 	var state_h := GameState.new()
 	state_h.grid[tile_by_settlement] = {"kind": "route", "level": "dirt"}
 	state_h.grid[tile_by_settlement + Vector2i(-1, 0)] = {"kind": "route", "level": "dirt"}
+	state_h.connect(tile_by_settlement, tile_by_settlement + Vector2i(-1, 0))
 	var shape_h := SimulationEngine.route_shape(tile_by_settlement, state_h, nodes_by_pos)
 	assert(shape_h.family == "straight" and shape_h.facing == "lr", "A single route neighbor to the west must default to a left-right straight, ignoring the settlement to the north")
 
@@ -230,13 +250,25 @@ func _test_established_route_cells() -> void:
 	nodes_by_pos[Vector2i(8, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # D
 
 	var state := GameState.new()
-	for cell in [Vector2i(0, 1), Vector2i(0, 2), Vector2i(0, 3)]: # S -> A path
+	var s_to_a: Array[Vector2i] = [Vector2i(0, 1), Vector2i(0, 2), Vector2i(0, 3)] # S -> A path
+	for cell in s_to_a:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.connect(Vector2i(0, 0), s_to_a[0])
+	_connect_chain(state, s_to_a)
+	state.connect(s_to_a[-1], Vector2i(0, 4))
 	state.grid[Vector2i(1, 2)] = {"kind": "route", "level": "dirt"} # dead-end stub
-	for cell in [Vector2i(5, 1), Vector2i(5, 2), Vector2i(5, 3)]: # B <-> C, no source
+	state.connect(Vector2i(0, 2), Vector2i(1, 2))
+	var b_to_c: Array[Vector2i] = [Vector2i(5, 1), Vector2i(5, 2), Vector2i(5, 3)] # B <-> C, no source
+	for cell in b_to_c:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
-	for cell in [Vector2i(8, 1), Vector2i(8, 2)]: # from D, reaches no settlement
+	state.connect(Vector2i(5, 0), b_to_c[0])
+	_connect_chain(state, b_to_c)
+	state.connect(b_to_c[-1], Vector2i(5, 4))
+	var from_d: Array[Vector2i] = [Vector2i(8, 1), Vector2i(8, 2)] # from D, reaches no settlement
+	for cell in from_d:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.connect(Vector2i(8, 0), from_d[0])
+	_connect_chain(state, from_d)
 
 	var est := SimulationEngine.established_route_cells(state, nodes_by_pos)
 	assert(est.has(Vector2i(0, 1)) and est.has(Vector2i(0, 2)) and est.has(Vector2i(0, 3)), "The whole source->settlement path must be established")
@@ -252,8 +284,12 @@ func _test_hub_only_on_completed_route_fork() -> void:
 	n1[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # west of (1,0)
 	n1[Vector2i(4, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east of (3,0)
 	var s1 := GameState.new()
-	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
+	var chain1: Array[Vector2i] = [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]
+	for cell in chain1:
 		s1.grid[cell] = {"kind": "route", "level": "dirt"}
+	s1.connect(Vector2i(0, 0), chain1[0])
+	_connect_chain(s1, chain1)
+	s1.connect(chain1[-1], Vector2i(4, 0))
 	SimulationEngine.check_junctions(s1, n1)
 	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
 		assert(s1.grid[cell].kind == "route", "A straight completed route with no branch must not form a hub")
@@ -268,8 +304,13 @@ func _test_hub_only_on_completed_route_fork() -> void:
 	n2[Vector2i(3, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # west end
 	n2[Vector2i(7, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east end
 	var s2 := GameState.new()
-	for cell in [Vector2i(4, 0), Vector2i(5, 0), Vector2i(6, 0)]:
+	var chain2: Array[Vector2i] = [Vector2i(4, 0), Vector2i(5, 0), Vector2i(6, 0)]
+	for cell in chain2:
 		s2.grid[cell] = {"kind": "route", "level": "dirt"}
+	s2.connect(Vector2i(3, 0), chain2[0])
+	_connect_chain(s2, chain2)
+	s2.connect(chain2[-1], Vector2i(7, 0))
+	s2.connect(Vector2i(5, 0), Vector2i(5, 1)) # source below the fork tile
 	var starting_balance_2 := s2.balance
 	SimulationEngine.check_junctions(s2, n2)
 	assert(s2.grid[Vector2i(5, 0)].kind == "route" and s2.grid[Vector2i(5, 0)].get("junction", false), "A source feeding a tile that splits toward two roads must be flagged as a buildable junction, not auto-built")
@@ -284,6 +325,10 @@ func _test_hub_only_on_completed_route_fork() -> void:
 	incomplete.grid[Vector2i(11, 11)] = {"kind": "route", "level": "dirt"}
 	incomplete.grid[Vector2i(9, 11)] = {"kind": "route", "level": "dirt"}
 	incomplete.grid[Vector2i(10, 12)] = {"kind": "route", "level": "dirt"}
+	incomplete.connect(Vector2i(10, 10), Vector2i(10, 11))
+	incomplete.connect(Vector2i(10, 11), Vector2i(11, 11))
+	incomplete.connect(Vector2i(10, 11), Vector2i(9, 11))
+	incomplete.connect(Vector2i(10, 11), Vector2i(10, 12))
 	SimulationEngine.check_junctions(incomplete, only_source)
 	assert(incomplete.grid[Vector2i(10, 11)].kind == "route", "A 3-road fork that reaches no settlement must not form a hub")
 	assert(not incomplete.grid[Vector2i(10, 11)].get("junction", false), "A 3-road fork that reaches no settlement must not be flagged as a junction")
@@ -301,9 +346,20 @@ func _test_delivery_does_not_transit_nodes() -> void:
 	var state := GameState.new()
 	state.grid[Vector2i(0, 1)] = {"kind": "route", "level": "dirt"}
 	state.grid[Vector2i(0, 3)] = {"kind": "route", "level": "dirt"}
+	state.connect(Vector2i(0, 0), Vector2i(0, 1))
+	state.connect(Vector2i(0, 1), Vector2i(0, 2))
+	state.connect(Vector2i(0, 2), Vector2i(0, 3))
+	state.connect(Vector2i(0, 3), Vector2i(0, 4))
 	assert(SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 4), grain).is_empty(), "A delivery must not route through an intermediate settlement/source node")
 	# The source still reaches the settlement it connects to over clear road.
 	assert(not SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 2), grain).is_empty(), "A source must still reach a settlement over a clear road path")
+
+## Connects each consecutive pair in `cells` -- mirrors what a real drag
+## gesture would link, since state.grid[cell] = ... no longer implies
+## connectivity on its own (v0.5).
+func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:
+	for i in range(1, cells.size()):
+		state.connect(cells[i - 1], cells[i])
 
 func _make_node(type: GameEnums.NodeType) -> NodeData:
 	var n := NodeData.new()

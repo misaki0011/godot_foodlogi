@@ -1,31 +1,30 @@
 class_name SimulationEngine
 
-## Ported 1:1 from fresh-routes-mvp.html's grid/graph/simulation functions.
-## The world is a plain tile grid (GameState.grid, Vector2i -> cell) plus a
-## fixed set of source/settlement nodes -- not a node-to-node route-segment
-## graph. Completed-route forks are flagged (and capped per connected
-## network), but building the hub there is a separate, manual, player-paid
-## action -- see check_junctions and SPEC.md §4.4 (v0.4 item 14).
+## Ported 1:1 from fresh-routes-mvp.html's grid/graph/simulation functions,
+## since extended past it. The world is a plain tile grid (GameState.grid,
+## Vector2i -> cell) plus a fixed set of source/settlement nodes -- not a
+## node-to-node route-segment graph. Connectivity is never implied by mere
+## tile adjacency: only an explicit GameState.connections edge (drawn by
+## dragging, see Main._commit_drag) links two cells, so side-by-side but
+## unconnected routes stay separate networks (v0.5). Completed-route forks
+## are flagged (and capped per connected network), but building the hub there
+## is a separate, manual, player-paid action -- see check_junctions and
+## SPEC.md §4.4 (v0.4 item 14).
 
 const DIRECTIONS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-
-static func neighbors(pos: Vector2i, grid_size: Vector2i) -> Array[Vector2i]:
-	var result: Array[Vector2i] = []
-	for d in DIRECTIONS:
-		var n := pos + d
-		if n.x >= 0 and n.y >= 0 and n.x < grid_size.x and n.y < grid_size.y:
-			result.append(n)
-	return result
 
 const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
 const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
 
-## Which of this tile's sides are real route/storage/hub neighbors, used for
-## auto-deriving visual shape in route_shape(). Source/settlement nodes are
-## excluded here on purpose: a node has its own separate marker and shouldn't
-## drive the road's rendered shape. Keyed by compass side: (0,-1)=north,
-## (1,0)=east, (0,1)=south, (-1,0)=west, matching how world Z increases with
-## grid Y (see main.gd's map_to_local usage).
+## Which of this tile's sides are real, EXPLICITLY CONNECTED route/storage/hub
+## neighbors, used for auto-deriving visual shape in route_shape(). A tile
+## merely sitting next to another one no longer counts -- only a dragged
+## connection does (v0.5), so an unconnected neighbor never pulls the shape
+## toward it. Source/settlement nodes are excluded here on purpose: a node
+## has its own separate marker and shouldn't drive the road's rendered shape.
+## Keyed by compass side: (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west,
+## matching how world Z increases with grid Y (see main.gd's map_to_local
+## usage).
 static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 	var sides := {"n": false, "e": false, "s": false, "w": false}
 	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
@@ -33,7 +32,7 @@ static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 		var n := pos + d
 		if n.x < 0 or n.y < 0 or n.x >= GameBalance.GRID_SIZE.x or n.y >= GameBalance.GRID_SIZE.y:
 			continue
-		if state.grid.has(n):
+		if state.grid.has(n) and state.is_connected(pos, n):
 			sides[dir_keys[d]] = true
 	return sides
 
@@ -125,29 +124,25 @@ static func cycle_shape_facing(pos: Vector2i, state: GameState, nodes_by_pos: Di
 	var idx: int = cycle.find(current.facing)
 	return cycle[(idx + 1) % cycle.size()]
 
-## key -> [key, ...]; every built tile connects to adjacent built tiles or
-## nodes, and every node connects to its adjacent built tiles (nodes never
-## link directly to another node without a route tile between them).
-static func build_graph(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+## pos -> [neighbor, ...], derived directly from state.connections -- the
+## explicit, player-dragged links are the graph now (v0.5); mere physical
+## adjacency is never enough. `nodes_by_pos` is kept on the signature for
+## call-site stability (callers still need it separately, e.g. find_path's
+## "don't transit a node" rule) but no longer drives graph construction here.
+static func build_graph(state: GameState, _nodes_by_pos: Dictionary) -> Dictionary:
 	var adj := {}
-	for pos in state.grid.keys():
-		for n in neighbors(pos, GameBalance.GRID_SIZE):
-			if state.grid.has(n) or nodes_by_pos.has(n):
-				adj.get_or_add(pos, []).append(n)
-				adj.get_or_add(n, []).append(pos)
-	for pos in nodes_by_pos.keys():
-		for n in neighbors(pos, GameBalance.GRID_SIZE):
-			if state.grid.has(n):
-				adj.get_or_add(pos, []).append(n)
-				adj.get_or_add(n, []).append(pos)
+	for pos in state.connections.keys():
+		adj[pos] = state.connections[pos].keys()
 	return adj
 
-## Connected components over BUILT TILES ALONE (route/storage/hub) -- nodes are
-## NOT transit vertices, since a delivery can never pass through a
-## source/settlement (§4.7). Two road groups that touch only a shared node are
-## therefore SEPARATE networks. Used for hub-cap/formation (each road network
-## gets its own hub budget) and, via established_route_cells, the overlay.
-## Vector2i tile -> component id.
+## Connected components over BUILT TILES ALONE (route/storage/hub), traversed
+## via EXPLICIT connections only (v0.5) -- nodes are NOT transit vertices,
+## since a delivery can never pass through a source/settlement (§4.7), and an
+## unconnected-but-adjacent tile is never traversed either. Two road groups
+## that touch only a shared node, or that simply sit next to each other
+## without a dragged connection, are therefore SEPARATE networks. Used for
+## hub-cap/formation (each road network gets its own hub budget) and, via
+## established_route_cells, the overlay. Vector2i tile -> component id.
 static func road_components(state: GameState) -> Dictionary:
 	var comp_of := {}
 	var comp_id := 0
@@ -158,8 +153,7 @@ static func road_components(state: GameState) -> Dictionary:
 		comp_of[start] = comp_id
 		while not queue.is_empty():
 			var u: Vector2i = queue.pop_front()
-			for d in DIRECTIONS:
-				var v: Vector2i = u + d
+			for v in state.connections.get(u, {}).keys():
 				if state.grid.has(v) and not comp_of.has(v):
 					comp_of[v] = comp_id
 					queue.append(v)
@@ -172,24 +166,27 @@ static func road_components(state: GameState) -> Dictionary:
 ## overlay).
 ##
 ## A delivery path can never pass through a node (a source/settlement is a
-## pure endpoint, §4.7), so connectivity is computed over built tiles ALONE:
-## two roads link only when orthogonally adjacent, never "through" a node
-## they both touch. A road network qualifies only when it touches at least
-## one source AND at least one settlement -- this is what keeps a
-## settlement-to-settlement road (reachable from no source) out, even when
-## some unrelated source sits elsewhere on the map. Within a qualifying
-## network, dead-end stubs are pruned: a tile survives only while it still
-## links to 2+ things (another kept tile, or a node it anchors to), leaving
-## the through-paths that run from a source to a settlement.
+## pure endpoint, §4.7), so connectivity is computed over built tiles ALONE,
+## via EXPLICIT connections only (v0.5): two roads link only when the player
+## has dragged a connection between them, never merely because they're
+## orthogonally adjacent. A road network qualifies only when it touches at
+## least one source AND at least one settlement (through a dragged tile<->node
+## connection) -- this is what keeps a settlement-to-settlement road
+## (reachable from no source) out, even when some unrelated source sits
+## elsewhere on the map. Within a qualifying network, dead-end stubs are
+## pruned: a tile survives only while it still links to 2+ things (another
+## kept tile, or a node it's connected to), leaving the through-paths that run
+## from a source to a settlement.
 static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
 	var comp_of := road_components(state)
-	# Which road networks touch a source / a settlement (adjacency to a node).
+	# Which road networks touch a source / a settlement (a dragged tile<->node
+	# connection, not mere adjacency).
 	var comp_has_source := {}
 	var comp_has_settlement := {}
 	for pos in state.grid:
 		var comp = comp_of[pos]
-		for d in DIRECTIONS:
-			var node: NodeData = nodes_by_pos.get(pos + d)
+		for n in state.connections.get(pos, {}).keys():
+			var node: NodeData = nodes_by_pos.get(n)
 			if node == null:
 				continue
 			if node.node_type == GameEnums.NodeType.SOURCE:
@@ -208,8 +205,7 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 		changed = false
 		for pos in kept.keys():
 			var degree := 0
-			for d in DIRECTIONS:
-				var n: Vector2i = pos + d
+			for n in state.connections.get(pos, {}).keys():
 				if kept.has(n) or nodes_by_pos.has(n):
 					degree += 1
 			if degree <= 1:
@@ -217,16 +213,17 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 				changed = true
 	return kept
 
-## The number of delivery branches meeting at `pos`: how many of its orthogonal
-## neighbors are either on an established route (road/storage/hub) OR a
-## source/settlement node. Adjacent nodes count so that a tile where a source's
-## delivery fans out (source + 2+ roads), or where multiple sources' deliveries
-## converge, reads as a branch -- a node is an endpoint of flow, and a tile
-## sitting between an endpoint and 2+ roads is a split/merge point.
-static func hub_branch_count(pos: Vector2i, established: Dictionary, nodes_by_pos: Dictionary) -> int:
+## The number of delivery branches meeting at `pos`: how many of its
+## EXPLICITLY CONNECTED neighbors are either on an established route
+## (road/storage/hub) OR a source/settlement node. A merely-adjacent-but-
+## unconnected neighbor never counts (v0.5). Connected nodes count so that a
+## tile where a source's delivery fans out (source + 2+ roads), or where
+## multiple sources' deliveries converge, reads as a branch -- a node is an
+## endpoint of flow, and a tile sitting between an endpoint and 2+ roads is a
+## split/merge point.
+static func hub_branch_count(pos: Vector2i, established: Dictionary, nodes_by_pos: Dictionary, state: GameState) -> int:
 	var count := 0
-	for d in DIRECTIONS:
-		var n: Vector2i = pos + d
+	for n in state.connections.get(pos, {}).keys():
 		if established.has(n) or nodes_by_pos.has(n):
 			count += 1
 	return count
@@ -259,7 +256,7 @@ static func check_junctions(state: GameState, nodes_by_pos: Dictionary) -> Array
 		var cell = state.grid[pos]
 		if cell.kind != "route":
 			continue
-		var is_fork: bool = established.has(pos) and hub_branch_count(pos, established, nodes_by_pos) >= 3
+		var is_fork: bool = established.has(pos) and hub_branch_count(pos, established, nodes_by_pos, state) >= 3
 		if is_fork:
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)
@@ -508,7 +505,7 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		if cell.kind == "route":
 			var up: float = GameBalance.ROUTE_BASE_UPKEEP * GameBalance.ROUTE_LEVELS[cell.level].upkeep_mult
 			for h in hub_tiles:
-				if absi(h.x - pos.x) + absi(h.y - pos.y) == 1:
+				if state.is_connected(pos, h):
 					up *= 1.0 - float(GameBalance.HUB_TYPES[state.grid[h].htype].discount)
 					break
 			route_upkeep += up
