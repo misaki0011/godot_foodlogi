@@ -2,10 +2,12 @@ extends Node3D
 
 ## Fresh Routes -- 3D isometric port of fresh-routes-mvp.html. The world is
 ## a tile grid (see GameState.grid / SimulationEngine): clicking places one
-## tile at a time per the active tool, hubs auto-form at 3-way junctions,
-## and hovering (desktop) or tapping (mobile, no dialog) any tile or node
+## tile at a time per the active tool. Completed-route forks are flagged
+## automatically but a Small Hub is only built there when the player picks
+## the Build Hub tool and pays for it (v0.4 item 14; see SPEC.md §4.4).
+## Hovering (desktop) or tapping (mobile, no dialog) any tile or node
 ## shows a live info tooltip. A top-left panel provides touch zoom/pan
-## controls for exploring the map on mobile. See SPEC.md v0.3.
+## controls for exploring the map on mobile.
 
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
@@ -51,7 +53,8 @@ const TOOL_HINTS := {
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"freeze": "Click an existing route tile to build Freeze Storage there (good for seafood -- some foods dislike freezing).",
-	"hubRegional": "Click an existing Small Hub (formed at a 3-way junction) to upgrade it to Regional for §200.",
+	"hubBuild": "Click a flagged completed-route fork (⚙ in its tip) to build a Small Hub there for §150.",
+	"hubRegional": "Click an existing Small Hub (formed at a completed-route fork) to upgrade it to Regional for §200.",
 	"remove": "Click a built tile to bulldoze it (no refund).",
 }
 
@@ -260,10 +263,11 @@ func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 ## cell must connect to the existing network or an earlier tile already
 ## queued in this same drag, and the total cost must fit the current
 ## treasury. Node cells and cells already built are harmless pass-through
-## waypoints, not failures. The hub cap never blocks a placement -- hubs
-## auto-form (or stay capped) only after the route is built, when it's a
-## completed-route fork (see SimulationEngine.check_auto_hubs). Runs against a
-## scratch grid copy -- _state.grid is never touched here.
+## waypoints, not failures. The hub cap never blocks a placement -- a
+## completed-route fork is only flagged (or capped) after the route is
+## built, and building the hub itself is a separate manual action (see
+## SimulationEngine.check_junctions). Runs against a scratch grid copy --
+## _state.grid is never touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
@@ -396,6 +400,8 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_upgrade_route(cell)
 		"normal", "cool", "freeze":
 			_do_build_storage(cell)
+		"hubBuild":
+			_do_build_hub(cell)
 		"hubRegional":
 			_do_upgrade_hub(cell)
 		"remove":
@@ -456,6 +462,25 @@ func _do_build_storage(cell: Vector2i) -> void:
 	_state.grid[cell] = {"kind": "storage", "stype": stype}
 	_show_toast("%s built for §%d." % [st.name, roundi(st.build)])
 
+func _do_build_hub(cell: Vector2i) -> void:
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route":
+		_show_toast("Select a route tile to build a hub.", true)
+		return
+	if not cell_data.get("junction", false):
+		if cell_data.get("hub_capped", false):
+			_show_toast("This road already has %d hubs -- the cap is reached." % GameBalance.HUB_CAP_PER_NETWORK, true)
+		else:
+			_show_toast("This tile isn't a completed-route fork yet.", true)
+		return
+	var cost: float = GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+	if _state.balance < cost:
+		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
+		return
+	_state.balance -= cost
+	_state.grid[cell] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
+	_show_toast("Small Hub built for §%d." % roundi(cost))
+
 func _do_upgrade_hub(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
 	if cell_data == null or cell_data.kind != "hub" or cell_data.htype != GameEnums.HubType.SMALL:
@@ -477,7 +502,7 @@ func _do_bulldoze(cell: Vector2i) -> void:
 	_show_toast("Tile cleared.")
 
 func _after_action() -> void:
-	var messages := SimulationEngine.check_auto_hubs(_state, _nodes_by_pos)
+	var messages := SimulationEngine.check_junctions(_state, _nodes_by_pos)
 	for m in messages:
 		var sep := m.find(":")
 		_show_toast(m.substr(sep + 1), not m.begins_with("ok:"))
@@ -516,10 +541,10 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 		if cell_data.kind == "route":
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
 			text = "[b]%s Route[/b]\nCapacity: %d/day\nUpkeep ×%.1f" % [lvl.label, roundi(lvl.cap), lvl.upkeep_mult]
-			if cell_data.get("needs_hub", false):
-				text += "\n[color=orange]⚠ 3-way junction -- needs a §150 hub, funds too low[/color]"
+			if cell_data.get("junction", false):
+				text += "\n[color=#4FA8A0]⚙ Completed-route fork -- Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
 			elif cell_data.get("hub_capped", false):
-				text += "\n[color=orange]⚠ 3-way junction -- this road already has %d hubs[/color]" % GameBalance.HUB_CAP_PER_NETWORK
+				text += "\n[color=orange]⚠ Completed-route fork -- this road already has %d hubs[/color]" % GameBalance.HUB_CAP_PER_NETWORK
 		elif cell_data.kind == "storage":
 			var st = GameBalance.STORAGE_TYPES[cell_data.stype]
 			text = "[b]%s[/b]\nUpkeep: §%d/day\nProtects next %d tiles at %d%% decay" % [st.name, roundi(st.upkeep), st.protection, roundi(st.mult * 100)]
@@ -620,8 +645,8 @@ func _render_grid() -> void:
 			else:
 				var shape := SimulationEngine.route_shape(pos, _state, _nodes_by_pos)
 				_add_route_block(world_pos, cell.level, shape.family, shape.facing)
-			if cell.get("needs_hub", false):
-				_add_warning_ring(world_pos, Color("C4573A"))
+			if cell.get("junction", false):
+				_add_warning_ring(world_pos, Color("4FA8A0"))
 			elif cell.get("hub_capped", false):
 				_add_warning_ring(world_pos, Color("8B6B9C"))
 		elif cell.kind == "storage":
@@ -956,9 +981,10 @@ func _build_ui() -> void:
 	_add_section_title(side_box, "BUILD -- HUBS")
 	var hub_note := Label.new()
 	hub_note.autowrap_mode = TextServer.AUTOWRAP_WORD
-	hub_note.text = "Hubs form automatically at 3-way forks (auto-charged, §150) -- each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
+	hub_note.text = "Completed-route forks are flagged automatically -- use Build Hub to place a Small Hub there when you want it. Each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
 	hub_note.add_theme_font_size_override("font_size", 11)
 	side_box.add_child(hub_note)
+	_add_tool_button(side_box, "Build Small Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild")
 	_add_tool_button(side_box, "Upgrade to Regional Hub  §%d" % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), "hubRegional")
 	_add_section_title(side_box, "BUILD -- OTHER")
 	_add_tool_button(side_box, "Bulldoze  (remove a tile)", "remove")
@@ -970,8 +996,8 @@ func _build_ui() -> void:
 	_add_legend_row(side_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
 	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
 	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
-	_add_legend_row(side_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (auto-forms at forks)")
-	_add_legend_row(side_box, Color("C4573A"), "Junction needs a hub (low funds)")
+	_add_legend_row(side_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build manually at flagged forks)")
+	_add_legend_row(side_box, Color("4FA8A0"), "Fork available -- Build Hub tool")
 	_add_legend_row(side_box, Color("8B6B9C"), "Junction over the hub cap")
 	_add_legend_row(side_box, Color("D98E4A"), "! Tile near capacity (90%+, last run)")
 	_add_legend_row(side_box, Color("C4573A"), "! Tile over capacity (last run)")
@@ -1111,10 +1137,11 @@ func _build_map_controls(root: Control) -> void:
 	_bubbles_button.toggled.connect(_on_bubbles_toggled)
 	bubbles_row.add_child(_bubbles_button)
 
-	# Shortcuts for the two most-used build tools, so drawing and erasing
-	# routes don't require reaching over to the right-hand sidebar. These
-	# register alongside the sidebar's own Draw Route / Bulldoze buttons (see
-	# _add_tool_button), and _set_tool keeps every copy of a tool in sync.
+	# Shortcuts for the most-used build tools, so drawing, erasing, and now
+	# hub-building don't require reaching over to the right-hand sidebar.
+	# These register alongside the sidebar's own Draw Route / Bulldoze / Build
+	# Small Hub buttons (see _add_tool_button), and _set_tool keeps every copy
+	# of a tool in sync.
 	box.add_child(HSeparator.new())
 	_add_section_title(box, "BUILD")
 	var build_row := HBoxContainer.new()
@@ -1122,6 +1149,7 @@ func _build_map_controls(root: Control) -> void:
 	box.add_child(build_row)
 	_add_controller_tool_button(build_row, "Route", "route")
 	_add_controller_tool_button(build_row, "Erase", "remove")
+	_add_controller_tool_button(build_row, "Hub", "hubBuild")
 
 const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
 const CONTROLLER_FONT_SIZE := 24

@@ -3,8 +3,9 @@ class_name SimulationEngine
 ## Ported 1:1 from fresh-routes-mvp.html's grid/graph/simulation functions.
 ## The world is a plain tile grid (GameState.grid, Vector2i -> cell) plus a
 ## fixed set of source/settlement nodes -- not a node-to-node route-segment
-## graph. Hubs auto-form (and are capped per connected network) exactly as
-## in the HTML; see checkAutoHubs there and SPEC.md §4.4.
+## graph. Completed-route forks are flagged (and capped per connected
+## network), but building the hub there is a separate, manual, player-paid
+## action -- see check_junctions and SPEC.md §4.4 (v0.4 item 14).
 
 const DIRECTIONS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
@@ -230,20 +231,21 @@ static func hub_branch_count(pos: Vector2i, established: Dictionary, nodes_by_po
 			count += 1
 	return count
 
-## Mutates state.grid/state.balance: auto-forms a Small Hub at every tile where
-## a COMPLETED route branches -- where a source's delivery splits toward
-## multiple paths, or where multiple sources' deliveries converge. A route tile
-## becomes a hub only when it (a) lies on an established source->settlement
-## route (see established_route_cells) and (b) has 3+ branches meeting at it
-## (hub_branch_count: established road neighbors plus adjacent source/settlement
-## nodes). A straight run and an isolated/unfinished road never form a hub, but
-## a road beside a source that also continues in 2+ directions does (revised in
-## v0.4: hubs = completed-route split/merge points; adjacent nodes count again,
-## now gated on the route actually being finished). Capped at
-## HUB_CAP_PER_NETWORK per road network (over-cap forks stay hub_capped); a fork
-## the player can't afford yet is flagged needs_hub. Returns "ok:"/"warn:" toast
-## lines for newly-changed tiles.
-static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array[String]:
+## Mutates state.grid: flags every tile where a COMPLETED route branches --
+## where a source's delivery splits toward multiple paths, or where multiple
+## sources' deliveries converge -- as a buildable junction (cell.junction =
+## true), unless its road network is already at HUB_CAP_PER_NETWORK hubs, in
+## which case it's marked hub_capped instead and can never receive one.
+## A route tile qualifies only when it (a) lies on an established
+## source->settlement route (see established_route_cells) and (b) has 3+
+## branches meeting at it (hub_branch_count: established road neighbors plus
+## adjacent source/settlement nodes). A straight run and an isolated/
+## unfinished road never qualify, but a road beside a source that also
+## continues in 2+ directions does. Building the Small Hub itself is a
+## separate, player-initiated action (see Main._do_build_hub, added v0.4 item
+## 14) -- this function never mutates state.balance or state.grid[pos].kind.
+## Returns "ok:"/"warn:" toast lines for newly-changed tiles.
+static func check_junctions(state: GameState, nodes_by_pos: Dictionary) -> Array[String]:
 	var messages: Array[String] = []
 	var comp_of := road_components(state)
 	var established := established_route_cells(state, nodes_by_pos)
@@ -262,22 +264,17 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)
 			if count >= GameBalance.HUB_CAP_PER_NETWORK:
-				cell.needs_hub = false
+				cell.junction = false
 				if not cell.get("hub_capped", false):
 					messages.append("warn:Hub limit reached — this road already has %d hub%s. This junction stays capacity-limited." % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"])
 				cell.hub_capped = true
-				continue
-			cell.hub_capped = false
-			var cost: float = GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
-			if state.balance >= cost:
-				state.balance -= cost
-				state.grid[pos] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
-				hub_counts[comp] = count + 1
-				messages.append("ok:Route fork — Small Hub auto-built for §%d." % roundi(cost))
 			else:
-				cell.needs_hub = true
+				cell.hub_capped = false
+				if not cell.get("junction", false):
+					messages.append("ok:Route fork — build a Small Hub here for §%d whenever you're ready." % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build))
+				cell.junction = true
 		else:
-			cell.needs_hub = false
+			cell.junction = false
 			cell.hub_capped = false
 	return messages
 

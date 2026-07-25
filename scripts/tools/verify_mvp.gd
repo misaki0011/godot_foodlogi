@@ -8,7 +8,7 @@ func _initialize() -> void:
 	_test_route_build_cost()
 	_test_storage_preservation()
 	_test_daily_simulation()
-	_test_hub_auto_formation_and_cap()
+	_test_hub_junction_flagging_and_cap()
 	_test_route_shape()
 	_test_established_route_cells()
 	_test_hub_only_on_completed_route_fork()
@@ -58,11 +58,12 @@ func _test_daily_simulation() -> void:
 	assert(report.route_upkeep > 0.0)
 	assert(state.day == 1, "run_day must not itself advance the day counter (Main._close_report does)")
 
-func _test_hub_auto_formation_and_cap() -> void:
+func _test_hub_junction_flagging_and_cap() -> void:
 	# A completed route: a source feeds a horizontal spine that runs to a
 	# settlement (E), with three branches dropping to three more settlements.
-	# Each branch parent is a genuine 3-road fork ON the finished route, so a
-	# hub forms there -- capped at HUB_CAP_PER_NETWORK per road network.
+	# Each branch parent is a genuine 3-road fork ON the finished route, so it
+	# gets flagged as a buildable junction -- capped at HUB_CAP_PER_NETWORK
+	# actually-built hubs per road network.
 	var state := GameState.new()
 	var nodes_by_pos := {}
 	nodes_by_pos[Vector2i(1, 10)] = _make_node(GameEnums.NodeType.SOURCE)      # S, west of spine
@@ -77,7 +78,24 @@ func _test_hub_auto_formation_and_cap() -> void:
 		nodes_by_pos[branch + Vector2i(0, 1)] = _make_node(GameEnums.NodeType.SETTLEMENT)
 
 	var starting_balance := state.balance
-	SimulationEngine.check_auto_hubs(state, nodes_by_pos)
+	SimulationEngine.check_junctions(state, nodes_by_pos)
+
+	# Every fork is flagged for a manually-built hub -- nothing is built or
+	# charged just by completing the route.
+	for parent in forks:
+		assert(state.grid[parent].kind == "route", "Forks must stay plain route tiles until the player builds a hub")
+		assert(state.grid[parent].get("junction", false), "Every completed-route fork should be flagged as a buildable junction")
+		assert(not state.grid[parent].get("hub_capped", false))
+	assert(is_equal_approx(state.balance, starting_balance), "Flagging a junction must not charge the player")
+
+	# Player manually builds Small Hubs at the cap's worth of forks (mirrors
+	# Main._do_build_hub).
+	var hub_cost: float = GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+	for i in range(GameBalance.HUB_CAP_PER_NETWORK):
+		state.grid[forks[i]] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
+		state.balance -= hub_cost
+
+	SimulationEngine.check_junctions(state, nodes_by_pos)
 
 	var hub_count := 0
 	var capped_count := 0
@@ -87,10 +105,10 @@ func _test_hub_auto_formation_and_cap() -> void:
 			hub_count += 1
 		elif cell.get("hub_capped", false):
 			capped_count += 1
-	print("Hubs formed: %d, capped junctions: %d (cap is %d)" % [hub_count, capped_count, GameBalance.HUB_CAP_PER_NETWORK])
-	assert(hub_count == GameBalance.HUB_CAP_PER_NETWORK, "Exactly HUB_CAP_PER_NETWORK hubs should auto-form on one connected network")
-	assert(capped_count == forks.size() - GameBalance.HUB_CAP_PER_NETWORK, "Any further completed-route fork must be rejected as hub_capped, not silently formed")
-	assert(is_equal_approx(state.balance, starting_balance - GameBalance.HUB_CAP_PER_NETWORK * GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build))
+	print("Hubs built: %d, capped junctions: %d (cap is %d)" % [hub_count, capped_count, GameBalance.HUB_CAP_PER_NETWORK])
+	assert(hub_count == GameBalance.HUB_CAP_PER_NETWORK, "The manually-built hubs should remain in place")
+	assert(capped_count == forks.size() - GameBalance.HUB_CAP_PER_NETWORK, "Any further completed-route fork must flag as hub_capped once the network is at its cap")
+	assert(is_equal_approx(state.balance, starting_balance - GameBalance.HUB_CAP_PER_NETWORK * hub_cost), "Only the manually-built hubs should have been charged")
 
 func _test_route_shape() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
@@ -229,20 +247,22 @@ func _test_established_route_cells() -> void:
 
 func _test_hub_only_on_completed_route_fork() -> void:
 	# Case 1: a plain straight completed route (source -> settlement) with
-	# nothing branching off it forms no hub -- no tile reaches 3 branches.
+	# nothing branching off it is never flagged -- no tile reaches 3 branches.
 	var n1 := {}
 	n1[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # west of (1,0)
 	n1[Vector2i(4, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east of (3,0)
 	var s1 := GameState.new()
 	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
 		s1.grid[cell] = {"kind": "route", "level": "dirt"}
-	SimulationEngine.check_auto_hubs(s1, n1)
+	SimulationEngine.check_junctions(s1, n1)
 	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
 		assert(s1.grid[cell].kind == "route", "A straight completed route with no branch must not form a hub")
+		assert(not s1.grid[cell].get("junction", false), "A straight completed route with no branch must not be flagged as a junction")
 
-	# Case 2: a source feeding a tile that splits toward two settlements IS a
-	# hub -- the source's delivery fans out (the adjacent source counts as a
-	# branch alongside the two roads). The start/end tiles are not hubs.
+	# Case 2: a source feeding a tile that splits toward two settlements IS
+	# flagged as a buildable junction -- the source's delivery fans out (the
+	# adjacent source counts as a branch alongside the two roads). The
+	# start/end tiles are not flagged. Nothing is auto-built or auto-charged.
 	var n2 := {}
 	n2[Vector2i(5, 1)] = _make_node(GameEnums.NodeType.SOURCE)      # below the fork
 	n2[Vector2i(3, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # west end
@@ -250,20 +270,23 @@ func _test_hub_only_on_completed_route_fork() -> void:
 	var s2 := GameState.new()
 	for cell in [Vector2i(4, 0), Vector2i(5, 0), Vector2i(6, 0)]:
 		s2.grid[cell] = {"kind": "route", "level": "dirt"}
-	SimulationEngine.check_auto_hubs(s2, n2)
-	assert(s2.grid[Vector2i(5, 0)].kind == "hub", "A source feeding a tile that splits toward two roads must form a hub")
-	assert(s2.grid[Vector2i(4, 0)].kind == "route" and s2.grid[Vector2i(6, 0)].kind == "route", "A route's start/end tiles (beside a node, one road) are not hubs")
+	var starting_balance_2 := s2.balance
+	SimulationEngine.check_junctions(s2, n2)
+	assert(s2.grid[Vector2i(5, 0)].kind == "route" and s2.grid[Vector2i(5, 0)].get("junction", false), "A source feeding a tile that splits toward two roads must be flagged as a buildable junction, not auto-built")
+	assert(not s2.grid[Vector2i(4, 0)].get("junction", false) and not s2.grid[Vector2i(6, 0)].get("junction", false), "A route's start/end tiles (beside a node, one road) are not junctions")
+	assert(is_equal_approx(s2.balance, starting_balance_2), "Flagging a junction must not charge the player")
 
 	# Case 3: a 3-road fork that reaches no settlement (an unfinished route)
-	# forms no hub -- hubs only appear on completed source->settlement routes.
+	# is never flagged -- only completed source->settlement routes qualify.
 	var only_source := {Vector2i(10, 10): _make_node(GameEnums.NodeType.SOURCE)}
 	var incomplete := GameState.new()
 	incomplete.grid[Vector2i(10, 11)] = {"kind": "route", "level": "dirt"} # touches the source
 	incomplete.grid[Vector2i(11, 11)] = {"kind": "route", "level": "dirt"}
 	incomplete.grid[Vector2i(9, 11)] = {"kind": "route", "level": "dirt"}
 	incomplete.grid[Vector2i(10, 12)] = {"kind": "route", "level": "dirt"}
-	SimulationEngine.check_auto_hubs(incomplete, only_source)
+	SimulationEngine.check_junctions(incomplete, only_source)
 	assert(incomplete.grid[Vector2i(10, 11)].kind == "route", "A 3-road fork that reaches no settlement must not form a hub")
+	assert(not incomplete.grid[Vector2i(10, 11)].get("junction", false), "A 3-road fork that reaches no settlement must not be flagged as a junction")
 
 func _test_delivery_does_not_transit_nodes() -> void:
 	# S -- road -- M(settlement) -- road -- D(settlement), all in a line. The
