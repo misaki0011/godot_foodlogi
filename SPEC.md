@@ -29,6 +29,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 12. **Hubs form at completed-route forks, not from raw connection degree; route placement is never blocked by the cap.** This supersedes items 4/10's degree rules and the earlier "atomic route+hub placement" behaviour (§4.4). A Small Hub now auto-forms only where a *finished* delivery route branches: a tile that lies on an established source→settlement route AND has 3+ neighbours that are also on an established route. Adjacent sources/settlements no longer count (a node is a terminal endpoint, not a branch), so a straight road, an unfinished/isolated road, or a road merely sitting beside a source never forms a hub — fixing hubs that were appearing on straight roads next to sources. Because hubs form after the route is built, drawing roads is never blocked by the hub cap; an over-cap fork just stays a plain `hub_capped` tile. See §4.4, §4.1.
 13. **Hubs mark completed-route split/merge points, and deliveries never transit a node.** Two changes. First, this refines item 12's fork rule: a hub is where a source's delivery splits toward multiple paths or where multiple sources converge, so on an *established* source→settlement route a tile counts a branch for each established-route neighbour AND each adjacent source/settlement node — a source beside a tile that also continues in 2+ road directions now forms a hub (the "established route" gate still keeps hubs off straight/unfinished roads). Second, delivery pathfinding no longer routes *through* a source or settlement: a node is only ever a path's start or end, never a transit shortcut, so grain can no longer reach a settlement by passing through another node in the middle. See §4.4, §4.7.
 
+14. **The established-route overlay marks its own start and end.** Item 10's gold line runs at a uniform width from supplier to customer, so with several strands on screen it was hard to tell which end of one was its start and which its end. Each strand now carries two caps drawn at the *tile edge* it shares with a node — never at the tile's center: a green arrow where the road leaves a food source, pointing the way the food travels, and a red bar laid across the road where it reaches a settlement. Purely informational, like the line itself. See §4.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -356,6 +358,23 @@ the simulation uses (built tiles plus their adjacent nodes):
 
 The overlay is rebuilt on every render, so it stays live as the player
 edits the network or runs a day.
+
+**Start and end caps (added in v0.4).** The line alone is uniform along its
+whole length, so several strands on screen were hard to tell apart end from
+end. Every place the line meets a node is therefore capped:
+
+- **Start — a green arrow** wherever a highlighted tile touches a **food
+  source**, pointing away from that source, i.e. the direction the food
+  travels.
+- **End — a red bar across the road** wherever a highlighted tile touches a
+  **settlement**, reading as the finish line of that strand.
+
+Both caps sit **on the tile edge the road shares with the node**, not at the
+tile's center, so they read as the ends of the strand rather than as more
+marks along it. A tile touching more than one node gets one cap per node
+(a road squeezed between a source and a settlement shows both). The caps
+draw on top of the gold line and, like the line, are purely informational:
+they never change routing, capacity, or cost.
 
 ---
 

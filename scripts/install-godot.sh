@@ -4,7 +4,11 @@ set -euo pipefail
 GODOT_VERSION="4.6.2"
 GODOT_RELEASE="${GODOT_VERSION}-stable"
 INSTALL_DIR="${HOME}/.local/bin"
-TEMPLATES_DIR="${HOME}/.local/share/godot/export_templates/${GODOT_RELEASE}"
+# Godot looks the templates up under "<version>.<status>" (the same string the
+# .tpz's version.txt carries), not the "<version>-<status>" spelling used in
+# the download URLs -- exporting fails with "template file not found" if they
+# land in the hyphenated directory.
+TEMPLATES_DIR="${HOME}/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
 TEMP_DIR="$(mktemp -d)"
 
 cleanup() {

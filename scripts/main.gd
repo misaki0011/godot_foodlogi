@@ -129,6 +129,25 @@ const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
 const ESTABLISHED_ROUTE_COLOR := Color(1.0, 0.83, 0.29, 0.9)
 const ESTABLISHED_ROUTE_Y := 1.55
 
+## Start/end caps for an established route (see _add_route_start_cap /
+## _add_route_end_cap). The gold line alone runs uniformly from supplier to
+## customer, so with several strands on screen it's hard to tell which end of
+## one is which; a green arrow marks where food leaves a source and a red bar
+## marks where it arrives at a settlement.
+const ROUTE_START_COLOR := Color(0.24, 0.87, 0.45, 0.95)
+const ROUTE_END_COLOR := Color(0.93, 0.24, 0.28, 0.95)
+## How far from the road tile's center toward the node a cap sits, as a
+## fraction of the step between them: 0.5 is exactly on the shared tile edge,
+## so this leaves the cap just inside the road tile. Keeping the caps out at
+## the edge (rather than at the tile center) is what makes them read as the
+## ends of the strand instead of as two more dots along it.
+const ROUTE_CAP_EDGE_T := 0.44
+## Lifted a hair above the gold line (which already floats ESTABLISHED_ROUTE_Y
+## above the tile) so the line never z-fights the cap drawn on top of it.
+const ROUTE_CAP_LIFT := 0.05
+const ROUTE_CAP_PRIORITY := 1 # draw over the gold line, not under it (see _drag_preview_material)
+const ROUTE_CAP_SIZE := 0.42
+
 func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
 	_state.balance = GameBalance.STARTING_FUNDS
@@ -349,11 +368,17 @@ func _add_drag_segment(a: Vector3, b: Vector3, color: Color) -> void:
 	mesh_instance.material_override = _drag_preview_material(color)
 	_drag_preview_visuals.add_child(mesh_instance)
 
-func _drag_preview_material(color: Color) -> StandardMaterial3D:
+## `priority` orders this material against the other transparent overlays:
+## transparent surfaces are sorted by render_priority before depth, so a
+## higher priority always draws on top of the gold line regardless of the
+## camera angle (depth alone puts the line's bar in front of a start/end cap
+## sitting at the same tile edge).
+func _drag_preview_material(color: Color, priority := 0) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.render_priority = priority
 	return material
 
 ## A small gold node dot for the established-route overlay. Added to
@@ -672,6 +697,55 @@ func _render_established_routes() -> void:
 				# start from the source (and reach the settlement) instead of
 				# stopping at the node-adjacent tile.
 				_add_established_segment(here, there)
+				_add_route_cap(here, there, _nodes_by_pos[n])
+
+## The strand's two ends: a green arrow on the tile edge facing a source (food
+## starts here, pointing the way it travels) and a red bar across the road on
+## the tile edge facing a settlement (food ends here). Both sit out at the
+## shared tile edge rather than at the tile's center, so each end of a route is
+## obvious even where several strands run side by side. A tile can touch more
+## than one node, in which case it gets one cap per node.
+func _add_route_cap(tile_center: Vector3, node_center: Vector3, node_data: NodeData) -> void:
+	var at: Vector3 = tile_center.lerp(node_center, ROUTE_CAP_EDGE_T)
+	at.y += ROUTE_CAP_LIFT
+	# Unit step from the road tile toward the node it caps against.
+	var toward_node := (node_center - tile_center).normalized()
+	if node_data.node_type == GameEnums.NodeType.SOURCE:
+		# Food flows out of a source, so the arrow points away from it.
+		_add_route_start_cap(at, -toward_node)
+	else:
+		_add_route_end_cap(at, toward_node)
+
+## An arrowhead pointing along `forward`, so the start cap also shows which way
+## the food travels. A PrismMesh is a triangle in its local X/Y plane (apex at
+## +Y) extruded along Z; tipping it -90 degrees about X lays that triangle flat
+## on the ground with its apex toward -Z and the extrusion becoming its
+## thickness, and the yaw then swings the apex onto `forward`. The basis is
+## composed explicitly rather than via `rotation`, so it doesn't depend on the
+## node's Euler order.
+func _add_route_start_cap(at: Vector3, forward: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := PrismMesh.new()
+	mesh.size = Vector3(ROUTE_CAP_SIZE * 2.1, ROUTE_CAP_SIZE * 1.8, 0.1)
+	mesh_instance.mesh = mesh
+	mesh_instance.transform = Transform3D(
+		Basis(Vector3.UP, atan2(-forward.x, -forward.z)) * Basis(Vector3.RIGHT, -PI / 2.0), at)
+	mesh_instance.material_override = _drag_preview_material(ROUTE_START_COLOR, ROUTE_CAP_PRIORITY)
+	_grid_visuals.add_child(mesh_instance)
+
+## A bar laid across the road -- a finish line at the settlement. `forward` is
+## always axis-aligned, so the bar only swaps its long side to stay
+## perpendicular to the direction of travel; no rotation is needed.
+func _add_route_end_cap(at: Vector3, forward: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	var long_side := ROUTE_CAP_SIZE * 2.1
+	var short_side := ROUTE_CAP_SIZE * 0.8
+	mesh.size = Vector3(long_side, 0.1, short_side) if absf(forward.z) > absf(forward.x) else Vector3(short_side, 0.1, long_side)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = at
+	mesh_instance.material_override = _drag_preview_material(ROUTE_END_COLOR, ROUTE_CAP_PRIORITY)
+	_grid_visuals.add_child(mesh_instance)
 
 ## The set (Vector2i -> true) of built tiles on some complete source->
 ## settlement path -- see SimulationEngine.established_route_cells for the
@@ -968,6 +1042,9 @@ func _build_ui() -> void:
 	_add_legend_row(side_box, MarkerColors.SOURCE_COLOR, "Food source")
 	_add_legend_row(side_box, MarkerColors.SETTLEMENT_COLOR, "Settlement")
 	_add_legend_row(side_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
+	_add_legend_row(side_box, ESTABLISHED_ROUTE_COLOR, "Established route (source→settlement)")
+	_add_legend_row(side_box, ROUTE_START_COLOR, "▲ Route start — leaves a source")
+	_add_legend_row(side_box, ROUTE_END_COLOR, "▬ Route end — reaches a settlement")
 	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
 	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
 	_add_legend_row(side_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (auto-forms at forks)")
