@@ -325,7 +325,7 @@ func _commit_drag() -> void:
 		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
 		_state.grid[cell] = {"kind": "route", "level": "dirt"}
 	for pair in _drag_new_connections:
-		_state.connect(pair[0], pair[1])
+		_state.add_connection(pair[0], pair[1])
 	var parts: Array[String] = []
 	if not _drag_new_cells.is_empty():
 		parts.append("%d new tile%s" % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
@@ -535,7 +535,7 @@ func _do_bulldoze(cell: Vector2i) -> void:
 		_show_toast("Nothing to remove here.", true)
 		return
 	_state.grid.erase(cell)
-	_state.disconnect_all(cell)
+	_state.remove_connections(cell)
 	_show_toast("Tile cleared.")
 
 func _after_action() -> void:
@@ -726,7 +726,7 @@ func _render_established_routes() -> void:
 		_add_established_marker(here)
 		for d in DIRECTIONS:
 			var n: Vector2i = cell + d
-			if not _state.is_connected(cell, n):
+			if not _state.has_connection(cell, n):
 				continue
 			var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
 			if established.has(n):

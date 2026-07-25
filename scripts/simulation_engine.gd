@@ -32,7 +32,7 @@ static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 		var n := pos + d
 		if n.x < 0 or n.y < 0 or n.x >= GameBalance.GRID_SIZE.x or n.y >= GameBalance.GRID_SIZE.y:
 			continue
-		if state.grid.has(n) and state.is_connected(pos, n):
+		if state.grid.has(n) and state.has_connection(pos, n):
 			sides[dir_keys[d]] = true
 	return sides
 
@@ -505,7 +505,7 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		if cell.kind == "route":
 			var up: float = GameBalance.ROUTE_BASE_UPKEEP * GameBalance.ROUTE_LEVELS[cell.level].upkeep_mult
 			for h in hub_tiles:
-				if state.is_connected(pos, h):
+				if state.has_connection(pos, h):
 					up *= 1.0 - float(GameBalance.HUB_TYPES[state.grid[h].htype].discount)
 					break
 			route_upkeep += up

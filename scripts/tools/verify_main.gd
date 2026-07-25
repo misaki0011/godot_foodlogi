@@ -65,7 +65,7 @@ func _report() -> void:
 	_main.call("_commit_drag")
 	assert(state.grid.size() == 1, "A drag from an existing anchor must place exactly one route tile")
 	assert(state.grid[build_cell].kind == "route")
-	assert(state.is_connected(farm.grid_position, build_cell), "Dragging from a node must record an explicit connection to the new tile")
+	assert(state.has_connection(farm.grid_position, build_cell), "Dragging from a node must record an explicit connection to the new tile")
 	assert(is_equal_approx(state.balance, starting_balance - GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted")
 
 	# Storage tool: only buildable on an existing route tile.

@@ -32,19 +32,26 @@ var last_congestion: Array[Dictionary] = [] # {pos:Vector2i, over:bool}
 ## network, which forced side-by-side but otherwise-independent routes to
 ## merge; now the player must drag across a boundary to link it (see
 ## Main._commit_drag).
+##
+## NOTE: the accessor methods below are named add_connection/has_connection/
+## remove_connections, NOT connect/is_connected/disconnect -- Object (which
+## RefCounted extends) already defines connect()/is_connected()/disconnect()
+## for signal wiring, and overriding them here with an incompatible signature
+## makes GDScript fail to parse ANY script that calls them ("Could not
+## resolve external class member"), breaking the whole game at load time.
 var connections: Dictionary = {}
 
-func connect(a: Vector2i, b: Vector2i) -> void:
+func add_connection(a: Vector2i, b: Vector2i) -> void:
 	connections.get_or_add(a, {})[b] = true
 	connections.get_or_add(b, {})[a] = true
 
-func is_connected(a: Vector2i, b: Vector2i) -> bool:
+func has_connection(a: Vector2i, b: Vector2i) -> bool:
 	return connections.has(a) and connections[a].has(b)
 
 ## Removes every edge touching `pos` (both its own entry and the reverse
 ## entry on each neighbor it was linked to) -- call when a tile is bulldozed
 ## so no dangling edge points at a cell that no longer exists.
-func disconnect_all(pos: Vector2i) -> void:
+func remove_connections(pos: Vector2i) -> void:
 	if not connections.has(pos):
 		return
 	for other in connections[pos].keys():
