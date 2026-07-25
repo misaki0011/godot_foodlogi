@@ -133,9 +133,21 @@ const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
 
 ## Overlay marking established (source->settlement) routes -- a bright, mostly
 ## opaque gold line floating just above the road surface (see
-## _render_established_routes).
+## _render_established_routes), with a green arrow at the source end (pointing
+## the way delivery actually flows) and a red bar at the settlement end.
 const ESTABLISHED_ROUTE_COLOR := Color(1.0, 0.83, 0.29, 0.9)
+const ESTABLISHED_START_COLOR := Color("5C8A5C") # matches the "done/fulfilled" green used elsewhere (e.g. settlement tips)
+const ESTABLISHED_END_COLOR := Color("C4573A") # matches MarkerColors.SETTLEMENT_COLOR
 const ESTABLISHED_ROUTE_Y := 1.55
+## Rotation (degrees) that points a +Y-pointing cone toward each cardinal
+## grid direction, given world +X = grid east and world +Z = grid south (see
+## SimulationEngine._grid_only_sides' dir_keys comment).
+const ARROW_ROTATION_BY_DIR := {
+	Vector2i(1, 0): Vector3(0, 0, -90),  # east
+	Vector2i(-1, 0): Vector3(0, 0, 90),  # west
+	Vector2i(0, 1): Vector3(90, 0, 0),   # south
+	Vector2i(0, -1): Vector3(-90, 0, 0), # north
+}
 
 func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
@@ -382,16 +394,35 @@ func _add_established_marker(pos: Vector3) -> void:
 	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
 	_grid_visuals.add_child(mesh_instance)
 
-## A thin gold bar joining two adjacent established points (tile-tile or
+## A thin bar joining two adjacent established points (tile-tile or
 ## tile-node); `a` and `b` are one grid step apart, so it's axis-aligned.
-func _add_established_segment(a: Vector3, b: Vector3) -> void:
+## Gold by default; the settlement end of a route uses ESTABLISHED_END_COLOR
+## instead (see _render_established_routes).
+func _add_established_segment(a: Vector3, b: Vector3, color: Color = ESTABLISHED_ROUTE_COLOR) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	var diff := b - a
 	mesh.size = Vector3(absf(diff.x) + 0.18, 0.08, absf(diff.z) + 0.18) if absf(diff.x) > absf(diff.z) else Vector3(0.18, 0.08, absf(diff.z) + 0.18)
 	mesh_instance.mesh = mesh
 	mesh_instance.position = (a + b) * 0.5
-	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
+	mesh_instance.material_override = _drag_preview_material(color)
+	_grid_visuals.add_child(mesh_instance)
+
+## A green cone arrow marking where an established route begins at a source,
+## pointing in the direction delivery actually flows (source -> first tile).
+## Positioned at the midpoint of the source<->tile link, same spot a plain
+## established_segment bar would sit, so it reads as replacing that bar with
+## a directional marker rather than adding a separate decoration.
+func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.0
+	mesh.bottom_radius = 0.22
+	mesh.height = 0.5
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.rotation_degrees = ARROW_ROTATION_BY_DIR.get(flow_dir, Vector3.ZERO)
+	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_START_COLOR)
 	_grid_visuals.add_child(mesh_instance)
 
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
@@ -672,12 +703,15 @@ func _render_grid() -> void:
 	if _bubbles_visible:
 		_render_supply_bubbles()
 
-## Continuously overlays a bright line along every tile that lies on a
+## Continuously overlays a bright gold line along every tile that lies on a
 ## complete source->settlement path (an "established route"), so the player
-## can see at a glance which roads actually link a source to a customer.
-## Dead-end stubs -- roads that branch off but reach no settlement (or no
-## source) -- are pruned out and left unmarked. Rebuilt every _render_grid,
-## so it stays live as the network is edited or simulated.
+## can see at a glance which roads actually link a source to a customer --
+## capped with a green arrow at the source end (pointing the way delivery
+## flows) and a red bar at the settlement end, so start and finish read at a
+## glance too. Dead-end stubs -- roads that branch off but reach no
+## settlement (or no source) -- are pruned out and left unmarked. Rebuilt
+## every _render_grid, so it stays live as the network is edited or
+## simulated.
 func _render_established_routes() -> void:
 	var established := _established_route_cells()
 	if established.is_empty():
@@ -685,6 +719,8 @@ func _render_established_routes() -> void:
 	# Draw a dot on each established tile and a bar to each established
 	# orthogonal neighbor (tile or node), so the marks read as one connected
 	# line running through the road and into the source/settlement it links.
+	# The node ends are distinguished: a green arrow at the source (pointing
+	# the way delivery flows) and a red bar at the settlement.
 	for cell in established:
 		var here: Vector3 = _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
 		_add_established_marker(here)
@@ -700,11 +736,17 @@ func _render_established_routes() -> void:
 					_add_established_segment(here, there)
 			elif _nodes_by_pos.has(n):
 				# Tile->node: a source/settlement isn't an established tile and
-				# never iterates to draw its own half, so draw the bar into it
-				# from ANY direction -- this is what makes the line actually
+				# never iterates to draw its own half, so draw the marker from
+				# ANY direction -- this is what makes the overlay actually
 				# start from the source (and reach the settlement) instead of
 				# stopping at the node-adjacent tile.
-				_add_established_segment(here, there)
+				var node: NodeData = _nodes_by_pos[n]
+				if node.node_type == GameEnums.NodeType.SOURCE:
+					# `d` points from the tile to the source; delivery flows
+					# the opposite way, from the source into the tile.
+					_add_established_start_arrow((here + there) * 0.5, -d)
+				else:
+					_add_established_segment(here, there, ESTABLISHED_END_COLOR)
 
 ## The set (Vector2i -> true) of built tiles on some complete source->
 ## settlement path -- see SimulationEngine.established_route_cells for the
