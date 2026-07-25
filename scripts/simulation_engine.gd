@@ -16,33 +16,15 @@ static func neighbors(pos: Vector2i, grid_size: Vector2i) -> Array[Vector2i]:
 			result.append(n)
 	return result
 
-## Hub-formation degree: how many of this tile's sides are real
-## route/storage/hub neighbors (see check_auto_hubs/would_exceed_hub_cap).
-## Neither source nor settlement nodes count (added in v0.4): per §4.7,
-## both are pure endpoints a delivery path can never enter or pass through
-## (a path starts at exactly one source, ends at exactly one settlement,
-## and may not use any other node as a transit shortcut), so a tile that
-## only reaches "3 connections" because a node happens to sit beside it
-## isn't actually organizing a branching junction -- it's a plain
-## pass-through with a node attached, and shouldn't require (or be blocked
-## by) a hub. Only converging route/storage/hub tiles do that.
-static func tile_degree(pos: Vector2i, state: GameState) -> int:
-	var sides := _grid_only_sides(pos, state)
-	return int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
-
 const STRAIGHT_FACINGS: Array[String] = ["lr", "ud"]
 const CORNER_FACINGS: Array[String] = ["ne", "se", "sw", "nw"]
 
-## Which of this tile's sides are real route/storage/hub neighbors (used
-## both for tile_degree()'s hub-formation threshold and for auto-deriving
-## visual shape in route_shape()). A nearby source/settlement node is
-## deliberately excluded -- see tile_degree()'s doc comment -- and, for
-## shape purposes specifically, a node also has its own separate marker
-## and shouldn't lock the road into visually bending toward it; node
-## adjacency only ever affects the *default* shown for an already-ambiguous
-## tile (see route_shape()), and never blocks tap-cycling. Keyed by compass
-## side: (0,-1)=north, (1,0)=east, (0,1)=south, (-1,0)=west, matching how
-## world Z increases with grid Y (see main.gd's map_to_local usage).
+## Which of this tile's sides are real route/storage/hub neighbors, used for
+## auto-deriving visual shape in route_shape(). Source/settlement nodes are
+## excluded here on purpose: a node has its own separate marker and shouldn't
+## drive the road's rendered shape. Keyed by compass side: (0,-1)=north,
+## (1,0)=east, (0,1)=south, (-1,0)=west, matching how world Z increases with
+## grid Y (see main.gd's map_to_local usage).
 static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 	var sides := {"n": false, "e": false, "s": false, "w": false}
 	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
@@ -53,12 +35,6 @@ static func _grid_only_sides(pos: Vector2i, state: GameState) -> Dictionary:
 		if state.grid.has(n):
 			sides[dir_keys[d]] = true
 	return sides
-
-static func _is_node_adjacent(pos: Vector2i, nodes_by_pos: Dictionary) -> bool:
-	for n in neighbors(pos, GameBalance.GRID_SIZE):
-		if nodes_by_pos.has(n):
-			return true
-	return false
 
 ## The shape that truthfully matches this tile's real connections, or {} if
 ## the count (0, 1, or 3+) doesn't uniquely determine one.
@@ -92,64 +68,35 @@ static func _single_real_side(sides: Dictionary) -> String:
 			found = side
 	return found if count == 1 else ""
 
-## The compass side of the first source/settlement node touching this tile,
-## or "" if none does.
-static func _node_side(pos: Vector2i, nodes_by_pos: Dictionary) -> String:
-	var dir_keys := {Vector2i(0, -1): "n", Vector2i(1, 0): "e", Vector2i(0, 1): "s", Vector2i(-1, 0): "w"}
-	for d in DIRECTIONS:
-		if nodes_by_pos.has(pos + d):
-			return dir_keys[d]
-	return ""
-
-const OPPOSITE_SIDE := {"n": "s", "s": "n", "e": "w", "w": "e"}
-
 ## Best-effort default facing for a tile whose shape isn't forced (see
-## route_shape()) and has no stored tap override yet: prefers whatever
-## shape is truthful to the real geometry actually touching it, rather than
-## an arbitrary fixed choice -- a single real route side and an adjacent
-## node on the *opposite* side reads as a straight through-line (e.g. a
-## source to the west and a route continuing east); a single real route
-## side and a node on an *adjacent* side reads as a corner bending toward
-## the node; a node with no real route side at all still bends toward the
-## node, just with no second side to disambiguate; only when there's
-## nothing nearby to go on at all does this fall back to a plain "lr".
-static func _best_default_facing(sides: Dictionary, pos: Vector2i, nodes_by_pos: Dictionary) -> String:
+## route_shape()) and has no stored tap override yet. Derived purely from the
+## tile's real route/storage/hub neighbors -- adjacent source/settlement nodes
+## are deliberately ignored so a road never bends toward or "connects to" a
+## node it happens to sit beside (the node has its own marker; the road only
+## traces real route geometry). A lone stub with one real route side reads as
+## a straight running along that side; with nothing real to go on it falls
+## back to a plain "lr". Any tile stays freely tap-cycleable to any of the 6
+## shapes from here (see is_shape_ambiguous/cycle_shape_facing).
+static func _best_default_facing(sides: Dictionary) -> String:
 	var route_side := _single_real_side(sides)
-	var node_side := _node_side(pos, nodes_by_pos)
-	if route_side != "" and node_side != "":
-		if OPPOSITE_SIDE[route_side] == node_side:
-			return "ud" if (route_side == "n" or route_side == "s") else "lr"
-		for facing in CORNER_FACINGS:
-			if facing.find(route_side) != -1 and facing.find(node_side) != -1:
-				return facing
-		return "lr" # unreachable: every side pairs with exactly one corner
-	if node_side != "":
-		for facing in CORNER_FACINGS:
-			if facing.find(node_side) != -1:
-				return facing
 	if route_side != "":
 		return "ud" if (route_side == "n" or route_side == "s") else "lr"
 	return "lr"
 
 ## Auto-derives a route tile's visual shape from its real connections (see
 ## AGENTS.md route-direction feature and the v0.4 "tap and hold to draw"
-## changelog entry). Only a tile adjacent to a source or settlement node can
-## have its shape forced: 2 real route/storage/hub connections force the
-## matching straight/corner, 3+ force the existing plain junction/hub_capped
-## fallback. Every other tile -- regardless of its real connection count --
-## is always player-choosable by tap, defaulting to whatever shape best
-## matches its real connections when nothing's been tapped yet, or the
-## stored override once it has (see is_shape_ambiguous/cycle_shape_facing).
-static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+## changelog entry). Shape depends ONLY on real route/storage/hub neighbors --
+## an adjacent source or settlement never forces, locks, or bends the tile
+## (revised in v0.4: nodes were previously allowed to pull a road-stub toward
+## themselves, which read as the road always "connecting" to the node it sat
+## beside). Every route tile -- regardless of its real connection count and
+## regardless of any neighboring node -- is always player-choosable by tap,
+## defaulting to whatever shape matches its real route connections when
+## nothing's been tapped yet, or the stored override once it has (see
+## is_shape_ambiguous/cycle_shape_facing). `_nodes_by_pos` is kept on the
+## signature for call-site stability but no longer influences the shape.
+static func route_shape(pos: Vector2i, state: GameState, _nodes_by_pos: Dictionary) -> Dictionary:
 	var sides := _grid_only_sides(pos, state)
-	var count: int = int(sides.n) + int(sides.e) + int(sides.s) + int(sides.w)
-	var node_adjacent := _is_node_adjacent(pos, nodes_by_pos)
-
-	if node_adjacent and count >= 3:
-		return {"family": "junction", "facing": ""}
-	if node_adjacent and count == 2:
-		return _natural_facing(sides)
-
 	var cycle := _shape_cycle()
 	var stored = state.grid.get(pos, {}).get("facing", "")
 	if cycle.has(stored):
@@ -157,17 +104,15 @@ static func route_shape(pos: Vector2i, state: GameState, nodes_by_pos: Dictionar
 	var natural := _natural_facing(sides)
 	if not natural.is_empty():
 		return natural
-	var facing: String = _best_default_facing(sides, pos, nodes_by_pos)
+	var facing: String = _best_default_facing(sides)
 	return {"family": "corner" if CORNER_FACINGS.has(facing) else "straight", "facing": facing}
 
 ## True when tapping this route tile should cycle its shape instead of
-## no-opping. A tile with no source/settlement touching it is always
-## tappable, regardless of its real connection count; a node-adjacent tile
-## is only tappable when it has 0-1 real connections (otherwise its shape
-## is forced -- see route_shape()).
-static func is_shape_ambiguous(pos: Vector2i, state: GameState, nodes_by_pos: Dictionary) -> bool:
-	if _is_node_adjacent(pos, nodes_by_pos):
-		return tile_degree(pos, state) <= 1
+## no-opping. Every route tile is now freely tappable regardless of its real
+## connection count or any neighboring source/settlement -- nodes no longer
+## lock a tile's shape (see route_shape()). `_state`/`_nodes_by_pos` are kept
+## on the signature for call-site stability.
+static func is_shape_ambiguous(_pos: Vector2i, _state: GameState, _nodes_by_pos: Dictionary) -> bool:
 	return true
 
 ## Returns the next facing to store for an ambiguous route tile (caller
@@ -196,70 +141,112 @@ static func build_graph(state: GameState, nodes_by_pos: Dictionary) -> Dictionar
 				adj.get_or_add(n, []).append(pos)
 	return adj
 
-static func compute_components(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
-	var adj := build_graph(state, nodes_by_pos)
+## Connected components over BUILT TILES ALONE (route/storage/hub) -- nodes are
+## NOT transit vertices, since a delivery can never pass through a
+## source/settlement (§4.7). Two road groups that touch only a shared node are
+## therefore SEPARATE networks. Used for hub-cap/formation (each road network
+## gets its own hub budget) and, via established_route_cells, the overlay.
+## Vector2i tile -> component id.
+static func road_components(state: GameState) -> Dictionary:
 	var comp_of := {}
 	var comp_id := 0
-	for start in adj.keys():
+	for start in state.grid:
 		if comp_of.has(start):
 			continue
-		var queue: Array = [start]
+		var queue: Array[Vector2i] = [start]
 		comp_of[start] = comp_id
 		while not queue.is_empty():
-			var u = queue.pop_front()
-			for v in adj.get(u, []):
-				if not comp_of.has(v):
+			var u: Vector2i = queue.pop_front()
+			for d in DIRECTIONS:
+				var v: Vector2i = u + d
+				if state.grid.has(v) and not comp_of.has(v):
 					comp_of[v] = comp_id
 					queue.append(v)
 		comp_id += 1
 	return comp_of
 
-## Read-only preview for main.gd's route-placement validation: would
-## building a route tile at new_cell push some junction (the new tile
-## itself, or an existing route tile newly connected through it) to 3+
-## connections inside a network that's already at HUB_CAP_PER_NETWORK
-## hubs? Only tiles whose degree actually changes because of this one
-## placement are considered, so an already-hub_capped junction elsewhere
-## doesn't block unrelated route building.
-static func would_exceed_hub_cap(state: GameState, nodes_by_pos: Dictionary, new_cell: Vector2i) -> bool:
-	if state.grid.has(new_cell):
-		return false
-	var temp_grid := state.grid.duplicate()
-	temp_grid[new_cell] = {"kind": "route", "level": "dirt"}
-	var temp_state := GameState.new()
-	temp_state.grid = temp_grid
+## The set (Vector2i -> true) of built tiles on some complete source->
+## settlement path -- a path that starts at a source, so a road network no
+## source can reach is never included (used for main.gd's established-route
+## overlay).
+##
+## A delivery path can never pass through a node (a source/settlement is a
+## pure endpoint, §4.7), so connectivity is computed over built tiles ALONE:
+## two roads link only when orthogonally adjacent, never "through" a node
+## they both touch. A road network qualifies only when it touches at least
+## one source AND at least one settlement -- this is what keeps a
+## settlement-to-settlement road (reachable from no source) out, even when
+## some unrelated source sits elsewhere on the map. Within a qualifying
+## network, dead-end stubs are pruned: a tile survives only while it still
+## links to 2+ things (another kept tile, or a node it anchors to), leaving
+## the through-paths that run from a source to a settlement.
+static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+	var comp_of := road_components(state)
+	# Which road networks touch a source / a settlement (adjacency to a node).
+	var comp_has_source := {}
+	var comp_has_settlement := {}
+	for pos in state.grid:
+		var comp = comp_of[pos]
+		for d in DIRECTIONS:
+			var node: NodeData = nodes_by_pos.get(pos + d)
+			if node == null:
+				continue
+			if node.node_type == GameEnums.NodeType.SOURCE:
+				comp_has_source[comp] = true
+			else:
+				comp_has_settlement[comp] = true
+	var kept := {}
+	for pos in state.grid:
+		var comp = comp_of[pos]
+		if comp_has_source.get(comp, false) and comp_has_settlement.get(comp, false):
+			kept[pos] = true
+	# Iteratively prune dead-end tiles. A tile survives only while it links to
+	# 2+ things (kept tiles or nodes) -- i.e. it's mid-path, not a stub tip.
+	var changed := true
+	while changed:
+		changed = false
+		for pos in kept.keys():
+			var degree := 0
+			for d in DIRECTIONS:
+				var n: Vector2i = pos + d
+				if kept.has(n) or nodes_by_pos.has(n):
+					degree += 1
+			if degree <= 1:
+				kept.erase(pos)
+				changed = true
+	return kept
 
-	var comp_of := compute_components(temp_state, nodes_by_pos)
-	var hub_counts := {}
-	for pos in state.grid.keys():
-		var cell = state.grid[pos]
-		if cell.kind == "hub":
-			var c = comp_of.get(pos, -1)
-			hub_counts[c] = hub_counts.get(c, 0) + 1
+## The number of delivery branches meeting at `pos`: how many of its orthogonal
+## neighbors are either on an established route (road/storage/hub) OR a
+## source/settlement node. Adjacent nodes count so that a tile where a source's
+## delivery fans out (source + 2+ roads), or where multiple sources' deliveries
+## converge, reads as a branch -- a node is an endpoint of flow, and a tile
+## sitting between an endpoint and 2+ roads is a split/merge point.
+static func hub_branch_count(pos: Vector2i, established: Dictionary, nodes_by_pos: Dictionary) -> int:
+	var count := 0
+	for d in DIRECTIONS:
+		var n: Vector2i = pos + d
+		if established.has(n) or nodes_by_pos.has(n):
+			count += 1
+	return count
 
-	var new_junctions: Array[Vector2i] = []
-	if tile_degree(new_cell, temp_state) >= 3:
-		new_junctions.append(new_cell)
-	for n in neighbors(new_cell, GameBalance.GRID_SIZE):
-		var cell = state.grid.get(n)
-		if cell == null or cell.kind != "route":
-			continue
-		if tile_degree(n, state) < 3 and tile_degree(n, temp_state) >= 3:
-			new_junctions.append(n)
-
-	for pos in new_junctions:
-		var comp = comp_of.get(pos, -1)
-		if hub_counts.get(comp, 0) >= GameBalance.HUB_CAP_PER_NETWORK:
-			return true
-	return false
-
-## Mutates state.grid/state.balance: auto-forms a Small Hub on any route
-## tile with 3+ connections, unless its connected network already has
-## HUB_CAP_PER_NETWORK hubs (hub_capped) or funds are short (needs_hub).
-## Returns "ok:<msg>" / "warn:<msg>" toast lines for newly-changed tiles.
+## Mutates state.grid/state.balance: auto-forms a Small Hub at every tile where
+## a COMPLETED route branches -- where a source's delivery splits toward
+## multiple paths, or where multiple sources' deliveries converge. A route tile
+## becomes a hub only when it (a) lies on an established source->settlement
+## route (see established_route_cells) and (b) has 3+ branches meeting at it
+## (hub_branch_count: established road neighbors plus adjacent source/settlement
+## nodes). A straight run and an isolated/unfinished road never form a hub, but
+## a road beside a source that also continues in 2+ directions does (revised in
+## v0.4: hubs = completed-route split/merge points; adjacent nodes count again,
+## now gated on the route actually being finished). Capped at
+## HUB_CAP_PER_NETWORK per road network (over-cap forks stay hub_capped); a fork
+## the player can't afford yet is flagged needs_hub. Returns "ok:"/"warn:" toast
+## lines for newly-changed tiles.
 static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array[String]:
 	var messages: Array[String] = []
-	var comp_of := compute_components(state, nodes_by_pos)
+	var comp_of := road_components(state)
+	var established := established_route_cells(state, nodes_by_pos)
 	var hub_counts := {}
 	for pos in state.grid.keys():
 		var cell = state.grid[pos]
@@ -270,8 +257,8 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 		var cell = state.grid[pos]
 		if cell.kind != "route":
 			continue
-		var degree := tile_degree(pos, state)
-		if degree >= 3:
+		var is_fork: bool = established.has(pos) and hub_branch_count(pos, established, nodes_by_pos) >= 3
+		if is_fork:
 			var comp = comp_of.get(pos, -1)
 			var count: int = hub_counts.get(comp, 0)
 			if count >= GameBalance.HUB_CAP_PER_NETWORK:
@@ -286,7 +273,7 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 				state.balance -= cost
 				state.grid[pos] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
 				hub_counts[comp] = count + 1
-				messages.append("ok:Junction formed — Small Hub auto-built for §%d." % roundi(cost))
+				messages.append("ok:Route fork — Small Hub auto-built for §%d." % roundi(cost))
 			else:
 				cell.needs_hub = true
 		else:
@@ -295,7 +282,10 @@ static func check_auto_hubs(state: GameState, nodes_by_pos: Dictionary) -> Array
 	return messages
 
 ## Dijkstra minimizing cumulative freshness-decay weight; ties broken
-## naturally by whichever path accumulates less decay first.
+## naturally by whichever path accumulates less decay first. A delivery path
+## may only touch a node at its two ends (start = source, end = settlement) --
+## a source/settlement is a terminal endpoint, never a transit shortcut
+## (§4.7), so any node reached mid-search is a dead end and is never expanded.
 static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vector2i, to_pos: Vector2i, food: FoodData) -> Array[Vector2i]:
 	var adj := build_graph(state, nodes_by_pos)
 	if not adj.has(from_pos) or not adj.has(to_pos):
@@ -314,6 +304,11 @@ static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vect
 		visited[u] = true
 		if u == to_pos:
 			break
+		# A node other than the delivery's own source is an endpoint, not a
+		# through-route: reach it if it's the destination, but never route past
+		# it into its other adjacent roads.
+		if nodes_by_pos.has(u) and u != from_pos:
+			continue
 		for v in adj.get(u, []):
 			if visited.has(v):
 				continue

@@ -27,8 +27,12 @@ const ROUTE_CORNER_SCENES := {
 ## Y-axis yaw for each facing. Straight blocks' tread already runs N-S at 0
 ## rotation (see generate_blocks.py), so "ud" needs none and "lr" needs a
 ## quarter turn. Corner blocks are authored connecting N+E ("ne") at 0
-## rotation; each other facing is one further quarter turn clockwise.
-const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "se": 90.0, "sw": 180.0, "nw": 270.0}
+## rotation. A positive rotation_degrees.y is counter-clockwise as seen by
+## this top-down camera (world +Z is south, so +Y points toward the viewer),
+## so each quarter turn advances N+E counter-clockwise: 90 -> N+W ("nw"),
+## 180 -> S+W ("sw"), 270 -> S+E ("se"). (Earlier "se"/"nw" were swapped,
+## which rendered a down-right corner as an up-left one and vice versa.)
+const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "nw": 90.0, "sw": 180.0, "se": 270.0}
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
@@ -118,6 +122,12 @@ var _drag_preview_visuals: Node3D
 
 const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
 const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
+
+## Overlay marking established (source->settlement) routes -- a bright, mostly
+## opaque gold line floating just above the road surface (see
+## _render_established_routes).
+const ESTABLISHED_ROUTE_COLOR := Color(1.0, 0.83, 0.29, 0.9)
+const ESTABLISHED_ROUTE_Y := 1.55
 
 func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
@@ -209,31 +219,56 @@ func _end_press(screen_position: Vector2) -> void:
 	_handle_click(_screen_to_cell(screen_position), screen_position)
 
 ## Grows the in-progress drag path with a newly-entered cell (duplicates of
-## the current tail are ignored) and refreshes the preview. Nothing is
-## written to _state.grid here -- see the class-level comment above
+## the current tail are ignored) and refreshes the preview. A fast drag only
+## fires a mouse-motion event every few cells, so the pointer can jump more
+## than one cell (or diagonally) between events; we fill in every orthogonal
+## cell between the previous tail and the new one so the recorded path is
+## always a continuous, orthogonally-connected line -- otherwise the skipped
+## middle cells never get built and the route comes out with holes in it.
+## Nothing is written to _state.grid here -- see the class-level comment above
 ## _press_eligible for why the whole path is only committed on release.
 func _extend_drag_path(cell: Vector2i) -> void:
 	if not _cell_in_bounds(cell) or (not _drag_path.is_empty() and _drag_path[-1] == cell):
 		return
-	_drag_path.append(cell)
+	if _drag_path.is_empty():
+		_drag_path.append(cell)
+	else:
+		for step in _cells_between(_drag_path[-1], cell):
+			_drag_path.append(step)
 	_recompute_drag_validity()
 	_update_drag_preview()
+
+## The orthogonally-connected cells from `a` (exclusive) to `b` (inclusive):
+## each returned cell is one grid step from the previous, so a jump of any
+## length or direction is expanded into a gap-free line. Steps along the
+## larger remaining axis first, matching how a finger usually traces a path.
+func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	var current := a
+	while current != b:
+		var dx := b.x - current.x
+		var dy := b.y - current.y
+		if absi(dx) >= absi(dy):
+			current.x += signi(dx)
+		else:
+			current.y += signi(dy)
+		result.append(current)
+	return result
 
 ## Re-derives, from scratch, which cells in _drag_path are real new tiles to
 ## build (_drag_new_cells) and whether the whole path is valid: every new
 ## cell must connect to the existing network or an earlier tile already
-## queued in this same drag, none may push a junction past the hub cap, and
-## the total cost must fit the current treasury. Node cells and cells
-## already built are harmless pass-through waypoints, not failures. Runs
-## against a scratch grid copy, matching would_exceed_hub_cap's own
-## preview-without-mutating pattern -- _state.grid is never touched here.
+## queued in this same drag, and the total cost must fit the current
+## treasury. Node cells and cells already built are harmless pass-through
+## waypoints, not failures. The hub cap never blocks a placement -- hubs
+## auto-form (or stay capped) only after the route is built, when it's a
+## completed-route fork (see SimulationEngine.check_auto_hubs). Runs against a
+## scratch grid copy -- _state.grid is never touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
 	_drag_new_cells.clear()
 	var temp_grid: Dictionary = _state.grid.duplicate()
-	var temp_state := GameState.new()
-	temp_state.grid = temp_grid
 	var total_cost := 0.0
 	for cell in _drag_path:
 		if _node_at(cell) or temp_grid.has(cell):
@@ -246,10 +281,6 @@ func _recompute_drag_validity() -> void:
 		if not adjacent:
 			_drag_valid = false
 			_drag_invalid_reason = "That path isn't connected -- try dragging more slowly."
-			break
-		if SimulationEngine.would_exceed_hub_cap(temp_state, _nodes_by_pos, cell):
-			_drag_valid = false
-			_drag_invalid_reason = "That path would need a hub beyond the network's cap."
 			break
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
 		temp_grid[cell] = {"kind": "route", "level": "dirt"}
@@ -325,6 +356,29 @@ func _drag_preview_material(color: Color) -> StandardMaterial3D:
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	return material
 
+## A small gold node dot for the established-route overlay. Added to
+## _grid_visuals so it's cleared and rebuilt on every _render_grid.
+func _add_established_marker(pos: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.34, 0.1, 0.34)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
+	_grid_visuals.add_child(mesh_instance)
+
+## A thin gold bar joining two adjacent established points (tile-tile or
+## tile-node); `a` and `b` are one grid step apart, so it's axis-aligned.
+func _add_established_segment(a: Vector3, b: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	var diff := b - a
+	mesh.size = Vector3(absf(diff.x) + 0.18, 0.08, absf(diff.z) + 0.18) if absf(diff.x) > absf(diff.z) else Vector3(0.18, 0.08, absf(diff.z) + 0.18)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = (a + b) * 0.5
+	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
+	_grid_visuals.add_child(mesh_instance)
+
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
 		return
@@ -362,9 +416,6 @@ func _do_build_route(cell: Vector2i) -> void:
 		return
 	if not _adjacent_to_network(cell):
 		_show_toast("Route must connect to a node or existing route.", true)
-		return
-	if SimulationEngine.would_exceed_hub_cap(_state, _nodes_by_pos, cell):
-		_show_toast("Can't place this road: it would need a 3rd hub, but each connected network can only support %d. Try routing around this junction." % GameBalance.HUB_CAP_PER_NETWORK, true)
 		return
 	var cost := SimulationEngine.route_build_cost(cell, _map_data)
 	if _state.balance < cost:
@@ -586,8 +637,47 @@ func _render_grid() -> void:
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
+	_render_established_routes()
 	if _bubbles_visible:
 		_render_supply_bubbles()
+
+## Continuously overlays a bright line along every tile that lies on a
+## complete source->settlement path (an "established route"), so the player
+## can see at a glance which roads actually link a source to a customer.
+## Dead-end stubs -- roads that branch off but reach no settlement (or no
+## source) -- are pruned out and left unmarked. Rebuilt every _render_grid,
+## so it stays live as the network is edited or simulated.
+func _render_established_routes() -> void:
+	var established := _established_route_cells()
+	if established.is_empty():
+		return
+	# Draw a dot on each established tile and a bar to each established
+	# orthogonal neighbor (tile or node), so the marks read as one connected
+	# line running through the road and into the source/settlement it links.
+	for cell in established:
+		var here: Vector3 = _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
+		_add_established_marker(here)
+		for d in DIRECTIONS:
+			var n: Vector2i = cell + d
+			var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
+			if established.has(n):
+				# Tile<->tile: draw one bar per undirected pair (east/south only),
+				# since the other tile will iterate and draw the matching half.
+				if d == Vector2i(1, 0) or d == Vector2i(0, 1):
+					_add_established_segment(here, there)
+			elif _nodes_by_pos.has(n):
+				# Tile->node: a source/settlement isn't an established tile and
+				# never iterates to draw its own half, so draw the bar into it
+				# from ANY direction -- this is what makes the line actually
+				# start from the source (and reach the settlement) instead of
+				# stopping at the node-adjacent tile.
+				_add_established_segment(here, there)
+
+## The set (Vector2i -> true) of built tiles on some complete source->
+## settlement path -- see SimulationEngine.established_route_cells for the
+## exact rule (road-only connectivity that must start at a source).
+func _established_route_cells() -> Dictionary:
+	return SimulationEngine.established_route_cells(_state, _nodes_by_pos)
 
 ## Always-on speech bubbles showing "current/max" for every source and
 ## settlement: a source's amount drawn today vs. its daily produce
@@ -777,8 +867,12 @@ func _node_at(cell: Vector2i) -> NodeData:
 
 func _set_tool(tool: String) -> void:
 	_tool = tool
+	# A tool can have more than one button (the sidebar copy plus a shortcut on
+	# the top-left controller panel), so keep every button for the active tool
+	# pressed and every other tool's buttons released.
 	for key in _tool_buttons:
-		_tool_buttons[key].button_pressed = key == tool
+		for button in _tool_buttons[key]:
+			button.button_pressed = key == tool
 	_hint_label.text = TOOL_HINTS.get(tool, "")
 
 func _on_bubbles_toggled(pressed: bool) -> void:
@@ -1017,6 +1111,18 @@ func _build_map_controls(root: Control) -> void:
 	_bubbles_button.toggled.connect(_on_bubbles_toggled)
 	bubbles_row.add_child(_bubbles_button)
 
+	# Shortcuts for the two most-used build tools, so drawing and erasing
+	# routes don't require reaching over to the right-hand sidebar. These
+	# register alongside the sidebar's own Draw Route / Bulldoze buttons (see
+	# _add_tool_button), and _set_tool keeps every copy of a tool in sync.
+	box.add_child(HSeparator.new())
+	_add_section_title(box, "BUILD")
+	var build_row := HBoxContainer.new()
+	build_row.add_theme_constant_override("separation", 4)
+	box.add_child(build_row)
+	_add_controller_tool_button(build_row, "Route", "route")
+	_add_controller_tool_button(build_row, "Erase", "remove")
+
 const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
 const CONTROLLER_FONT_SIZE := 24
 
@@ -1027,6 +1133,20 @@ func _pan_spacer() -> Control:
 
 func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
 	_add_hold_button(parent, text, func() -> void: _pan_dir += dir, func() -> void: _pan_dir -= dir)
+
+## A compact toggle button on the top-left controller panel that selects a
+## build tool, mirroring the right-hand sidebar's tool button for the same
+## tool (both register in _tool_buttons, so _set_tool keeps them in sync).
+func _add_controller_tool_button(parent: Container, text: String, tool: String) -> void:
+	var button := Button.new()
+	button.text = text
+	button.toggle_mode = true
+	button.custom_minimum_size = Vector2(52, 40)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.add_theme_font_size_override("font_size", 14)
+	button.pressed.connect(_set_tool.bind(tool))
+	parent.add_child(button)
+	_tool_buttons.get_or_add(tool, []).append(button)
 
 func _add_hold_button(parent: Container, text: String, on_press: Callable, on_release: Callable) -> Button:
 	var button := Button.new()
@@ -1063,7 +1183,7 @@ func _add_tool_button(parent: VBoxContainer, text: String, tool: String) -> void
 	button.custom_minimum_size.y = 36
 	button.pressed.connect(_set_tool.bind(tool))
 	parent.add_child(button)
-	_tool_buttons[tool] = button
+	_tool_buttons.get_or_add(tool, []).append(button)
 
 func _add_legend_row(parent: VBoxContainer, color: Color, text: String) -> void:
 	var row := HBoxContainer.new()

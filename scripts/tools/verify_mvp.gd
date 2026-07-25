@@ -10,7 +10,9 @@ func _initialize() -> void:
 	_test_daily_simulation()
 	_test_hub_auto_formation_and_cap()
 	_test_route_shape()
-	_test_node_adjacency_excluded_from_hub_degree()
+	_test_established_route_cells()
+	_test_hub_only_on_completed_route_fork()
+	_test_delivery_does_not_transit_nodes()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -57,15 +59,22 @@ func _test_daily_simulation() -> void:
 	assert(state.day == 1, "run_day must not itself advance the day counter (Main._close_report does)")
 
 func _test_hub_auto_formation_and_cap() -> void:
+	# A completed route: a source feeds a horizontal spine that runs to a
+	# settlement (E), with three branches dropping to three more settlements.
+	# Each branch parent is a genuine 3-road fork ON the finished route, so a
+	# hub forms there -- capped at HUB_CAP_PER_NETWORK per road network.
 	var state := GameState.new()
-	var nodes_by_pos := {} # Empty margin area far from any real node/river.
-	var spine: Array[Vector2i] = [Vector2i(4, 12), Vector2i(5, 12), Vector2i(6, 12), Vector2i(7, 12), Vector2i(8, 12), Vector2i(9, 12)]
+	var nodes_by_pos := {}
+	nodes_by_pos[Vector2i(1, 10)] = _make_node(GameEnums.NodeType.SOURCE)      # S, west of spine
+	nodes_by_pos[Vector2i(8, 10)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # E, east of spine
+	var spine: Array[Vector2i] = [Vector2i(2, 10), Vector2i(3, 10), Vector2i(4, 10), Vector2i(5, 10), Vector2i(6, 10), Vector2i(7, 10)]
 	for cell in spine:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
-	var forks: Array[Vector2i] = [Vector2i(5, 12), Vector2i(6, 12), Vector2i(7, 12)]
+	var forks: Array[Vector2i] = [Vector2i(3, 10), Vector2i(4, 10), Vector2i(5, 10)]
 	for parent in forks:
 		var branch := parent + Vector2i(0, 1)
 		state.grid[branch] = {"kind": "route", "level": "dirt"}
+		nodes_by_pos[branch + Vector2i(0, 1)] = _make_node(GameEnums.NodeType.SETTLEMENT)
 
 	var starting_balance := state.balance
 	SimulationEngine.check_auto_hubs(state, nodes_by_pos)
@@ -80,7 +89,7 @@ func _test_hub_auto_formation_and_cap() -> void:
 			capped_count += 1
 	print("Hubs formed: %d, capped junctions: %d (cap is %d)" % [hub_count, capped_count, GameBalance.HUB_CAP_PER_NETWORK])
 	assert(hub_count == GameBalance.HUB_CAP_PER_NETWORK, "Exactly HUB_CAP_PER_NETWORK hubs should auto-form on one connected network")
-	assert(capped_count == forks.size() - GameBalance.HUB_CAP_PER_NETWORK, "Any further 3-way junction must be rejected as hub_capped, not silently formed")
+	assert(capped_count == forks.size() - GameBalance.HUB_CAP_PER_NETWORK, "Any further completed-route fork must be rejected as hub_capped, not silently formed")
 	assert(is_equal_approx(state.balance, starting_balance - GameBalance.HUB_CAP_PER_NETWORK * GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build))
 
 func _test_route_shape() -> void:
@@ -90,15 +99,15 @@ func _test_route_shape() -> void:
 		nodes_by_pos[node.grid_position] = node
 	var farm := _node(map, "farm")
 
-	# A lone stub built directly east of Farm: its only real connection is
-	# the source node (to its west), so it should default to a corner that
-	# actually touches that side ("sw", the first CORNER_FACINGS entry
-	# containing "w"), not an arbitrary one that ignores where the node is.
+	# A lone stub built directly east of Farm with no real route neighbor at
+	# all (only the source node to its west): nodes no longer influence shape,
+	# so it defaults to a plain "lr" straight rather than bending toward the
+	# source it happens to sit beside.
 	var stub_by_node := farm.grid_position + Vector2i(1, 0)
 	var state_a := GameState.new()
 	state_a.grid[stub_by_node] = {"kind": "route", "level": "dirt"}
 	var shape_a := SimulationEngine.route_shape(stub_by_node, state_a, nodes_by_pos)
-	assert(shape_a.family == "corner" and shape_a.facing == "sw", "A stub adjacent only to a source/settlement should default to a corner touching the node's actual side")
+	assert(shape_a.family == "straight" and shape_a.facing == "lr", "A stub with no real route neighbor must default to a plain straight, ignoring any adjacent source/settlement")
 
 	# A lone stub next to another route tile (not a node) should default to
 	# straight instead.
@@ -108,17 +117,18 @@ func _test_route_shape() -> void:
 	var shape_b := SimulationEngine.route_shape(Vector2i(2, 13), state_b, {})
 	assert(shape_b.family == "straight" and shape_b.facing == "lr", "A stub adjacent only to another route tile should default to straight")
 
-	# Adjacent to a node (Farm) with two opposite real connections: still
-	# forced -- the auto-tile rule only ever locks a shape next to a
-	# source/settlement, and this ignores any stored override.
+	# Adjacent to a node (Farm) with two opposite real connections and a stored
+	# override: nodes no longer force or lock a shape, so this behaves exactly
+	# like a tile out in the open -- the stored "ne" override wins and the tile
+	# stays tappable.
 	var mid_by_node := farm.grid_position + Vector2i(1, 0) # east of Farm
 	var state_c := GameState.new()
 	state_c.grid[mid_by_node + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
-	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt", "facing": "ne"} # stored override, must be ignored
+	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt", "facing": "ne"} # stored override, must win
 	state_c.grid[mid_by_node + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
 	var shape_c := SimulationEngine.route_shape(mid_by_node, state_c, nodes_by_pos)
-	assert(shape_c.family == "straight" and shape_c.facing == "ud", "A node-adjacent tile with 2 opposite connections must stay forced, ignoring any stored override")
-	assert(not SimulationEngine.is_shape_ambiguous(mid_by_node, state_c, nodes_by_pos), "A node-adjacent forced tile must not be tappable")
+	assert(shape_c.family == "corner" and shape_c.facing == "ne", "A node-adjacent tile's stored override must win -- nodes no longer force a shape")
+	assert(SimulationEngine.is_shape_ambiguous(mid_by_node, state_c, nodes_by_pos), "A node-adjacent tile must be tappable -- nodes no longer lock a shape")
 
 	# The same two-opposite-connections shape, but nowhere near a node: no
 	# longer forced -- a stored override must now be honored instead of the
@@ -154,9 +164,8 @@ func _test_route_shape() -> void:
 
 	# Regression: a route tile with a node on one side (west) and a real
 	# route tile continuing on an *adjacent* side (south) must NOT be forced
-	# into a corner -- only route/storage/hub neighbors can force a shape
-	# next to a node. It should default to a corner but stay tappable all
-	# the way to "ud".
+	# by the node -- shape ignores nodes entirely, so the tile stays freely
+	# tappable all the way to "ud".
 	var stub_by_node_and_route := farm.grid_position + Vector2i(1, 0) # node to the west
 	var state_f := GameState.new()
 	state_f.grid[stub_by_node_and_route] = {"kind": "route", "level": "dirt"}
@@ -171,62 +180,112 @@ func _test_route_shape() -> void:
 			break
 	assert(reachable_ud, "A node-adjacent ambiguous tile must be able to cycle all the way to a straight up-down facing")
 
-	# Regression: a straight-drawn run where one end sits beside a source and
-	# the other beside a settlement must default to shapes that reflect the
-	# real neighbor on each side (opposite -> straight through, adjacent ->
-	# the matching corner), not an arbitrary fixed choice.
+	# A tile's default shape reflects only its real route neighbors, never an
+	# adjacent node: a single real route neighbor always reads as a straight
+	# running along that side, regardless of which side a source/settlement
+	# happens to sit on.
 	var village_a := _node(map, "villageA")
 	var tile_by_source := farm.grid_position + Vector2i(1, 0) # source west, route east
 	var state_g := GameState.new()
 	state_g.grid[tile_by_source] = {"kind": "route", "level": "dirt"}
 	state_g.grid[tile_by_source + Vector2i(1, 0)] = {"kind": "route", "level": "dirt"}
 	var shape_g := SimulationEngine.route_shape(tile_by_source, state_g, nodes_by_pos)
-	assert(shape_g.family == "straight" and shape_g.facing == "lr", "A source to the west and a route to the east must default to a left-right straight tile, not an arbitrary corner")
+	assert(shape_g.family == "straight" and shape_g.facing == "lr", "A route neighbor to the east must default to a left-right straight tile, ignoring the source to the west")
 
 	var tile_by_settlement := village_a.grid_position + Vector2i(0, 1) # settlement north, route west
 	var state_h := GameState.new()
 	state_h.grid[tile_by_settlement] = {"kind": "route", "level": "dirt"}
 	state_h.grid[tile_by_settlement + Vector2i(-1, 0)] = {"kind": "route", "level": "dirt"}
 	var shape_h := SimulationEngine.route_shape(tile_by_settlement, state_h, nodes_by_pos)
-	assert(shape_h.family == "corner" and shape_h.facing == "nw", "A settlement to the north and a route to the west must default to the NW corner that actually touches both real sides")
+	assert(shape_h.family == "straight" and shape_h.facing == "lr", "A single route neighbor to the west must default to a left-right straight, ignoring the settlement to the north")
 
-func _test_node_adjacency_excluded_from_hub_degree() -> void:
-	var map: MapData = load("res://data/maps/region_1_map.tres")
+func _test_established_route_cells() -> void:
+	# Synthetic layout (col,row): a source S at (0,0) linked by a vertical road
+	# down to settlement A at (0,4); a dead-end stub off the middle; a
+	# settlement-to-settlement road (B..C) with no source anywhere on it; and a
+	# source-fed road (from D) that reaches no settlement.
 	var nodes_by_pos := {}
-	for node in map.node_placements:
-		nodes_by_pos[node.grid_position] = node
-	var farm := _node(map, "farm")
-	var village_a := _node(map, "villageA")
+	nodes_by_pos[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S
+	nodes_by_pos[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # A
+	nodes_by_pos[Vector2i(5, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # B
+	nodes_by_pos[Vector2i(5, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # C
+	nodes_by_pos[Vector2i(8, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # D
 
-	# A route tile straight-through (route north + route south) that also
-	# happens to sit beside Farm (a source) should NOT count the source as
-	# a 3rd connection -- neither sources nor settlements are real branch
-	# points, since a delivery path can never enter or pass through either
-	# (§4.7): this must stay a plain 2-way pass-through, not a forced hub.
-	var mid_source := farm.grid_position + Vector2i(1, 0) # east of Farm
-	var state_source := GameState.new()
-	state_source.grid[mid_source + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
-	state_source.grid[mid_source] = {"kind": "route", "level": "dirt"}
-	state_source.grid[mid_source + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
-	assert(SimulationEngine.tile_degree(mid_source, state_source) == 2, "A source beside a tile must not count toward its hub-formation degree")
-	SimulationEngine.check_auto_hubs(state_source, nodes_by_pos)
-	assert(state_source.grid[mid_source].kind == "route", "A tile with only 2 real route connections plus an adjacent source must not auto-form a hub")
-	var shape_source := SimulationEngine.route_shape(mid_source, state_source, nodes_by_pos)
-	assert(shape_source.family == "straight" and shape_source.facing == "ud", "The same tile should render as a normal straight tile, not the junction/hub_capped fallback")
+	var state := GameState.new()
+	for cell in [Vector2i(0, 1), Vector2i(0, 2), Vector2i(0, 3)]: # S -> A path
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.grid[Vector2i(1, 2)] = {"kind": "route", "level": "dirt"} # dead-end stub
+	for cell in [Vector2i(5, 1), Vector2i(5, 2), Vector2i(5, 3)]: # B <-> C, no source
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	for cell in [Vector2i(8, 1), Vector2i(8, 2)]: # from D, reaches no settlement
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
 
-	# Same scenario, but the adjacent node is a settlement (Village A) instead
-	# of a source -- must behave identically, since a settlement is just as
-	# much a terminal endpoint as a source is.
-	var mid_settlement := village_a.grid_position + Vector2i(1, 0) # east of Village A
-	var state_settlement := GameState.new()
-	state_settlement.grid[mid_settlement + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"}
-	state_settlement.grid[mid_settlement] = {"kind": "route", "level": "dirt"}
-	state_settlement.grid[mid_settlement + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"}
-	assert(SimulationEngine.tile_degree(mid_settlement, state_settlement) == 2, "A settlement beside a tile must not count toward its hub-formation degree")
-	SimulationEngine.check_auto_hubs(state_settlement, nodes_by_pos)
-	assert(state_settlement.grid[mid_settlement].kind == "route", "A tile with only 2 real route connections plus an adjacent settlement must not auto-form a hub")
-	var shape_settlement := SimulationEngine.route_shape(mid_settlement, state_settlement, nodes_by_pos)
-	assert(shape_settlement.family == "straight" and shape_settlement.facing == "ud", "The same tile should render as a normal straight tile, not the junction/hub_capped fallback")
+	var est := SimulationEngine.established_route_cells(state, nodes_by_pos)
+	assert(est.has(Vector2i(0, 1)) and est.has(Vector2i(0, 2)) and est.has(Vector2i(0, 3)), "The whole source->settlement path must be established")
+	assert(not est.has(Vector2i(1, 2)), "A dead-end stub off the path must be pruned out")
+	assert(not est.has(Vector2i(5, 1)) and not est.has(Vector2i(5, 2)) and not est.has(Vector2i(5, 3)), "A settlement-to-settlement road with no source must not be established")
+	assert(not est.has(Vector2i(8, 1)) and not est.has(Vector2i(8, 2)), "A source-fed road that reaches no settlement must not be established")
+	assert(est.size() == 3, "Only the three source->settlement tiles should be established")
+
+func _test_hub_only_on_completed_route_fork() -> void:
+	# Case 1: a plain straight completed route (source -> settlement) with
+	# nothing branching off it forms no hub -- no tile reaches 3 branches.
+	var n1 := {}
+	n1[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # west of (1,0)
+	n1[Vector2i(4, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east of (3,0)
+	var s1 := GameState.new()
+	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
+		s1.grid[cell] = {"kind": "route", "level": "dirt"}
+	SimulationEngine.check_auto_hubs(s1, n1)
+	for cell in [Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]:
+		assert(s1.grid[cell].kind == "route", "A straight completed route with no branch must not form a hub")
+
+	# Case 2: a source feeding a tile that splits toward two settlements IS a
+	# hub -- the source's delivery fans out (the adjacent source counts as a
+	# branch alongside the two roads). The start/end tiles are not hubs.
+	var n2 := {}
+	n2[Vector2i(5, 1)] = _make_node(GameEnums.NodeType.SOURCE)      # below the fork
+	n2[Vector2i(3, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # west end
+	n2[Vector2i(7, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # east end
+	var s2 := GameState.new()
+	for cell in [Vector2i(4, 0), Vector2i(5, 0), Vector2i(6, 0)]:
+		s2.grid[cell] = {"kind": "route", "level": "dirt"}
+	SimulationEngine.check_auto_hubs(s2, n2)
+	assert(s2.grid[Vector2i(5, 0)].kind == "hub", "A source feeding a tile that splits toward two roads must form a hub")
+	assert(s2.grid[Vector2i(4, 0)].kind == "route" and s2.grid[Vector2i(6, 0)].kind == "route", "A route's start/end tiles (beside a node, one road) are not hubs")
+
+	# Case 3: a 3-road fork that reaches no settlement (an unfinished route)
+	# forms no hub -- hubs only appear on completed source->settlement routes.
+	var only_source := {Vector2i(10, 10): _make_node(GameEnums.NodeType.SOURCE)}
+	var incomplete := GameState.new()
+	incomplete.grid[Vector2i(10, 11)] = {"kind": "route", "level": "dirt"} # touches the source
+	incomplete.grid[Vector2i(11, 11)] = {"kind": "route", "level": "dirt"}
+	incomplete.grid[Vector2i(9, 11)] = {"kind": "route", "level": "dirt"}
+	incomplete.grid[Vector2i(10, 12)] = {"kind": "route", "level": "dirt"}
+	SimulationEngine.check_auto_hubs(incomplete, only_source)
+	assert(incomplete.grid[Vector2i(10, 11)].kind == "route", "A 3-road fork that reaches no settlement must not form a hub")
+
+func _test_delivery_does_not_transit_nodes() -> void:
+	# S -- road -- M(settlement) -- road -- D(settlement), all in a line. The
+	# only road chain from S to D would have to pass THROUGH settlement M, which
+	# a delivery may never do (a node is a start/end point, never a transit
+	# shortcut), so D is unreachable from S.
+	var grain: FoodData = GameBalance.food_types().grain
+	var nodes := {}
+	nodes[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S
+	nodes[Vector2i(0, 2)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # M, in the middle
+	nodes[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # D, the target
+	var state := GameState.new()
+	state.grid[Vector2i(0, 1)] = {"kind": "route", "level": "dirt"}
+	state.grid[Vector2i(0, 3)] = {"kind": "route", "level": "dirt"}
+	assert(SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 4), grain).is_empty(), "A delivery must not route through an intermediate settlement/source node")
+	# The source still reaches the settlement it connects to over clear road.
+	assert(not SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 2), grain).is_empty(), "A source must still reach a settlement over a clear road path")
+
+func _make_node(type: GameEnums.NodeType) -> NodeData:
+	var n := NodeData.new()
+	n.node_type = type
+	return n
 
 func _node(map: MapData, node_id: String) -> NodeData:
 	for node in map.node_placements:
