@@ -37,6 +37,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 20. **A new route can never cross or reuse an already-built tile -- it only ever runs over empty ground between its two ends.** Item 15's "dragging across an existing tile is a free connect gesture" let a new drag pass through the MIDDLE of an unrelated existing route or storage tile, which reintroduced exactly the kind of implicit, easy-to-miss topology items 15/18/19 were trying to eliminate: a player could accidentally piggyback a new route on someone else's infrastructure without meaning to, or fail to notice their drag silently reused a tile rather than building its own. Now every cell strictly between a drag's start anchor (source/hub) and end anchor (hub/settlement) must be currently-empty ground; if the path crosses any other built tile or node along the way, the whole drag is rejected, same as an unaffordable or improperly-terminated one. Two routes can now only ever share infrastructure at a hub or settlement they were both dragged to end at -- never by physically overlapping a shared tile. See §4.1.
 21. **Tap-to-cycle-shape is retired -- a route is built by a drag and a release, nothing else.** Item 6 (v0.3→v0.4) let the player tap a built route tile to cycle it through all 6 shapes, overriding the auto-derived default. With items 18-20 now guaranteeing every route is a clean, freestanding drag from a supply point to a delivery destination, the manual shape override added a degree of freedom the design no longer needs: a route tile's shape is always exactly the auto-derived default (see "Route tile directional shape" below) and nothing else. Tapping a route tile (or empty ground) with the route tool now only ever shows a hint that a drag is needed. `GameState.grid`'s `facing` override field and `SimulationEngine.is_shape_ambiguous`/`cycle_shape_facing` are removed entirely. See §4.1.
 22. **A drag may also start or end on a route tile that isn't part of an established route yet.** Items 18-19 restricted a drag to start on a source/hub and end on a hub/settlement, which -- combined with item 20's "no crossing existing tiles" -- meant unfinished infrastructure (a route segment that doesn't yet reach both a source and a settlement, e.g. one built out from a hub that has no source connection yet) could only ever be picked up again at its own governing hub, never at any of its plain route tiles. This relaxes both ends: a drag may also start or end on a route tile that `SimulationEngine.established_route_cells` does NOT contain -- i.e. one that isn't currently part of a live, delivering path. An already-established route tile is unaffected and still only reachable through its own hub or settlement (never picked up mid-network) -- this exception exists purely so unfinished, not-yet-delivering infrastructure can be extended or joined piece by piece without forcing a hub at every waypoint. The interior-must-be-empty-ground rule (item 20) is unchanged: this only widens what counts as a valid START or END, not what a drag may cross through. See §4.1.
+23. **One symmetric route tile design per level, usable in any direction.** Each route level (Dirt, Paved, Main) previously rendered a directional tread/stripe requiring a rotated mesh for "lr" vs. "ud", plus a dedicated L-shaped corner mesh (rotated four ways) wherever a tile bent -- this doubled the asset count per upgradeable level and made every route tile's appearance depend on a shape/facing computed from its real connections (see the now-removed "Route tile directional shape" system). Dirt and Main are redesigned to be radially symmetric, the same way Paved's four-cobblestone layout already was: Dirt uses a centered square worn-earth patch with four corner pebbles instead of a directional tread strip, and Main uses a painted cross (both axes) instead of a single center line. Because a symmetric mesh reads identically under any rotation, ONE mesh per level now covers every route shape and facing -- there is no corner variant, and nothing is rotated at render time. `SimulationEngine.route_shape()` and its shape-family/facing machinery are removed entirely; a route tile's rendering is now just `level -> mesh`. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -280,38 +281,30 @@ If either check fails, nothing is created and no treasury is deducted.
 
 **The hub cap no longer gates placement (revised in v0.4).** Hubs are a separate, player-initiated action on any existing route tile (see §4.4), never created as part of placing the route tile itself. So a route placement is never rejected on hub-cap grounds — the road is always buildable, and building a hub on any of its tiles afterward is a distinct decision subject only to the per-network cap.
 
-### Route tile directional shape (added in v0.4, revised in v0.4, tap-cycle retired in v0.5 item 21)
+### Route tile visual design (added in v0.4 as directional shapes, replaced with one symmetric mesh per level in v0.5 item 23)
 
-A route tile's rendered shape follows only its real route/storage/hub
-connections. An adjacent source or settlement node never forces, locks, or
-bends the tile's shape (revised in v0.4): earlier the node was allowed to
-pull a road-stub toward itself, which made a road always appear to
-"connect" to whatever node it happened to sit beside; now the road traces
-real route geometry only. The node has its own on-map marker; the road no
-longer visually reaches into it.
+Each route level (Dirt, Paved, Main) renders as a single, radially symmetric
+mesh, the same regardless of a tile's connections, shape, or facing:
 
-**There is no player override any more.** Tapping a built route tile used to
-cycle it through all 6 shapes (both straight facings, all 4 corners); that
-feature is retired (v0.5 item 21 -- a route is built by a drag and a
-release, nothing else). A route tile's shape is always exactly whatever the
-default below computes, purely cosmetic and never stored on the tile.
+- **Dirt**: a tan base with a centered square worn-earth patch and four
+  small corner pebbles.
+- **Paved**: a grey base topped with four raised cobblestone pavers (the
+  original design -- this is what the other two levels were brought in
+  line with).
+- **Main**: a dark base with a pale painted cross (both axes, not a single
+  directional line).
 
-**The default shape reflects the real, EXPLICITLY CONNECTED route neighbors
-only** (v0.5: a tile merely sitting next to another one is never enough --
-see "Explicit connections" below):
-
-- Two opposite real connections (e.g. a connected neighbor on both the east
-  and west side) default to a straight tile matching that axis.
-- Two adjacent real connections (e.g. north and east) default to the
-  L-corner tile matching those exact two sides.
-- A lone stub with a single real connected neighbor defaults to a straight
-  running along that neighbor's axis.
-- With no real connected neighbor at all, the default is a plain left-right
-  straight tile.
-- Three or more real connections render the same as any other route tile --
-  shape no longer has anything to do with hub eligibility (v0.5 item 17): any
-  route tile, regardless of connection count, can be built into a hub with
-  the Build Hub tool, subject only to the per-network cap (§4.4).
+Because each of these reads identically under any 90-degree rotation, one
+mesh per level covers every route tile everywhere on the map -- a straight
+run, an L-bend, a dead-end stub, a 3+-way junction, all look the same at
+that level. There is no corner variant, nothing is rotated at render time,
+and there is no player override of any kind (the old tap-to-cycle-shape
+feature that let a player flip between 6 directional shapes was retired
+separately, v0.5 item 21). This replaces the earlier "auto-derived
+directional shape" system (`SimulationEngine.route_shape()` and its
+shape-family/facing computation), which is removed entirely -- a route
+tile's rendering is now just `level -> mesh`, with no notion of shape or
+facing left anywhere in the codebase.
 
 ### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5, start/end/interior restricted in v0.5 items 18-20)
 
@@ -360,10 +353,9 @@ creation is drag-only:
    a toast if the player releases while it's red.
 5. **Only a fully valid path is committed, and only on release** -- an
    invalid path places and connects nothing at all. On a valid release,
-   every queued tile and connection is written at once; each tile then
-   renders with the shape that matches its final real connections. A press
-   that releases before the hold threshold, or one that never actually drags
-   to a second cell, is an ordinary tap on the anchor (info tip for a node,
+   every queued tile and connection is written at once. A press that
+   releases before the hold threshold, or one that never actually drags to
+   a second cell, is an ordinary tap on the anchor (info tip for a node,
    just a hint for a route tile) -- never a build.
 
 Because the interior must be empty ground, the only pre-existing cells a

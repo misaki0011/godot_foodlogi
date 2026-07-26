@@ -24,27 +24,16 @@ const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
 const HUB_SCENE := preload("res://scenes/markers/hub_marker.tscn")
 const FOOD_BUBBLE_SCENE := preload("res://scenes/markers/food_bubble_marker.tscn")
 
+## One symmetric design per route level -- each mesh reads identically under
+## any rotation (see generate_blocks.py's build_dirt_road_block/
+## build_paved_road_block/build_main_road_block), so the same scene is used
+## regardless of a tile's shape (straight or corner) or facing. There is no
+## separate corner mesh and no rotation to apply (v0.5 item 23).
 const ROUTE_LEVEL_SCENES := {
 	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt.glb"),
 	"paved": preload("res://assets/Blocks/glTF/Block_Road_Paved.glb"),
 	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
 }
-## Corner (L-shape) variants. Paved has none -- its existing block is 4
-## symmetric corner stones that already read fine unrotated for any shape
-## (see generate_blocks.py). Falls back to ROUTE_LEVEL_SCENES when absent.
-const ROUTE_CORNER_SCENES := {
-	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt_Corner.glb"),
-	"main": preload("res://assets/Blocks/glTF/Block_Road_Main_Corner.glb"),
-}
-## Y-axis yaw for each facing. Straight blocks' tread already runs N-S at 0
-## rotation (see generate_blocks.py), so "ud" needs none and "lr" needs a
-## quarter turn. Corner blocks are authored connecting N+E ("ne") at 0
-## rotation. A positive rotation_degrees.y is counter-clockwise as seen by
-## this top-down camera (world +Z is south, so +Y points toward the viewer),
-## so each quarter turn advances N+E counter-clockwise: 90 -> N+W ("nw"),
-## 180 -> S+W ("sw"), 270 -> S+E ("se"). (Earlier "se"/"nw" were swapped,
-## which rendered a down-right corner as an up-left one and vice versa.)
-const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "nw": 90.0, "sw": 180.0, "se": 270.0}
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
@@ -161,8 +150,8 @@ const ESTABLISHED_START_COLOR := Color("5C8A5C") # matches the "done/fulfilled" 
 const ESTABLISHED_END_COLOR := Color("C4573A") # matches MarkerColors.SETTLEMENT_COLOR
 const ESTABLISHED_ROUTE_Y := 1.55
 ## Rotation (degrees) that points a +Y-pointing cone toward each cardinal
-## grid direction, given world +X = grid east and world +Z = grid south (see
-## SimulationEngine._grid_only_sides' dir_keys comment).
+## grid direction, given world +X = grid east and world +Z = grid south
+## (matching how world Z increases with grid Y -- see map_to_local usage).
 const ARROW_ROTATION_BY_DIR := {
 	Vector2i(1, 0): Vector3(0, 0, -90),  # east
 	Vector2i(-1, 0): Vector3(0, 0, 90),  # west
@@ -736,8 +725,7 @@ func _render_grid() -> void:
 			if _map_data.is_river(pos.x, pos.y):
 				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
 			else:
-				var shape := SimulationEngine.route_shape(pos, _state, _nodes_by_pos)
-				_add_route_block(world_pos, cell.level, shape.family, shape.facing)
+				_add_route_block(world_pos, cell.level)
 		elif cell.kind == "storage":
 			var marker: NodeMarker = STORAGE_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
@@ -893,10 +881,11 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		bubble.setup(foods[food_id], delivered, requested, bubble_status, freshness_pct)
 		index += 1
 
-func _add_route_block(pos: Vector3, level: String, family := "straight", facing := "ud") -> void:
-	var scene: PackedScene = ROUTE_CORNER_SCENES.get(level) if family == "corner" else null
-	if scene == null:
-		scene = ROUTE_LEVEL_SCENES.get(level)
+## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
+## so a route tile always uses the same unrotated scene regardless of its
+## shape or facing -- there's no corner variant and nothing to rotate.
+func _add_route_block(pos: Vector3, level: String) -> void:
+	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
 	if scene == null:
 		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
 		return
@@ -905,8 +894,6 @@ func _add_route_block(pos: Vector3, level: String, family := "straight", facing 
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
 	# No scale needed: the block's footprint is authored at the real 2x2
 	# world-space cell size already (see generate_blocks.py).
-	if family != "junction":
-		block.rotation_degrees.y = ROUTE_FACING_YAW.get(facing, 0.0)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()

@@ -9,7 +9,6 @@ func _initialize() -> void:
 	_test_storage_preservation()
 	_test_daily_simulation()
 	_test_hub_cap_per_network()
-	_test_route_shape()
 	_test_established_route_cells()
 	_test_hub_buildable_on_any_route_tile()
 	_test_delivery_does_not_transit_nodes()
@@ -86,67 +85,6 @@ func _test_hub_cap_per_network() -> void:
 			capped_count += 1
 	print("Hubs built: %d, capped tiles: %d (cap is %d)" % [GameBalance.HUB_CAP_PER_NETWORK, capped_count, GameBalance.HUB_CAP_PER_NETWORK])
 	assert(capped_count == spine.size() - GameBalance.HUB_CAP_PER_NETWORK, "Every non-hub tile on an at-cap network must refuse a new hub")
-
-func _test_route_shape() -> void:
-	var map: MapData = load("res://data/maps/region_1_map.tres")
-	var nodes_by_pos := {}
-	for node in map.node_placements:
-		nodes_by_pos[node.grid_position] = node
-	var farm := _node(map, "farm")
-
-	# A lone stub built directly east of Farm with no real route neighbor at
-	# all (only the source node to its west): nodes no longer influence shape,
-	# so it defaults to a plain "lr" straight rather than bending toward the
-	# source it happens to sit beside.
-	var stub_by_node := farm.grid_position + Vector2i(1, 0)
-	var state_a := GameState.new()
-	state_a.grid[stub_by_node] = {"kind": "route", "level": "dirt"}
-	var shape_a := SimulationEngine.route_shape(stub_by_node, state_a, nodes_by_pos)
-	assert(shape_a.family == "straight" and shape_a.facing == "lr", "A stub with no real route neighbor must default to a plain straight, ignoring any adjacent source/settlement")
-
-	# A lone stub next to another route tile (not a node) should default to
-	# straight instead.
-	var state_b := GameState.new()
-	state_b.grid[Vector2i(2, 13)] = {"kind": "route", "level": "dirt"}
-	state_b.grid[Vector2i(3, 13)] = {"kind": "route", "level": "dirt"}
-	state_b.add_connection(Vector2i(2, 13), Vector2i(3, 13))
-	var shape_b := SimulationEngine.route_shape(Vector2i(2, 13), state_b, {})
-	assert(shape_b.family == "straight" and shape_b.facing == "lr", "A stub adjacent only to another route tile should default to straight")
-
-	# Adjacent to a node (Farm) with two opposite real connections: nodes
-	# never force or lock a shape, and there's no player override any more
-	# (v0.5 item 21 retired tap-to-cycle) -- the shape always just matches
-	# the tile's real connections.
-	var mid_by_node := farm.grid_position + Vector2i(1, 0) # east of Farm
-	var state_c := GameState.new()
-	state_c.grid[mid_by_node + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
-	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt"}
-	state_c.grid[mid_by_node + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
-	state_c.add_connection(mid_by_node, mid_by_node + Vector2i(0, -1))
-	state_c.add_connection(mid_by_node, mid_by_node + Vector2i(0, 1))
-	var shape_c := SimulationEngine.route_shape(mid_by_node, state_c, nodes_by_pos)
-	assert(shape_c.family == "straight" and shape_c.facing == "ud", "A node-adjacent tile with two opposite real connections must default to the matching straight shape")
-
-	# A tile's default shape reflects only its real route neighbors, never an
-	# adjacent node: a single real route neighbor always reads as a straight
-	# running along that side, regardless of which side a source/settlement
-	# happens to sit on.
-	var village_a := _node(map, "villageA")
-	var tile_by_source := farm.grid_position + Vector2i(1, 0) # source west, route east
-	var state_g := GameState.new()
-	state_g.grid[tile_by_source] = {"kind": "route", "level": "dirt"}
-	state_g.grid[tile_by_source + Vector2i(1, 0)] = {"kind": "route", "level": "dirt"}
-	state_g.add_connection(tile_by_source, tile_by_source + Vector2i(1, 0))
-	var shape_g := SimulationEngine.route_shape(tile_by_source, state_g, nodes_by_pos)
-	assert(shape_g.family == "straight" and shape_g.facing == "lr", "A route neighbor to the east must default to a left-right straight tile, ignoring the source to the west")
-
-	var tile_by_settlement := village_a.grid_position + Vector2i(0, 1) # settlement north, route west
-	var state_h := GameState.new()
-	state_h.grid[tile_by_settlement] = {"kind": "route", "level": "dirt"}
-	state_h.grid[tile_by_settlement + Vector2i(-1, 0)] = {"kind": "route", "level": "dirt"}
-	state_h.add_connection(tile_by_settlement, tile_by_settlement + Vector2i(-1, 0))
-	var shape_h := SimulationEngine.route_shape(tile_by_settlement, state_h, nodes_by_pos)
-	assert(shape_h.family == "straight" and shape_h.facing == "lr", "A single route neighbor to the west must default to a left-right straight, ignoring the settlement to the north")
 
 func _test_established_route_cells() -> void:
 	# Synthetic layout (col,row): a source S at (0,0) linked by a vertical road

@@ -150,35 +150,23 @@ def build_river_block() -> trimesh.Trimesh:
 
 
 def build_dirt_road_block() -> trimesh.Trimesh:
-    """A worn dirt path slab: a tan base with a lighter, slightly inset
-    tread strip down the middle, and a grid border on top. 2x2 world-space
-    footprint, placed with position only, no scale; height stays authored
-    directly in world-space meters (unaffected by the footprint change)."""
+    """A worn dirt path slab: a tan base with a centered, lighter worn-earth
+    patch and four small corner pebbles, plus a grid border on top. The
+    patch is a square (not a directional strip), so the tile reads exactly
+    the same under any 90-degree rotation -- one design serves every route
+    shape (straight or corner, any facing), matching build_paved_road_block()'s
+    already-rotation-agnostic look; there's no separate corner mesh. 2x2
+    world-space footprint, placed with position only, no scale; height stays
+    authored directly in world-space meters (unaffected by the footprint
+    change)."""
     parts = [
         _box((2.0, 0.22, 2.0), (0, 0, 0), DIRT_ROAD_BASE),
-        _box((1.48, 0.05, 2.0), (0, 0.135, 0), DIRT_ROAD_PATH),
+        _box((1.5, 0.05, 1.5), (0, 0.135, 0), DIRT_ROAD_PATH),
     ]
-    parts += _grid_border_parts(2.0, 0.111)
-    return trimesh.util.concatenate(parts)
-
-
-def build_dirt_road_corner() -> trimesh.Trimesh:
-    """A dirt path bent into an L, connecting the north edge to the east
-    edge: same base/tread style as build_dirt_road_block(), but the tread
-    is two arms meeting past the tile center instead of one full-length
-    strip. Each arm overshoots center by 0.3 (rather than stopping exactly
-    at it) so the two arms overlap generously -- this keeps the tan/dark
-    coverage ratio close to the straight block's (a stub-length L reads as
-    a noticeably different, darker tile at this game's small on-screen tile
-    size) while still stopping 0.7 short of the far edges, so the tile
-    never visually implies a south or west connection it doesn't have.
-    Rotate in-engine (rotation_degrees.y) for the other three corner
-    orientations."""
-    parts = [
-        _box((2.0, 0.22, 2.0), (0, 0, 0), DIRT_ROAD_BASE),
-        _box((1.48, 0.05, 1.3), (0, 0.135, -0.35), DIRT_ROAD_PATH),
-        _box((1.3, 0.05, 1.48), (0.35, 0.135, 0), DIRT_ROAD_PATH),
-    ]
+    pebble = 0.22
+    for dx in (-1, 1):
+        for dz in (-1, 1):
+            parts.append(_box((pebble, 0.06, pebble), (dx * 0.78, 0.14, dz * 0.78), DIRT_ROAD_PATH))
     parts += _grid_border_parts(2.0, 0.111)
     return trimesh.util.concatenate(parts)
 
@@ -200,28 +188,16 @@ def build_paved_road_block() -> trimesh.Trimesh:
 
 
 def build_main_road_block() -> trimesh.Trimesh:
-    """A major road slab: a dark base with a pale painted center line, for
-    the most-upgraded route tier."""
+    """A major road slab: a dark base with a pale painted cross (both axes,
+    not a single directional center line), for the most-upgraded route
+    tier. A cross reads the same under any 90-degree rotation, so one
+    design serves every route shape (straight or corner, any facing) --
+    same rotation-agnostic approach as build_paved_road_block(); there's no
+    separate corner mesh."""
     parts = [
         _box((2.0, 0.24, 2.0), (0, 0, 0), MAIN_BASE),
         _box((0.2, 0.03, 1.68), (0, 0.135, 0), MAIN_STRIPE),
-    ]
-    parts += _grid_border_parts(2.0, 0.121)
-    return trimesh.util.concatenate(parts)
-
-
-def build_main_road_corner() -> trimesh.Trimesh:
-    """A major road bent into an L, connecting the north edge to the east
-    edge: same base/stripe style as build_main_road_block(), but the
-    painted line is two arms overlapping past the tile center (matching
-    build_dirt_road_corner()'s overshoot, so the two arms actually overlap
-    at the bend instead of just touching at a point) instead of one
-    straight center line. Rotate in-engine (rotation_degrees.y) for the
-    other three corner orientations."""
-    parts = [
-        _box((2.0, 0.24, 2.0), (0, 0, 0), MAIN_BASE),
-        _box((0.2, 0.03, 1.14), (0, 0.135, -0.27), MAIN_STRIPE),
-        _box((1.14, 0.03, 0.2), (0.27, 0.135, 0), MAIN_STRIPE),
+        _box((1.68, 0.03, 0.2), (0, 0.135, 0), MAIN_STRIPE),
     ]
     parts += _grid_border_parts(2.0, 0.121)
     return trimesh.util.concatenate(parts)
@@ -246,5 +222,3 @@ if __name__ == "__main__":
     export(build_dirt_road_block(), "assets/Blocks/glTF/Block_Road_Dirt.glb")
     export(build_paved_road_block(), "assets/Blocks/glTF/Block_Road_Paved.glb")
     export(build_main_road_block(), "assets/Blocks/glTF/Block_Road_Main.glb")
-    export(build_dirt_road_corner(), "assets/Blocks/glTF/Block_Road_Dirt_Corner.glb")
-    export(build_main_road_corner(), "assets/Blocks/glTF/Block_Road_Main_Corner.glb")
