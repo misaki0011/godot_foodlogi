@@ -36,6 +36,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 19. **A route drag must end at a hub or a settlement.** Item 18 fixed where a drag can start; this fixes where it can stop. Previously a drag could be released anywhere, including one tile short of the settlement it looked like it was reaching -- the tiles would look like one continuous road, but without a genuine connection to a node, the road was never established and silently carried no delivery, no overlay, and no hub eligibility at that end. Now the LAST cell of a drag must be a hub tile or a settlement node, or the whole path is rejected (nothing built, nothing charged), exactly like the affordability check. Together with item 18, every committed drag is therefore always a complete, genuinely connected route from a supply point (source or hub) to a delivery destination (hub or settlement) -- there's no way to end up with a route that only looks finished. See §4.1.
 20. **A new route can never cross or reuse an already-built tile -- it only ever runs over empty ground between its two ends.** Item 15's "dragging across an existing tile is a free connect gesture" let a new drag pass through the MIDDLE of an unrelated existing route or storage tile, which reintroduced exactly the kind of implicit, easy-to-miss topology items 15/18/19 were trying to eliminate: a player could accidentally piggyback a new route on someone else's infrastructure without meaning to, or fail to notice their drag silently reused a tile rather than building its own. Now every cell strictly between a drag's start anchor (source/hub) and end anchor (hub/settlement) must be currently-empty ground; if the path crosses any other built tile or node along the way, the whole drag is rejected, same as an unaffordable or improperly-terminated one. Two routes can now only ever share infrastructure at a hub or settlement they were both dragged to end at -- never by physically overlapping a shared tile. See §4.1.
 21. **Tap-to-cycle-shape is retired -- a route is built by a drag and a release, nothing else.** Item 6 (v0.3→v0.4) let the player tap a built route tile to cycle it through all 6 shapes, overriding the auto-derived default. With items 18-20 now guaranteeing every route is a clean, freestanding drag from a supply point to a delivery destination, the manual shape override added a degree of freedom the design no longer needs: a route tile's shape is always exactly the auto-derived default (see "Route tile directional shape" below) and nothing else. Tapping a route tile (or empty ground) with the route tool now only ever shows a hint that a drag is needed. `GameState.grid`'s `facing` override field and `SimulationEngine.is_shape_ambiguous`/`cycle_shape_facing` are removed entirely. See §4.1.
+22. **A drag may also start or end on a route tile that isn't part of an established route yet.** Items 18-19 restricted a drag to start on a source/hub and end on a hub/settlement, which -- combined with item 20's "no crossing existing tiles" -- meant unfinished infrastructure (a route segment that doesn't yet reach both a source and a settlement, e.g. one built out from a hub that has no source connection yet) could only ever be picked up again at its own governing hub, never at any of its plain route tiles. This relaxes both ends: a drag may also start or end on a route tile that `SimulationEngine.established_route_cells` does NOT contain -- i.e. one that isn't currently part of a live, delivering path. An already-established route tile is unaffected and still only reachable through its own hub or settlement (never picked up mid-network) -- this exception exists purely so unfinished, not-yet-delivering infrastructure can be extended or joined piece by piece without forcing a hub at every waypoint. The interior-must-be-empty-ground rule (item 20) is unchanged: this only widens what counts as a valid START or END, not what a drag may cross through. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -329,11 +330,13 @@ that a drag is needed** (v0.5 item 21 retires the old tap-to-cycle-shape
 feature) -- it never places, connects, or reshapes a tile. All route
 creation is drag-only:
 
-1. Press and hold on a valid anchor -- a source node, or a built hub tile --
-   for a short moment (roughly a third of a second) without releasing to
-   switch into drag mode. A press on a settlement, a plain route tile, or
-   empty ground is not drag-eligible: every route must trace back to a
-   supply point (v0.5 item 18).
+1. Press and hold on a valid anchor -- a source node, a built hub tile, or a
+   route tile that ISN'T part of an established route yet -- for a short
+   moment (roughly a third of a second) without releasing to switch into
+   drag mode. A press on a settlement, empty ground, or an already-
+   established route tile is not drag-eligible: every route must trace back
+   to a supply point, or continue unfinished infrastructure that isn't
+   serving any delivery yet (v0.5 items 18, 22).
 2. Dragging the pointer traces a candidate path across further cells, drawn
    live as a translucent line so the player can see it before committing to
    anything.
@@ -344,13 +347,15 @@ creation is drag-only:
    ends) becomes a connection to record. The running cost only counts these
    genuinely new tiles, and must fit the current treasury (the hub cap never
    blocks a placement -- see §4.4).
-4. **The path's LAST cell must be a hub tile or a settlement node** (v0.5
-   item 19) -- a drag that releases anywhere else (a plain route tile, empty
-   ground) is invalid, no matter how far it traveled or how affordable it
-   was. This is what guarantees every committed drag is a genuinely complete
-   route from its source/hub anchor to a real delivery destination, rather
-   than one that silently stops one tile short of the node it looked like it
-   was reaching. The preview line renders green only once the affordability,
+4. **The path's LAST cell must be a hub tile, a settlement node, or likewise
+   an unestablished route tile** (v0.5 items 19, 22) -- a drag that releases
+   on an already-established route tile, or on empty ground, is invalid, no
+   matter how far it traveled or how affordable it was. This is what
+   guarantees every committed drag either reaches a genuine delivery
+   destination or joins onto unfinished infrastructure -- never a route that
+   silently stops one tile short of the node it looked like it was reaching,
+   and never one that piggybacks mid-network onto a route that's already
+   live. The preview line renders green only once the affordability,
    interior, and end-point checks all pass, red otherwise, explaining why in
    a toast if the player releases while it's red.
 5. **Only a fully valid path is committed, and only on release** -- an
@@ -362,11 +367,11 @@ creation is drag-only:
    just a hint for a route tile) -- never a build.
 
 Because the interior must be empty ground, the only pre-existing cells a
-drag ever touches are its very first (a source or hub) and very last (a hub
-or settlement) -- there's no way for a new route to physically overlap an
-unrelated existing one. Two separately-built roads, or a road and a node,
-only ever get linked by a drag that ends exactly ON that shared hub or
-settlement -- never by crossing through the middle of one another.
+drag ever touches are its very first and very last -- there's no way for a
+new route to physically overlap an unrelated existing one. Two separately-
+built roads, or a road and a node, only ever get linked by a drag that ends
+exactly ON that shared hub, settlement, or unestablished route tile --
+never by crossing through the middle of one another.
 
 ### Established-route overlay (added in v0.4, endpoints marked in v0.5)
 

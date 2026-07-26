@@ -86,12 +86,14 @@ func _report() -> void:
 	assert(is_equal_approx(state.balance, starting_balance - 3 * GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted for each new tile")
 
 	# Route drag can only START from a source or a built hub (v0.5 revision) --
-	# pressing on a settlement or a plain (non-hub) route tile must not begin
-	# a drag, even though a drag from a valid anchor can still cross and link
-	# to either one.
+	# pressing on a settlement or an already-ESTABLISHED route tile must not
+	# begin a drag (mid_cell is part of the established farm->villageA route
+	# by this point), even though a drag from a valid anchor can still cross
+	# and link to either one.
+	assert(_main.call("_established_route_cells").has(mid_cell), "mid_cell must be part of the established farm->villageA route by this point")
 	var mid_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(mid_cell.x, 0, mid_cell.y)) + Vector3.UP)
 	_main.call("_start_press", mid_cell_screen)
-	assert(not _main.get("_press_eligible"), "Pressing on a plain route tile must not start a route drag")
+	assert(not _main.get("_press_eligible"), "Pressing on an established route tile must not start a route drag")
 	_main.call("_start_press", village_screen)
 	assert(not _main.get("_press_eligible"), "Pressing on a settlement must not start a route drag")
 	_main.call("_start_press", farm_screen)
@@ -128,6 +130,46 @@ func _report() -> void:
 	_main.set("_drag_path", hub_to_settlement_path)
 	_main.call("_recompute_drag_validity")
 	assert(_main.get("_drag_valid"), "A drag from a hub to a settlement over empty ground must be valid")
+
+	# ROUTE-14: a drag may also start or end on a route tile that ISN'T part
+	# of an established route yet. Every drag-built route under the OTHER
+	# rules is established by construction (it always starts at a source or
+	# ends at a settlement/hub), so a genuinely unfinished network -- one
+	# touching no source or settlement at all -- is simulated here via direct
+	# state manipulation, standing in for what a bulldoze that splits an
+	# established network off from its source or settlement would leave
+	# behind.
+	var unfinished_a: Vector2i = Vector2i(15, 2)
+	var unfinished_b: Vector2i = Vector2i(15, 4)
+	state.grid[unfinished_a] = {"kind": "route", "level": "dirt"}
+	state.grid[unfinished_b] = {"kind": "route", "level": "dirt"}
+	var established_now: Dictionary = _main.call("_established_route_cells")
+	assert(not established_now.has(unfinished_a) and not established_now.has(unfinished_b), "A route touching no source or settlement must not be established")
+
+	var unfinished_a_screen := camera.unproject_position(terrain.map_to_local(Vector3i(unfinished_a.x, 0, unfinished_a.y)) + Vector3.UP)
+	_main.call("_start_press", unfinished_a_screen)
+	assert(_main.get("_press_eligible"), "Pressing on an unestablished route tile must start a route drag")
+
+	# Ending on brand-new empty ground is still invalid -- ROUTE-14 only
+	# allows ending on a route tile that already exists, not creating a
+	# fresh one as the terminus.
+	var never_built_cell: Vector2i = Vector2i(16, 2)
+	var dead_end_path: Array[Vector2i] = [unfinished_a, never_built_cell]
+	_main.set("_drag_path", dead_end_path)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag can't end on brand-new empty ground, even starting from an unestablished route tile")
+
+	# A drag from one unestablished route tile, over fresh ground, to a
+	# DIFFERENT unestablished route tile is valid -- "route construction from
+	# a route tile to a different route tile if a path is not established".
+	var between_unfinished: Vector2i = Vector2i(15, 3)
+	var unfinished_to_unfinished_path: Array[Vector2i] = [unfinished_a, between_unfinished, unfinished_b]
+	_main.set("_drag_path", unfinished_to_unfinished_path)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag between two unestablished route tiles over empty ground must be valid")
+	_main.call("_commit_drag")
+	assert(state.grid[between_unfinished].kind == "route", "The fresh interior cell must be built")
+	assert(state.has_connection(unfinished_a, between_unfinished) and state.has_connection(between_unfinished, unfinished_b), "Both new connections along an unfinished-to-unfinished drag must be recorded")
 
 	# Storage tool: only buildable on an existing route tile.
 	_main.call("_set_tool", "cool")
