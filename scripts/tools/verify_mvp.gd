@@ -113,75 +113,19 @@ func _test_route_shape() -> void:
 	var shape_b := SimulationEngine.route_shape(Vector2i(2, 13), state_b, {})
 	assert(shape_b.family == "straight" and shape_b.facing == "lr", "A stub adjacent only to another route tile should default to straight")
 
-	# Adjacent to a node (Farm) with two opposite real connections and a stored
-	# override: nodes no longer force or lock a shape, so this behaves exactly
-	# like a tile out in the open -- the stored "ne" override wins and the tile
-	# stays tappable.
+	# Adjacent to a node (Farm) with two opposite real connections: nodes
+	# never force or lock a shape, and there's no player override any more
+	# (v0.5 item 21 retired tap-to-cycle) -- the shape always just matches
+	# the tile's real connections.
 	var mid_by_node := farm.grid_position + Vector2i(1, 0) # east of Farm
 	var state_c := GameState.new()
 	state_c.grid[mid_by_node + Vector2i(0, -1)] = {"kind": "route", "level": "dirt"} # north
-	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt", "facing": "ne"} # stored override, must win
+	state_c.grid[mid_by_node] = {"kind": "route", "level": "dirt"}
 	state_c.grid[mid_by_node + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # south
 	state_c.add_connection(mid_by_node, mid_by_node + Vector2i(0, -1))
 	state_c.add_connection(mid_by_node, mid_by_node + Vector2i(0, 1))
 	var shape_c := SimulationEngine.route_shape(mid_by_node, state_c, nodes_by_pos)
-	assert(shape_c.family == "corner" and shape_c.facing == "ne", "A node-adjacent tile's stored override must win -- nodes no longer force a shape")
-	assert(SimulationEngine.is_shape_ambiguous(mid_by_node, state_c, nodes_by_pos), "A node-adjacent tile must be tappable -- nodes no longer lock a shape")
-
-	# The same two-opposite-connections shape, but nowhere near a node: no
-	# longer forced -- a stored override must now be honored instead of the
-	# shape that matches its real connections (the new v0.4 "any shape via
-	# tap" rule for tiles that aren't adjacent to a source/settlement).
-	var state_d := GameState.new()
-	state_d.grid[Vector2i(4, 13)] = {"kind": "route", "level": "dirt"}
-	state_d.grid[Vector2i(5, 13)] = {"kind": "route", "level": "dirt", "facing": "ne"}
-	state_d.grid[Vector2i(6, 13)] = {"kind": "route", "level": "dirt"}
-	state_d.add_connection(Vector2i(4, 13), Vector2i(5, 13))
-	state_d.add_connection(Vector2i(5, 13), Vector2i(6, 13))
-	var shape_d := SimulationEngine.route_shape(Vector2i(5, 13), state_d, {})
-	assert(shape_d.family == "corner" and shape_d.facing == "ne", "Away from any node, a stored override must win over the naturally-matching straight shape")
-	assert(SimulationEngine.is_shape_ambiguous(Vector2i(5, 13), state_d, {}), "A tile with no node touching it must always be tappable, even with 2 real connections")
-	# With nothing stored yet, the same tile still defaults sensibly to its
-	# real connections instead of an arbitrary shape.
-	var state_d_default := GameState.new()
-	state_d_default.grid[Vector2i(4, 13)] = {"kind": "route", "level": "dirt"}
-	state_d_default.grid[Vector2i(5, 13)] = {"kind": "route", "level": "dirt"}
-	state_d_default.grid[Vector2i(6, 13)] = {"kind": "route", "level": "dirt"}
-	state_d_default.add_connection(Vector2i(4, 13), Vector2i(5, 13))
-	state_d_default.add_connection(Vector2i(5, 13), Vector2i(6, 13))
-	var shape_d_default := SimulationEngine.route_shape(Vector2i(5, 13), state_d_default, {})
-	assert(shape_d_default.family == "straight" and shape_d_default.facing == "lr", "With nothing tapped yet, a non-node tile still defaults to the shape matching its real connections")
-
-	# Cycling all the way around the full 6-shape cycle returns to the start,
-	# for both a node-adjacent ambiguous stub and an ordinary mid-network one.
-	var state_e := GameState.new()
-	var lone := Vector2i(11, 13)
-	state_e.grid[lone] = {"kind": "route", "level": "dirt"}
-	var start_facing: String = SimulationEngine.route_shape(lone, state_e, {}).facing
-	var facing := start_facing
-	for _i in range(6):
-		facing = SimulationEngine.cycle_shape_facing(lone, state_e, {})
-		state_e.grid[lone].facing = facing
-	assert(facing == start_facing, "Cycling through all 6 shapes must return to the starting facing")
-
-	# Regression: a route tile with a node on one side (west) and a real
-	# route tile continuing on an *adjacent* side (south) must NOT be forced
-	# by the node -- shape ignores nodes entirely, so the tile stays freely
-	# tappable all the way to "ud".
-	var stub_by_node_and_route := farm.grid_position + Vector2i(1, 0) # node to the west
-	var state_f := GameState.new()
-	state_f.grid[stub_by_node_and_route] = {"kind": "route", "level": "dirt"}
-	state_f.grid[stub_by_node_and_route + Vector2i(0, 1)] = {"kind": "route", "level": "dirt"} # route to the south
-	state_f.add_connection(stub_by_node_and_route, stub_by_node_and_route + Vector2i(0, 1))
-	assert(SimulationEngine.is_shape_ambiguous(stub_by_node_and_route, state_f, nodes_by_pos), "A node beside a tile must never force its shape, even with a real route neighbor on an adjacent side")
-	var reachable_ud := false
-	for _i in range(6):
-		facing = SimulationEngine.cycle_shape_facing(stub_by_node_and_route, state_f, nodes_by_pos)
-		state_f.grid[stub_by_node_and_route].facing = facing
-		if facing == "ud":
-			reachable_ud = true
-			break
-	assert(reachable_ud, "A node-adjacent ambiguous tile must be able to cycle all the way to a straight up-down facing")
+	assert(shape_c.family == "straight" and shape_c.facing == "ud", "A node-adjacent tile with two opposite real connections must default to the matching straight shape")
 
 	# A tile's default shape reflects only its real route neighbors, never an
 	# adjacent node: a single real route neighbor always reads as a straight

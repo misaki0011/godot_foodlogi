@@ -35,6 +35,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 18. **A route drag can only start from a source or a built hub.** Previously a drag could start from any existing node or route tile (item 15), letting the player extend a route from any point already on the map. Routes must now always trace back to a supply point: press-and-hold is only a valid drag anchor on a source node or a hub tile, never on a settlement or a plain route tile. See §4.1.
 19. **A route drag must end at a hub or a settlement.** Item 18 fixed where a drag can start; this fixes where it can stop. Previously a drag could be released anywhere, including one tile short of the settlement it looked like it was reaching -- the tiles would look like one continuous road, but without a genuine connection to a node, the road was never established and silently carried no delivery, no overlay, and no hub eligibility at that end. Now the LAST cell of a drag must be a hub tile or a settlement node, or the whole path is rejected (nothing built, nothing charged), exactly like the affordability check. Together with item 18, every committed drag is therefore always a complete, genuinely connected route from a supply point (source or hub) to a delivery destination (hub or settlement) -- there's no way to end up with a route that only looks finished. See §4.1.
 20. **A new route can never cross or reuse an already-built tile -- it only ever runs over empty ground between its two ends.** Item 15's "dragging across an existing tile is a free connect gesture" let a new drag pass through the MIDDLE of an unrelated existing route or storage tile, which reintroduced exactly the kind of implicit, easy-to-miss topology items 15/18/19 were trying to eliminate: a player could accidentally piggyback a new route on someone else's infrastructure without meaning to, or fail to notice their drag silently reused a tile rather than building its own. Now every cell strictly between a drag's start anchor (source/hub) and end anchor (hub/settlement) must be currently-empty ground; if the path crosses any other built tile or node along the way, the whole drag is rejected, same as an unaffordable or improperly-terminated one. Two routes can now only ever share infrastructure at a hub or settlement they were both dragged to end at -- never by physically overlapping a shared tile. See §4.1.
+21. **Tap-to-cycle-shape is retired -- a route is built by a drag and a release, nothing else.** Item 6 (v0.3→v0.4) let the player tap a built route tile to cycle it through all 6 shapes, overriding the auto-derived default. With items 18-20 now guaranteeing every route is a clean, freestanding drag from a supply point to a delivery destination, the manual shape override added a degree of freedom the design no longer needs: a route tile's shape is always exactly the auto-derived default (see "Route tile directional shape" below) and nothing else. Tapping a route tile (or empty ground) with the route tool now only ever shows a hint that a drag is needed. `GameState.grid`'s `facing` override field and `SimulationEngine.is_shape_ambiguous`/`cycle_shape_facing` are removed entirely. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -278,7 +279,7 @@ If either check fails, nothing is created and no treasury is deducted.
 
 **The hub cap no longer gates placement (revised in v0.4).** Hubs are a separate, player-initiated action on any existing route tile (see §4.4), never created as part of placing the route tile itself. So a route placement is never rejected on hub-cap grounds — the road is always buildable, and building a hub on any of its tiles afterward is a distinct decision subject only to the per-network cap.
 
-### Route tile directional shape (added in v0.4, revised in v0.4)
+### Route tile directional shape (added in v0.4, revised in v0.4, tap-cycle retired in v0.5 item 21)
 
 A route tile's rendered shape follows only its real route/storage/hub
 connections. An adjacent source or settlement node never forces, locks, or
@@ -288,16 +289,11 @@ pull a road-stub toward itself, which made a road always appear to
 real route geometry only. The node has its own on-map marker; the road no
 longer visually reaches into it.
 
-**Every route tile -- regardless of its real connection count and
-regardless of any neighboring node -- is always player-choosable by tap**:
-tapping a built route tile cycles it through all 6 shapes (both straight
-facings, all 4 corners), so the player can flip it to any shape they want.
-Before the first tap, it defaults to whichever shape matches its real route
-connections (a plain straight run still looks correct without any manual
-correction); once tapped, the player's choice is kept even if later
-connections would otherwise suggest a different natural shape. This is a
-purely cosmetic choice: it never changes the tile's upkeep, capacity, or
-its adjacency contribution to hub-formation math.
+**There is no player override any more.** Tapping a built route tile used to
+cycle it through all 6 shapes (both straight facings, all 4 corners); that
+feature is retired (v0.5 item 21 -- a route is built by a drag and a
+release, nothing else). A route tile's shape is always exactly whatever the
+default below computes, purely cosmetic and never stored on the tile.
 
 **The default shape reflects the real, EXPLICITLY CONNECTED route neighbors
 only** (v0.5: a tile merely sitting next to another one is never enough --
@@ -328,9 +324,10 @@ let two independently-drawn, side-by-side routes merge into one network
 just by touching, sharing a hub-cap budget and upkeep discounts neither
 route asked for.
 
-**Tapping a route tile only cycles its shape** (or, on empty ground,
-explains that a drag is needed) -- it never places or connects a new tile.
-All route creation is drag-only:
+**Tapping a route tile (or empty ground) never does anything but explain
+that a drag is needed** (v0.5 item 21 retires the old tap-to-cycle-shape
+feature) -- it never places, connects, or reshapes a tile. All route
+creation is drag-only:
 
 1. Press and hold on a valid anchor -- a source node, or a built hub tile --
    for a short moment (roughly a third of a second) without releasing to
@@ -362,7 +359,7 @@ All route creation is drag-only:
    renders with the shape that matches its final real connections. A press
    that releases before the hold threshold, or one that never actually drags
    to a second cell, is an ordinary tap on the anchor (info tip for a node,
-   shape-cycle for a route tile) -- never a build.
+   just a hint for a route tile) -- never a build.
 
 Because the interior must be empty ground, the only pre-existing cells a
 drag ever touches are its very first (a source or hub) and very last (a hub

@@ -10,9 +10,9 @@ var best_grade := ""
 var score_history: Array[Dictionary] = [] # {day, score, grade, profit}
 
 ## Vector2i -> cell Dictionary:
-##   route:   {kind:"route", level:"dirt"/"paved"/"main",
-##             facing:String (optional, player-chosen shape when connections are ambiguous --
-##             see SimulationEngine.route_shape())}
+##   route:   {kind:"route", level:"dirt"/"paved"/"main"} (visual shape is
+##            always auto-derived from real connections, see
+##            SimulationEngine.route_shape() -- no player override)
 ##   storage: {kind:"storage", stype:GameEnums.StorageType}
 ##   hub:     {kind:"hub", htype:GameEnums.HubType}
 var grid: Dictionary = {}

@@ -55,7 +55,7 @@ const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Press and hold on a source or a built hub, then drag over empty ground until you reach a hub or a settlement, and release to commit the whole path. A route can't cross or reuse an existing tile, and it must end on a hub or a settlement. Tap a built route tile (without dragging) to flip its shape.",
+	"route": "Press and hold on a source or a built hub, then drag over empty ground until you reach a hub or a settlement, and release to commit the whole path. A route can't cross or reuse an existing tile, and it must end on a hub or a settlement.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
@@ -98,8 +98,12 @@ var _map_bounds_max: Vector2
 var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
-## ---------- route draw: tap-to-cycle vs. drag-to-build-and-connect ----------
-## v0.5: tile creation is drag-only -- tapping never places a new tile.
+## ---------- route draw: drag-to-build-and-connect only ----------
+## v0.5: tile creation is drag-only -- tapping never places a new tile, and
+## never does anything else either (the old tap-to-cycle-shape feature is
+## retired, v0.5 item 21: a route is built by a drag and a release, full
+## stop). Tapping a route tile (or empty ground) with the route tool just
+## explains that a drag is needed.
 ## Connectivity is never implied by adjacency (GameState.connections):
 ## a press must start ON a source node or a built hub tile, and the drag must
 ## end ON a hub tile or a settlement node (v0.5 items 18-19) -- every
@@ -115,8 +119,8 @@ var _zoom_dir := 0.0
 ## HOLD_TO_DRAG_MSEC without releasing. A release before that threshold --
 ## or a release without ever dragging to a second cell -- is a plain tap on
 ## the anchor itself: for a node that's the usual info tip, for an existing
-## route tile that's the shape-cycle tap (see _do_tap_route_tile), never a
-## build.
+## route tile that's just a hint that a drag is needed (see _do_tap_route),
+## never a build.
 ##
 ## While dragging, nothing is written to _state.grid or .connections:
 ## _drag_path just records every cell the pointer has crossed (path[0] is
@@ -247,9 +251,9 @@ func _end_press(screen_position: Vector2) -> void:
 		_drag_active = false
 		_press_eligible = false
 		# A hold-then-release without ever dragging to a second cell is a
-		# plain tap on the anchor (info tip for a node, shape-cycle for an
-		# existing route tile) -- holding still shouldn't behave differently
-		# from tapping.
+		# plain tap on the anchor (info tip for a node, a hint for an existing
+		# route tile) -- holding still shouldn't behave differently from
+		# tapping.
 		if _drag_path.size() > 1:
 			_commit_drag()
 		else:
@@ -482,7 +486,7 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	_tip_panel.visible = false
 	match _tool:
 		"route":
-			_do_tap_route_tile(cell)
+			_do_tap_route(cell)
 		"upgrade":
 			_do_upgrade_route(cell)
 		"normal", "cool", "freeze":
@@ -495,22 +499,15 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_bulldoze(cell)
 	_after_action()
 
-const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (North-East)", "se": "corner (South-East)", "sw": "corner (South-West)", "nw": "corner (North-West)"}
-
-## A plain tap (no drag) on a route tile only cycles its shape -- creating a
-## new tile, or linking to one, always requires a drag (v0.5: see
-## _start_press/_commit_drag). Tapping empty ground just explains that.
-func _do_tap_route_tile(cell: Vector2i) -> void:
+## A plain tap (no drag) with the route tool never does anything -- a route
+## is built by a drag and a release, full stop (v0.5 item 21 retires the old
+## tap-to-cycle-shape feature). Tapping just explains that a drag is needed,
+## whether the cell is empty ground or an already-built tile.
+func _do_tap_route(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
 		_show_toast("Press and hold on a source or a built hub, then drag here to build and connect a new one.", true)
 		return
-	var cell_data = _state.grid[cell]
-	if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
-		var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
-		cell_data.facing = facing
-		_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))
-		return
-	_show_toast("Already built here.", true)
+	_show_toast("Already built here. Press and hold on a source or a built hub, then drag to build or link a new route.", true)
 
 func _do_upgrade_route(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
