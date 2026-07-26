@@ -2,10 +2,11 @@ extends SceneTree
 
 ## One-shot dev check (not part of the game): loads Main.tscn, lets it run
 ## _ready() for one frame, and asserts terrain + markers were populated;
-## that route creation is drag-only (v0.5) and explicitly connects the new
-## tile to the anchor it was dragged from, never merely by adjacency; and
-## that tapping a source/settlement shows its info tip instead of building or
-## opening a dialog.
+## that route creation is drag-only (v0.5), can only start from a source or
+## a built hub and must end at a hub or a settlement (v0.5 item 19), and
+## explicitly connects every new tile to what it extends from, never merely
+## by adjacency; and that tapping a source/settlement shows its info tip
+## instead of building or opening a dialog.
 ## Run via: godot --headless --script res://scripts/tools/verify_main.gd
 
 var _main: Node
@@ -51,69 +52,94 @@ func _report() -> void:
 	_main.call("_set_tool", "route")
 	var state: GameState = _main.get("_state")
 	var starting_balance: float = state.balance
-	var build_cell: Vector2i = farm.grid_position + Vector2i(1, 0)
-	_main.call("_handle_click", build_cell)
+	var mid_cell: Vector2i = farm.grid_position + Vector2i(1, 0)
+	_main.call("_handle_click", mid_cell)
 	assert(state.grid.is_empty(), "A plain tap on empty ground must never place a tile")
 	assert(is_equal_approx(state.balance, starting_balance), "A plain tap must never charge the player")
 
-	# Dragging from the farm node to an adjacent empty cell builds exactly one
-	# new tile AND records an explicit connection back to the node -- mere
-	# adjacency is never enough (see GameState.connections).
-	var drag_path: Array[Vector2i] = [farm.grid_position, build_cell]
-	_main.set("_drag_path", drag_path)
+	# A drag that stops short of a hub or a settlement is invalid and builds
+	# nothing at all (v0.5 item 19) -- even though the anchor (farm, a source)
+	# is perfectly valid, farm -> mid_cell alone doesn't reach a hub/settlement.
+	var short_path: Array[Vector2i] = [farm.grid_position, mid_cell]
+	_main.set("_drag_path", short_path)
 	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag that doesn't end at a hub or a settlement must be invalid")
 	_main.call("_commit_drag")
-	assert(state.grid.size() == 1, "A drag from an existing anchor must place exactly one route tile")
-	assert(state.grid[build_cell].kind == "route")
-	assert(state.has_connection(farm.grid_position, build_cell), "Dragging from a node must record an explicit connection to the new tile")
-	assert(is_equal_approx(state.balance, starting_balance - GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted")
+	assert(state.grid.is_empty(), "An invalid (short) drag must build nothing")
+	assert(is_equal_approx(state.balance, starting_balance), "An invalid (short) drag must not charge the player")
+
+	# A full drag from the source all the way to the settlement is valid: it
+	# builds every empty cell it crosses as a new route tile AND records an
+	# explicit connection for every consecutive pair, including the final
+	# tile-to-node link -- mere adjacency is never enough (see GameState.connections).
+	var second_cell: Vector2i = farm.grid_position + Vector2i(2, 0)
+	var third_cell: Vector2i = Vector2i(village_a.grid_position.x, farm.grid_position.y)
+	var full_path: Array[Vector2i] = [farm.grid_position, mid_cell, second_cell, third_cell, village_a.grid_position]
+	_main.set("_drag_path", full_path)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag that ends at a settlement must be valid")
+	_main.call("_commit_drag")
+	assert(state.grid.size() == 3, "A drag from source to settlement must place exactly the 3 empty tiles it crosses")
+	assert(state.grid[mid_cell].kind == "route")
+	assert(state.has_connection(farm.grid_position, mid_cell), "Dragging from a node must record an explicit connection to the new tile")
+	assert(state.has_connection(third_cell, village_a.grid_position), "Dragging onto a settlement must record an explicit connection to it")
+	assert(is_equal_approx(state.balance, starting_balance - 3 * GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted for each new tile")
 
 	# Route drag can only START from a source or a built hub (v0.5 revision) --
 	# pressing on a settlement or a plain (non-hub) route tile must not begin
 	# a drag, even though a drag from a valid anchor can still cross and link
 	# to either one.
-	var build_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(build_cell.x, 0, build_cell.y)) + Vector3.UP)
-	_main.call("_start_press", build_cell_screen)
+	var mid_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(mid_cell.x, 0, mid_cell.y)) + Vector3.UP)
+	_main.call("_start_press", mid_cell_screen)
 	assert(not _main.get("_press_eligible"), "Pressing on a plain route tile must not start a route drag")
 	_main.call("_start_press", village_screen)
 	assert(not _main.get("_press_eligible"), "Pressing on a settlement must not start a route drag")
 	_main.call("_start_press", farm_screen)
 	assert(_main.get("_press_eligible"), "Pressing on a source must start a route drag")
 
-	# Build a hub on the freshly-dragged route tile, then confirm a press on
-	# that hub tile now becomes a valid drag-start anchor too.
-	var hub_cell: Vector2i = farm.grid_position + Vector2i(-1, 0)
-	var hub_drag_path: Array[Vector2i] = [farm.grid_position, hub_cell]
-	_main.set("_drag_path", hub_drag_path)
-	_main.call("_recompute_drag_validity")
-	_main.call("_commit_drag")
-	_main.call("_do_build_hub", hub_cell)
-	assert(state.grid[hub_cell].kind == "hub", "Build Hub must work on any existing route tile, not just a flagged fork")
-	var hub_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(hub_cell.x, 0, hub_cell.y)) + Vector3.UP)
+	# Build a hub on one of the freshly-dragged route tiles (any route tile
+	# qualifies, v0.5 item 17), then confirm a press on that hub tile now
+	# becomes a valid drag-start anchor too.
+	_main.call("_do_build_hub", second_cell)
+	assert(state.grid[second_cell].kind == "hub", "Build Hub must work on any existing route tile, not just a flagged fork")
+	var hub_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(second_cell.x, 0, second_cell.y)) + Vector3.UP)
 	_main.call("_start_press", hub_cell_screen)
 	assert(_main.get("_press_eligible"), "Pressing on a built hub must start a route drag")
 
+	# A drag starting from the hub still needs to END at a hub or settlement --
+	# stopping at a plain route tile is invalid even when the start is valid.
+	var hub_short_path: Array[Vector2i] = [second_cell, mid_cell]
+	_main.set("_drag_path", hub_short_path)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag from a hub that doesn't end at a hub or a settlement must be invalid")
+
+	# A drag from the hub through to the settlement is valid end to end.
+	var hub_to_settlement_path: Array[Vector2i] = [second_cell, third_cell, village_a.grid_position]
+	_main.set("_drag_path", hub_to_settlement_path)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag from a hub to a settlement must be valid")
+
 	# Storage tool: only buildable on an existing route tile.
 	_main.call("_set_tool", "cool")
-	_main.call("_handle_click", build_cell)
-	assert(state.grid[build_cell].kind == "storage")
-	assert(state.grid[build_cell].stype == GameEnums.StorageType.COOL)
+	_main.call("_handle_click", mid_cell)
+	assert(state.grid[mid_cell].kind == "storage")
+	assert(state.grid[mid_cell].stype == GameEnums.StorageType.COOL)
 
 	# Bulldoze: removes the tile with no refund.
 	_main.call("_set_tool", "remove")
 	var balance_before_bulldoze: float = state.balance
-	_main.call("_handle_click", build_cell)
-	assert(not state.grid.has(build_cell))
+	_main.call("_handle_click", mid_cell)
+	assert(not state.grid.has(mid_cell))
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
-	_main.call("_handle_click", hub_cell)
-	assert(not state.grid.has(hub_cell))
 
-	# Tapping a settlement (any tool) shows its info tip, not a dialog.
+	# Tapping a settlement (any tool) shows its info tip, not a dialog, and
+	# never changes the grid.
+	var grid_size_before_tip := state.grid.size()
 	var tip_panel: PanelContainer = _main.get("_tip_panel")
 	assert(not tip_panel.visible)
 	_main.call("_handle_click", village_a.grid_position)
 	assert(tip_panel.visible, "Tapping a settlement must show the info tip")
-	assert(state.grid.size() == 0, "Tapping a settlement must not attempt to build there")
+	assert(state.grid.size() == grid_size_before_tip, "Tapping a settlement must not attempt to build there")
 
 	var terrain_types_seen := {}
 	for cell in used_cells:

@@ -4,7 +4,7 @@
 **Working title:** Fresh Routes  
 **Genre:** Cozy logistics / routing puzzle / light management  
 **Target platform:** PC / Steam (MVP prototype: browser)  
-**Core player actions:** Draw routes (drag-only, starting from a source or hub), place storage, build hubs on any route tile  
+**Core player actions:** Draw routes (drag-only, starting from a source or hub, ending at a hub or settlement), place storage, build hubs on any route tile  
 **Explicitly out of scope:** Vehicle management, cooking simulation, staff management, complex traffic simulation
 
 ---
@@ -33,6 +33,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 16. **The established-route overlay marks its two ends distinctly.** The gold line from item 10 read as one uniform strand end to end; now the source end shows a green cone arrow pointing the direction delivery actually flows (source → first tile) and the settlement end shows a red bar instead of gold, so start and finish are readable at a glance without tracing the whole line. Purely visual -- no simulation or cost change. See §4.1.
 17. **A hub can be built on any route tile, not just a flagged completed-route fork.** This drops item 12/13's "3+ branch, established-route" requirement entirely: the player draws a route, picks the Build Hub tool, and clicks any existing route tile -- straight, isolated, unfinished, it doesn't matter -- to place a Small Hub there for §150. The per-network cap (still 2 hubs, item 11) is the only remaining constraint, checked live against the tile's connected road network rather than a precomputed `junction`/`hub_capped` flag. This simplifies a rule that had grown through several revisions (items 4, 10, 12, 13) into something the player can reliably predict: any road, anywhere, up to two hubs per network. See §4.4.
 18. **A route drag can only start from a source or a built hub.** Previously a drag could start from any existing node or route tile (item 15), letting the player extend a route from any point already on the map. Routes must now always trace back to a supply point: press-and-hold is only a valid drag anchor on a source node or a hub tile, never on a settlement or a plain route tile. The drag itself is unrestricted once started -- it can still cross and link to any settlement or route tile along the way -- only the starting cell is restricted. See §4.1.
+19. **A route drag must end at a hub or a settlement.** Item 18 fixed where a drag can start; this fixes where it can stop. Previously a drag could be released anywhere, including one tile short of the settlement it looked like it was reaching -- the tiles would look like one continuous road, but without a genuine connection to a node, the road was never established and silently carried no delivery, no overlay, and no hub eligibility at that end. Now the LAST cell of a drag must be a hub tile or a settlement node, or the whole path is rejected (nothing built, nothing charged), exactly like the affordability check. Together with item 18, every committed drag is therefore always a complete, genuinely connected route from a supply point (source or hub) to a delivery destination (hub or settlement) -- there's no way to end up with a route that only looks finished. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -85,7 +86,7 @@ The player is not a driver, chef, or factory worker. The player is a regional fo
 
 The player only needs a few actions:
 
-1. Draw a route (drag-only, starting from a source or a built hub).
+1. Draw a route (drag-only, starting from a source or a built hub and ending at a hub or a settlement).
 2. Place storage on an existing route.
 3. Build a hub on any existing route tile (v0.5 item 17: manual, capped at 2 per network).
 4. Upgrade or remove route and hub infrastructure.
@@ -314,7 +315,7 @@ see "Explicit connections" below):
   route tile, regardless of connection count, can be built into a hub with
   the Build Hub tool, subject only to the per-network cap (§4.4).
 
-### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5, drag-start restricted in v0.5 item 18)
+### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5, start/end restricted in v0.5 items 18-19)
 
 **Connectivity is never implied by two cells simply sitting next to each
 other.** Two route tiles, or a route tile and a node, are only linked for
@@ -344,15 +345,21 @@ All route creation is drag-only:
    it's already there) -- either way, that pair becomes a connection to
    record. The running cost only counts genuinely new tiles, and must fit
    the current treasury (the hub cap never blocks a placement -- see §4.4).
-   The preview line renders green while affordable and red the moment it
-   isn't, explaining why in a toast if the player releases while it's red.
-4. **Only a fully valid path is committed, and only on release** -- an
+4. **The path's LAST cell must be a hub tile or a settlement node** (v0.5
+   item 19) -- a drag that releases anywhere else (a plain route tile, empty
+   ground) is invalid, no matter how far it traveled or how affordable it
+   was. This is what guarantees every committed drag is a genuinely complete
+   route from its source/hub anchor to a real delivery destination, rather
+   than one that silently stops one tile short of the node it looked like it
+   was reaching. The preview line renders green only once both the
+   affordability and end-point checks pass, red otherwise, explaining why in
+   a toast if the player releases while it's red.
+5. **Only a fully valid path is committed, and only on release** -- an
    invalid path places and connects nothing at all. On a valid release,
-   every queued tile and connection is written at once and the hub-formation
-   pass runs a single time for the whole gesture; each tile then renders
-   with the shape that matches its final real connections. A press that
-   releases before the hold threshold, or one that never actually drags to
-   a second cell, is an ordinary tap on the anchor (info tip for a node,
+   every queued tile and connection is written at once; each tile then
+   renders with the shape that matches its final real connections. A press
+   that releases before the hold threshold, or one that never actually drags
+   to a second cell, is an ordinary tap on the anchor (info tip for a node,
    shape-cycle for a route tile) -- never a build.
 
 Dragging across an *existing* tile or node (nothing new to build there) is
@@ -1380,7 +1387,7 @@ One region with:
 
 ### MVP systems
 
-- Route drawing (drag-only, starting from a source or a built hub)
+- Route drawing (drag-only, starting from a source or a built hub and ending at a hub or a settlement)
 - Route upkeep
 - Route capacity (tight enough to be a routine bottleneck, not an edge case — see §4.1)
 - Manual hub construction on any route tile, with a per-connected-network cap of 2 (see §4.4)

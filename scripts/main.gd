@@ -2,10 +2,13 @@ extends Node3D
 
 ## Fresh Routes -- 3D isometric port of fresh-routes-mvp.html. The world is
 ## a tile grid (see GameState.grid / SimulationEngine). Routes are drag-only
-## (v0.5): press-and-hold on a source node or a built hub, then drag to
-## build and explicitly connect new tiles -- physical adjacency alone never
-## implies a connection (see GameState.connections). Other tools (storage,
-## hub, upgrade, bulldoze) remain a single tap on an existing route tile.
+## (v0.5): press-and-hold on a source node or a built hub, drag until the
+## path reaches a hub or a settlement, then release to build and explicitly
+## connect new tiles -- physical adjacency alone never implies a connection
+## (see GameState.connections), and a drag that doesn't reach a valid end
+## point is rejected, so every committed drag is a genuinely complete route.
+## Other tools (storage, hub, upgrade, bulldoze) remain a single tap on an
+## existing route tile.
 ## A Small Hub can be built on any existing route tile with the Build Hub
 ## tool, capped at GameBalance.HUB_CAP_PER_NETWORK per connected road network
 ## (v0.5 revision -- see SPEC.md §4.4). Hovering (desktop) or tapping (mobile,
@@ -51,7 +54,7 @@ const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Press and hold on a source or a built hub, then drag to an adjacent tile to build (or link to) it -- release to commit the whole path. Nothing connects just by touching; every link is a drag. Tap a built route tile (without dragging) to flip its shape.",
+	"route": "Press and hold on a source or a built hub, then drag until you reach a hub or a settlement, and release to commit the whole path. A drag that doesn't end on one of those isn't a complete route. Nothing connects just by touching; every link is a drag. Tap a built route tile (without dragging) to flip its shape.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
@@ -97,12 +100,14 @@ var _zoom_dir := 0.0
 ## ---------- route draw: tap-to-cycle vs. drag-to-build-and-connect ----------
 ## v0.5: tile creation is drag-only -- tapping never places a new tile.
 ## Connectivity is never implied by adjacency (GameState.connections):
-## a press must start ON a source node or a built hub tile (v0.5 revision --
-## routes always trace back to a supply point) while the "route" tool is
-## active, since every link, including a new tile's link back to what it
-## extends from, has to be an explicit drag. The drag can still cross and
-## link to any settlement/route tile it passes over -- only where it starts
-## is restricted.
+## a press must start ON a source node or a built hub tile, and the drag must
+## end ON a hub tile or a settlement node (v0.5 revision -- every completed
+## drag is therefore a genuinely connected route from a supply point to a
+## delivery destination, never a partial link that silently falls short)
+## while the "route" tool is active, since every link, including a new
+## tile's link back to what it extends from, has to be an explicit drag. The
+## drag can still cross and link to any settlement/route tile it passes over
+## along the way -- only the two ends are restricted.
 ## _process() promotes an eligible press to _drag_active once held past
 ## HOLD_TO_DRAG_MSEC without releasing. A release before that threshold --
 ## or a release without ever dragging to a second cell -- is a plain tap on
@@ -290,12 +295,17 @@ func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 ## Re-derives, from scratch, which consecutive pairs in _drag_path are new
 ## connections to make (_drag_new_connections) and which of their second
 ## cells are genuinely new tiles to build (_drag_new_cells), plus whether the
-## whole path is affordable. path[0] is always a pre-existing anchor (see
-## _start_press), so every step from here on is inherently a valid link --
-## there's no separate "is this adjacent" check anymore, since the path
-## itself IS the connection being drawn. A step onto an existing tile or node
-## (mid-drag pass-through) is a free link, no new tile, no cost. Runs against
-## a scratch grid copy -- _state.grid/.connections are never touched here.
+## whole path is affordable and properly terminated. path[0] is always a
+## pre-existing anchor (see _start_press), so every step from here on is
+## inherently a valid link -- there's no separate "is this adjacent" check
+## anymore, since the path itself IS the connection being drawn. A step onto
+## an existing tile or node (mid-drag pass-through) is a free link, no new
+## tile, no cost. The path's LAST cell must be a hub tile or a settlement
+## node (v0.5 item 19) -- a drag that stops short of one is invalid, which is
+## what guarantees every committed drag is a genuinely complete, connected
+## route rather than one that silently falls short of the destination it
+## looked like it was reaching. Runs against a scratch grid copy --
+## _state.grid/.connections are never touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
@@ -317,6 +327,18 @@ func _recompute_drag_validity() -> void:
 	if total_cost > _state.balance:
 		_drag_valid = false
 		_drag_invalid_reason = "Not enough treasury for the whole path (§%d needed)." % roundi(total_cost)
+		return
+	# Every drag must end at a hub or a settlement (v0.5 item 19) -- this is
+	# what guarantees a completed drag is always a genuinely connected route
+	# all the way to a delivery destination, rather than one that silently
+	# stops one tile short of the node it looked like it was reaching.
+	var end_cell: Vector2i = _drag_path[-1]
+	var end_node := _node_at(end_cell)
+	var ends_at_hub: bool = _state.grid.has(end_cell) and _state.grid[end_cell].kind == "hub"
+	var ends_at_settlement: bool = end_node != null and end_node.node_type == GameEnums.NodeType.SETTLEMENT
+	if not (ends_at_hub or ends_at_settlement):
+		_drag_valid = false
+		_drag_invalid_reason = "A route must end at a hub or a settlement."
 
 ## Writes every queued new tile and connection from a valid drag path in one
 ## batch, then runs the usual post-build pass once for the whole gesture
