@@ -171,6 +171,19 @@ func _report() -> void:
 	assert(state.grid[between_unfinished].kind == "route", "The fresh interior cell must be built")
 	assert(state.has_connection(unfinished_a, between_unfinished) and state.has_connection(between_unfinished, unfinished_b), "Both new connections along an unfinished-to-unfinished drag must be recorded")
 
+	# A drag from an unestablished route tile directly to a SETTLEMENT is
+	# valid too, not just to another unestablished route tile -- ROUTE-14's
+	# relaxed start rule and ROUTE-11's settlement end rule combine freely.
+	var village_c: NodeData = _node_by_id(map_data, "villageC")
+	var route_to_settlement_b: Vector2i = Vector2i(14, 4)
+	var route_to_settlement_c: Vector2i = Vector2i(13, 4)
+	var route_to_settlement_path: Array[Vector2i] = [unfinished_b, route_to_settlement_b, route_to_settlement_c, village_c.grid_position]
+	_main.set("_drag_path", route_to_settlement_path)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag from an unestablished route tile directly to a settlement must be valid")
+	_main.call("_commit_drag")
+	assert(state.has_connection(route_to_settlement_c, village_c.grid_position), "Dragging from an unestablished route tile onto a settlement must record the connection")
+
 	# Storage tool: only buildable on an existing route tile.
 	_main.call("_set_tool", "cool")
 	_main.call("_handle_click", mid_cell)
