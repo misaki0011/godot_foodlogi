@@ -32,8 +32,9 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 15. **Connectivity is explicit, drag-only, and tap no longer creates a tile at all.** Item 14 fixed the *charge*, but two side-by-side routes still merged into one road network just by touching -- physical adjacency was, and always had been, the entire definition of "connected" (pathfinding, hub-cap networks, established routes, upkeep discount, route shape). This item removes that assumption everywhere: a `GameState.connections` edge, drawn only by the player dragging across a tile-tile or tile-node boundary, is now what connects two cells; sitting next to something never does. Concretely: (a) tapping a route tile only cycles its shape (or shows a hint on empty ground) -- creating a new tile is drag-only, starting from a press on an existing node or route tile and building/connecting every cell the drag crosses, releasing to commit the whole path atomically, same as before; (b) dragging across an *existing* tile or node (no new tile needed) is a free, explicit "connect" gesture -- this is how two separately-built roads, or a road and a node it happens to sit beside, get linked on purpose; (c) `SimulationEngine.build_graph`, `road_components`, `established_route_cells`, `hub_branch_count`, `route_shape`, and the hub upkeep-discount check all consult `state.connections` instead of raw grid/node adjacency. Bulldozing a tile removes every connection edge touching it. Other tools (storage, hub, upgrade, bulldoze) are unaffected -- they still act on a single existing route tile with one tap. See §2.1, §4.1, §4.4, §16.
 16. **The established-route overlay marks its two ends distinctly.** The gold line from item 10 read as one uniform strand end to end; now the source end shows a green cone arrow pointing the direction delivery actually flows (source → first tile) and the settlement end shows a red bar instead of gold, so start and finish are readable at a glance without tracing the whole line. Purely visual -- no simulation or cost change. See §4.1.
 17. **A hub can be built on any route tile, not just a flagged completed-route fork.** This drops item 12/13's "3+ branch, established-route" requirement entirely: the player draws a route, picks the Build Hub tool, and clicks any existing route tile -- straight, isolated, unfinished, it doesn't matter -- to place a Small Hub there for §150. The per-network cap (still 2 hubs, item 11) is the only remaining constraint, checked live against the tile's connected road network rather than a precomputed `junction`/`hub_capped` flag. This simplifies a rule that had grown through several revisions (items 4, 10, 12, 13) into something the player can reliably predict: any road, anywhere, up to two hubs per network. See §4.4.
-18. **A route drag can only start from a source or a built hub.** Previously a drag could start from any existing node or route tile (item 15), letting the player extend a route from any point already on the map. Routes must now always trace back to a supply point: press-and-hold is only a valid drag anchor on a source node or a hub tile, never on a settlement or a plain route tile. The drag itself is unrestricted once started -- it can still cross and link to any settlement or route tile along the way -- only the starting cell is restricted. See §4.1.
+18. **A route drag can only start from a source or a built hub.** Previously a drag could start from any existing node or route tile (item 15), letting the player extend a route from any point already on the map. Routes must now always trace back to a supply point: press-and-hold is only a valid drag anchor on a source node or a hub tile, never on a settlement or a plain route tile. See §4.1.
 19. **A route drag must end at a hub or a settlement.** Item 18 fixed where a drag can start; this fixes where it can stop. Previously a drag could be released anywhere, including one tile short of the settlement it looked like it was reaching -- the tiles would look like one continuous road, but without a genuine connection to a node, the road was never established and silently carried no delivery, no overlay, and no hub eligibility at that end. Now the LAST cell of a drag must be a hub tile or a settlement node, or the whole path is rejected (nothing built, nothing charged), exactly like the affordability check. Together with item 18, every committed drag is therefore always a complete, genuinely connected route from a supply point (source or hub) to a delivery destination (hub or settlement) -- there's no way to end up with a route that only looks finished. See §4.1.
+20. **A new route can never cross or reuse an already-built tile -- it only ever runs over empty ground between its two ends.** Item 15's "dragging across an existing tile is a free connect gesture" let a new drag pass through the MIDDLE of an unrelated existing route or storage tile, which reintroduced exactly the kind of implicit, easy-to-miss topology items 15/18/19 were trying to eliminate: a player could accidentally piggyback a new route on someone else's infrastructure without meaning to, or fail to notice their drag silently reused a tile rather than building its own. Now every cell strictly between a drag's start anchor (source/hub) and end anchor (hub/settlement) must be currently-empty ground; if the path crosses any other built tile or node along the way, the whole drag is rejected, same as an unaffordable or improperly-terminated one. Two routes can now only ever share infrastructure at a hub or settlement they were both dragged to end at -- never by physically overlapping a shared tile. See §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -315,7 +316,7 @@ see "Explicit connections" below):
   route tile, regardless of connection count, can be built into a hub with
   the Build Hub tool, subject only to the per-network cap (§4.4).
 
-### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5, start/end restricted in v0.5 items 18-19)
+### Explicit connections, and drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.5, start/end/interior restricted in v0.5 items 18-20)
 
 **Connectivity is never implied by two cells simply sitting next to each
 other.** Two route tiles, or a route tile and a node, are only linked for
@@ -339,20 +340,21 @@ All route creation is drag-only:
 2. Dragging the pointer traces a candidate path across further cells, drawn
    live as a translucent line so the player can see it before committing to
    anything.
-3. **Nothing is written to the map while dragging.** For every consecutive
-   pair of cells the path crosses, the second cell is either a new tile to
-   build (if it's empty) or an existing tile/node to link to for free (if
-   it's already there) -- either way, that pair becomes a connection to
-   record. The running cost only counts genuinely new tiles, and must fit
-   the current treasury (the hub cap never blocks a placement -- see §4.4).
+3. **Every cell strictly between the start and end anchors must be empty
+   ground** (v0.5 item 20) -- a new route can never cross or reuse an
+   already-built tile or a different node partway through. Each such cell
+   becomes a new tile to build, and each consecutive pair (including the two
+   ends) becomes a connection to record. The running cost only counts these
+   genuinely new tiles, and must fit the current treasury (the hub cap never
+   blocks a placement -- see §4.4).
 4. **The path's LAST cell must be a hub tile or a settlement node** (v0.5
    item 19) -- a drag that releases anywhere else (a plain route tile, empty
    ground) is invalid, no matter how far it traveled or how affordable it
    was. This is what guarantees every committed drag is a genuinely complete
    route from its source/hub anchor to a real delivery destination, rather
    than one that silently stops one tile short of the node it looked like it
-   was reaching. The preview line renders green only once both the
-   affordability and end-point checks pass, red otherwise, explaining why in
+   was reaching. The preview line renders green only once the affordability,
+   interior, and end-point checks all pass, red otherwise, explaining why in
    a toast if the player releases while it's red.
 5. **Only a fully valid path is committed, and only on release** -- an
    invalid path places and connects nothing at all. On a valid release,
@@ -362,11 +364,12 @@ All route creation is drag-only:
    to a second cell, is an ordinary tap on the anchor (info tip for a node,
    shape-cycle for a route tile) -- never a build.
 
-Dragging across an *existing* tile or node (nothing new to build there) is
-how two separately-built roads, or a road and a node it happens to sit
-beside, get linked on purpose -- this is the same gesture as building, just
-with no new tile and no cost, since the boundary being crossed already
-exists on both sides.
+Because the interior must be empty ground, the only pre-existing cells a
+drag ever touches are its very first (a source or hub) and very last (a hub
+or settlement) -- there's no way for a new route to physically overlap an
+unrelated existing one. Two separately-built roads, or a road and a node,
+only ever get linked by a drag that ends exactly ON that shared hub or
+settlement -- never by crossing through the middle of one another.
 
 ### Established-route overlay (added in v0.4, endpoints marked in v0.5)
 

@@ -113,11 +113,21 @@ func _report() -> void:
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag from a hub that doesn't end at a hub or a settlement must be invalid")
 
-	# A drag from the hub through to the settlement is valid end to end.
-	var hub_to_settlement_path: Array[Vector2i] = [second_cell, third_cell, village_a.grid_position]
+	# A new route can never cross or reuse an already-built tile in its
+	# interior (v0.5 item 20) -- even though mid_cell is a perfectly real,
+	# already-built route tile, a fresh drag can't pass through it partway.
+	var reuse_path: Array[Vector2i] = [farm.grid_position, mid_cell, village_a.grid_position]
+	_main.set("_drag_path", reuse_path)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag that crosses an already-built tile in its interior must be invalid")
+
+	# A drag from the hub through FRESH ground to the settlement is valid --
+	# it must not reuse third_cell (already built by the earlier drag).
+	var fresh_interior_cell: Vector2i = second_cell + Vector2i(0, 1)
+	var hub_to_settlement_path: Array[Vector2i] = [second_cell, fresh_interior_cell, village_a.grid_position]
 	_main.set("_drag_path", hub_to_settlement_path)
 	_main.call("_recompute_drag_validity")
-	assert(_main.get("_drag_valid"), "A drag from a hub to a settlement must be valid")
+	assert(_main.get("_drag_valid"), "A drag from a hub to a settlement over empty ground must be valid")
 
 	# Storage tool: only buildable on an existing route tile.
 	_main.call("_set_tool", "cool")
