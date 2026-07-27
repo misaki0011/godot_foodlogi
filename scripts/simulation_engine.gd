@@ -65,7 +65,7 @@ static func road_components(state: GameState) -> Dictionary:
 ## pruned: a tile survives only while it still links to 2+ things (another
 ## kept tile, or a node it's connected to), leaving the through-paths that run
 ## from a source to a settlement.
-static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+static func established_route_cells(state: GameState, nodes_by_pos: Dictionary, only_source_id := "") -> Dictionary:
 	var comp_of := road_components(state)
 	# Which road networks touch a source / a settlement (a dragged tile<->node
 	# connection, not mere adjacency).
@@ -78,7 +78,8 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 			if node == null:
 				continue
 			if node.node_type == GameEnums.NodeType.SOURCE:
-				comp_has_source[comp] = true
+				if only_source_id == "" or node.node_id == only_source_id:
+					comp_has_source[comp] = true
 			else:
 				comp_has_settlement[comp] = true
 	var kept := {}
@@ -94,45 +95,24 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 		for pos in kept.keys():
 			var degree := 0
 			for n in state.connections.get(pos, {}).keys():
-				if kept.has(n) or nodes_by_pos.has(n):
+				if kept.has(n) or _counts_as_route_end(nodes_by_pos.get(n), only_source_id):
 					degree += 1
 			if degree <= 1:
 				kept.erase(pos)
 				changed = true
 	return kept
 
-## Which food sources each built tile can draw from: Vector2i -> Array of
-## source node_ids (sorted, so the result is stable frame to frame). A tile
-## whose road network reaches no source at all maps to an empty array.
-##
-## "Can draw from" means the same thing it means everywhere else since v0.5:
-## reachable through EXPLICIT connections (ROUTE-09), never mere adjacency.
-## A road is attributed to a source when some tile of its network was dragged
-## onto that source. Roads joined at a hub share a network, so they share
-## every source that network touches -- which is exactly why the answer is a
-## list rather than a single id.
-##
-## Used by Main to tint each route tile with its source's food colour, so a
-## glance at the map says which supply a given road is carrying.
-static func sources_by_cell(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
-	var comp_of := road_components(state)
-	var sources_of_comp := {}
-	for pos in nodes_by_pos:
-		var node: NodeData = nodes_by_pos[pos]
-		if node.node_type != GameEnums.NodeType.SOURCE:
-			continue
-		for neighbor in state.connections.get(pos, {}).keys():
-			if not comp_of.has(neighbor):
-				continue
-			var ids: Array = sources_of_comp.get_or_add(comp_of[neighbor], [])
-			if not ids.has(node.node_id):
-				ids.append(node.node_id)
-	for comp in sources_of_comp:
-		sources_of_comp[comp].sort()
-	var result := {}
-	for cell in comp_of:
-		result[cell] = sources_of_comp.get(comp_of[cell], [])
-	return result
+## Whether `node` anchors an end of a route being traced for `only_source_id`.
+## Settlements always do. A source does too -- but when tracing one specific
+## source, every OTHER source stops counting, which is what makes the pruning
+## pass drop the spurs that only some other source feeds: with its far end no
+## longer anchored, such a spur unravels tile by tile.
+static func _counts_as_route_end(node: NodeData, only_source_id: String) -> bool:
+	if node == null:
+		return false
+	if node.node_type != GameEnums.NodeType.SOURCE:
+		return true
+	return only_source_id == "" or node.node_id == only_source_id
 
 ## True when `pos`'s connected road network (see road_components) already has
 ## HUB_CAP_PER_NETWORK built hubs, so Main._do_build_hub must refuse a new one
