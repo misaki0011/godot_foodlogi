@@ -1,6 +1,6 @@
 # Food Logistics Puzzle Game - Design Spec
 
-**Version:** 0.4  
+**Version:** 0.5  
 **Working title:** Fresh Routes  
 **Genre:** Cozy logistics / routing puzzle / light management  
 **Target platform:** PC / Steam (MVP prototype: browser)  
@@ -10,6 +10,13 @@
 ---
 
 ## 0. Changelog
+
+### v0.4 → v0.5 — Auto-running day clock
+
+The loop stopped for a button press every single day, which broke the build-while-it-runs feel the game is aiming for. These changes supersede conflicting v0.1-v0.4 text on the planning/report phases being player-advanced:
+
+1. **The day runs itself on a real-time clock.** A day is now a 60-second countdown shown in the top-right corner rather than a "Run the Day" click. The player keeps building while it drains; at 0:00 the day simulates, the calendar advances, and the next day's clock starts immediately, so planning and simulation are continuous. The clock can be paused, run at 1x/2x/4x, or switched off entirely for the old manual loop, and a day can still be run early. See §3.5, §10.8.
+2. **An auto-run day reports without blocking.** Because a modal every 60 seconds would defeat the point, an auto-run day posts a small self-dismissing summary card (day, grade/score, profit, freshness, happiness) under the clock instead of the full-screen report. The full report is still one click away on the Report button, and opening it freezes the clock so reading it never costs build time. The blocking end-of-day report is unchanged in manual mode. See §3.3, §10.8.
 
 ### v0.3 → v0.4 — Mobile/touch playtest support
 
@@ -186,6 +193,8 @@ Network efficiency: B+
 
 The report should show why smart routing mattered.
 
+Since v0.5 this full-screen report is shown at the end of a **manually** run day. A day the clock runs by itself (§3.5) posts a compact, self-dismissing summary card instead -- the auto-run loop can't stop for a dialog every day -- and this full report stays available on demand from the day clock panel (§10.8).
+
 ### 3.4 Upgrade phase
 
 The player spends profit or reputation to unlock:
@@ -196,6 +205,19 @@ The player spends profit or reputation to unlock:
 - Hub upgrades.
 - New regions.
 - Route improvements.
+
+### 3.5 Day clock (added in v0.5)
+
+The planning phase (§3.1) is not open-ended. Each day is a real-time countdown, and the simulation phase (§3.2) fires when it expires:
+
+- **Day length:** 60 real-time seconds at 1x speed. The clock starts full on day 1 and restarts full after every simulated day, including one the player runs early.
+- **Auto-run (default):** at 0:00 the day simulates itself, the day counter advances, and the next day's clock begins immediately. The player never has to press anything to keep the game moving, and can keep drawing routes, placing storage, and bulldozing while the clock drains.
+- **Speed:** 1x / 2x / 4x multipliers on the drain rate, for players who don't want to wait out a day they're happy with.
+- **Pause:** holds the countdown indefinitely (spacebar or the Pause button). Building is still allowed while paused, which is the deliberate "stop the pressure and think" affordance.
+- **Run early:** running the day by hand simulates it immediately and restarts the clock. Running early spends the rest of the day's build time -- it does not bank it.
+- **Manual mode:** switching Auto off stops the clock entirely and restores the pre-v0.5 loop, where a day only runs when the player asks and the blocking report's "Continue to next day" is what advances the calendar.
+
+The clock is frozen while the full-screen report (§3.3) is open, so reading a report never costs the player build time.
 
 ---
 
@@ -1281,6 +1303,29 @@ A fixed panel in the top-left corner of the screen provides map navigation that 
 - **Route / Erase shortcuts (added in v0.4):** the two most-used build tools -- Draw Route and Bulldoze -- also appear as compact toggle buttons on this panel, so drawing and erasing routes don't require reaching across to the right-hand sidebar. They select the exact same tools as the sidebar's Draw Route / Bulldoze buttons, and the active tool stays highlighted on every copy at once.
 
 These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
+
+### 10.8 Day clock panel (added in v0.5)
+
+A fixed panel in the **top-right** corner of the play area -- immediately left of the build sidebar, so it never overlaps it -- carries the day timer and its transport controls:
+
+```text
+Day 3                    0:47
+[==================        ]
+Day runs itself at 0:00
+[ Pause || ]  [ 1x ]
+[ Auto ]      [ Report ]
+[ Run Day Now > ]
+```
+
+- **Countdown:** minutes:seconds remaining in the current day, drawn large. It turns amber under 15 seconds and red under 5 so the end of a day is legible from the corner of the eye, and goes gray whenever the clock isn't running (paused, or manual mode). The bar beneath it shows the same value as a fraction of the full day.
+- **Pause / speed:** hold the countdown, or cycle 1x/2x/4x (§3.5). Both are disabled in manual mode, where there is no running clock to control. The spacebar toggles pause as well.
+- **Auto:** toggles the auto-running clock against the manual loop. Switching modes always resets the countdown to a full day, so the player is never dropped into an about-to-expire day.
+- **Report:** reopens the last simulated day's full report for review (disabled before the first simulated day). This never advances the calendar -- only the end-of-day report's "Continue to next day" does that.
+- **Run Day Now:** simulates the current day immediately instead of waiting out the clock. The sidebar keeps its own copy of this button.
+
+Directly beneath the panel, an auto-run day posts a **summary card** -- day number, grade and score, profit, average freshness, settlement happiness, plus a personal-best or capacity-blocked line -- which fades on its own after a few seconds. It is non-blocking by design: the auto-run loop can't stop for a dialog every day, so the card carries the headline and the Report button carries the detail.
+
+Like the map controls, this panel is usable by mouse or touch and never triggers a tile action underneath it.
 
 ---
 

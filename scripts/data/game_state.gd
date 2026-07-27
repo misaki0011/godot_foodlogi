@@ -5,6 +5,18 @@ extends RefCounted
 
 var day := 1
 var balance := GameBalance.STARTING_FUNDS
+
+## ---------- day clock (LOOP-07) ----------
+## `auto_run` on (the default) means the day advances by itself: the clock
+## counts `day_time_left` down from GameBalance.DAY_LENGTH_SEC at
+## DAY_SPEEDS[speed_index], simulates the day at zero, and restarts. Off, the
+## clock is frozen and the day only runs when the player asks for it, which
+## is the pre-v0.5 manual loop. `clock_paused` is the player's temporary
+## hold on an otherwise auto-running clock.
+var auto_run := true
+var clock_paused := false
+var speed_index := 0
+var day_time_left := GameBalance.DAY_LENGTH_SEC
 var best_score := -INF
 var best_grade := ""
 var score_history: Array[Dictionary] = [] # {day, score, grade, profit}

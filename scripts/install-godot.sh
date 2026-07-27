@@ -4,7 +4,11 @@ set -euo pipefail
 GODOT_VERSION="4.6.2"
 GODOT_RELEASE="${GODOT_VERSION}-stable"
 INSTALL_DIR="${HOME}/.local/bin"
-TEMPLATES_DIR="${HOME}/.local/share/godot/export_templates/${GODOT_RELEASE}"
+# Godot looks templates up as "<version>.<status>" (4.6.2.stable), not by the
+# "<version>-stable" slug used in the download filenames -- installing them
+# under the download slug leaves exports failing with "export templates not
+# found" even though the files are on disk.
+TEMPLATES_DIR="${HOME}/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
 TEMP_DIR="$(mktemp -d)"
 
 cleanup() {

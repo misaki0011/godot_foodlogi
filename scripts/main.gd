@@ -5,7 +5,8 @@ extends Node3D
 ## tile at a time per the active tool, hubs auto-form at 3-way junctions,
 ## and hovering (desktop) or tapping (mobile, no dialog) any tile or node
 ## shows a live info tooltip. A top-left panel provides touch zoom/pan
-## controls for exploring the map on mobile. See SPEC.md v0.3.
+## controls for exploring the map on mobile. A top-right day clock counts the
+## current day down and runs it automatically (LOOP-07). See SPEC.md v0.5.
 
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
@@ -78,7 +79,25 @@ var _bubbles_button: Button
 var _tool_buttons: Dictionary = {}
 var _tip_panel: PanelContainer
 var _tip_label: RichTextLabel
+var _clock_day_label: Label
+var _clock_time_label: Label
+var _clock_bar: ProgressBar
+var _clock_mode_label: Label
+var _pause_button: Button
+var _speed_button: Button
+var _auto_button: Button
+var _report_button: Button
+var _summary_panel: PanelContainer
+var _summary_label: RichTextLabel
+var _summary_tween: Tween
+var _clock_shown_sec := -1
+var _last_report: DayReportData
+## True while the open report modal is the end-of-day one, whose "Continue"
+## rolls the calendar over. Reviewing an already-closed day's report (the
+## clock panel's Report button) leaves it false, so closing just dismisses.
+var _report_advances_day := false
 var _report_overlay: Control
+var _report_continue: Button
 var _report_sub: Label
 var _report_text: RichTextLabel
 var _report_banner: Label
@@ -155,9 +174,12 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	if _report_overlay.visible:
+		# The report modal holds the whole game -- including the day clock --
+		# so a player reading it never loses time off the running day.
 		_pan_dir = Vector2.ZERO
 		_zoom_dir = 0.0
 		return
+	_tick_day_clock(delta)
 	if _zoom_dir != 0.0:
 		_camera.size = clampf(_camera.size + _zoom_dir * ZOOM_SPEED * delta, ZOOM_MIN, ZOOM_MAX)
 	if _pan_dir != Vector2.ZERO:
@@ -180,6 +202,9 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _report_overlay.visible:
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
+		_toggle_pause()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -484,16 +509,136 @@ func _after_action() -> void:
 	_render_grid()
 	_update_ui()
 
-func _end_day() -> void:
+## ---------- auto-run day clock (LOOP-07) ----------
+##
+## The day is on a real-time countdown rather than a button: the player keeps
+## building while the top-right clock drains, and when it reaches zero the day
+## simulates itself, the calendar rolls over, and the clock restarts -- so the
+## build/simulate loop never stops for a click. Because that loop can't afford
+## a modal every day, an auto-run day reports through a small, non-blocking
+## summary card instead (the full report stays one Report-button click away,
+## and opening it freezes the clock via _process's early return).
+##
+## Turning Auto off restores the pre-v0.5 manual loop exactly: the clock stops,
+## nothing runs on its own, and "Run Day Now" opens the blocking end-of-day
+## report whose Continue button advances the day.
+
+## Drains the current day and simulates it when it runs out. Called once per
+## frame from _process, which is already skipped while the report modal is
+## open, so the clock only ticks during actual play.
+func _tick_day_clock(delta: float) -> void:
+	if not _state.auto_run or _state.clock_paused:
+		return
+	_state.day_time_left -= delta * GameBalance.DAY_SPEEDS[_state.speed_index]
+	if _state.day_time_left <= 0.0:
+		_run_day()
+	_update_clock_ui()
+
+## Simulates one day, from either the clock hitting zero or the player asking
+## for it early. Always restarts the clock, so an early run costs the rest of
+## the day's build time rather than stacking up.
+func _run_day() -> void:
 	var report := SimulationEngine.run_day(_state, _map_data.node_placements)
-	_show_report(report)
+	_last_report = report
+	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
+	_clock_shown_sec = -1
+	if _state.auto_run:
+		_state.day += 1
+		_show_day_summary(report)
+	else:
+		_report_advances_day = true
+		_show_report(report)
 	_render_grid()
 	_update_ui()
 
 func _close_report() -> void:
 	_report_overlay.visible = false
-	_state.day += 1
+	if _report_advances_day:
+		_report_advances_day = false
+		_state.day += 1
 	_update_ui()
+
+## Reopens the last simulated day's full report for review. The day has
+## already rolled over by now, so closing it must not advance again.
+func _review_report() -> void:
+	if _last_report == null:
+		return
+	_report_advances_day = false
+	_show_report(_last_report)
+
+func _toggle_pause() -> void:
+	if not _state.auto_run:
+		return
+	_state.clock_paused = not _state.clock_paused
+	_update_clock_ui()
+
+func _toggle_auto_run(pressed: bool) -> void:
+	_state.auto_run = pressed
+	# Leaving manual mode shouldn't drop the player straight into an
+	# already-expired day, and a paused hold is meaningless once the clock
+	# is stopped, so both reset on the way in and out.
+	_state.clock_paused = false
+	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
+	_clock_shown_sec = -1
+	_update_clock_ui()
+	_show_toast("Auto-run on -- the day advances by itself." if pressed else "Auto-run off -- run each day yourself.")
+
+func _cycle_speed() -> void:
+	_state.speed_index = (_state.speed_index + 1) % GameBalance.DAY_SPEEDS.size()
+	_update_clock_ui()
+
+func _update_clock_ui() -> void:
+	if _clock_time_label == null:
+		return
+	_clock_day_label.text = "Day %d" % _state.day
+	var remaining: float = maxf(_state.day_time_left, 0.0)
+	# Only rewrite the countdown when the displayed second actually changes.
+	var whole_sec := ceili(remaining)
+	if whole_sec != _clock_shown_sec:
+		_clock_shown_sec = whole_sec
+		_clock_time_label.text = "%d:%02d" % [whole_sec / 60, whole_sec % 60]
+	_clock_time_label.add_theme_color_override("font_color", _clock_color(remaining))
+	_clock_bar.value = remaining / GameBalance.DAY_LENGTH_SEC * 100.0
+	_pause_button.text = "Resume ▸" if _state.clock_paused else "Pause ||"
+	_pause_button.disabled = not _state.auto_run
+	_speed_button.text = GameBalance.DAY_SPEED_LABELS[_state.speed_index]
+	_speed_button.disabled = not _state.auto_run
+	_report_button.disabled = _last_report == null
+	if not _state.auto_run:
+		_clock_mode_label.text = "Manual -- run the day yourself"
+	elif _state.clock_paused:
+		_clock_mode_label.text = "Paused -- space or Resume to continue"
+	else:
+		_clock_mode_label.text = "Day runs itself at 0:00"
+
+func _clock_color(remaining: float) -> Color:
+	if not _state.auto_run or _state.clock_paused:
+		return Color("8FA3AD")
+	if remaining <= GameBalance.DAY_CLOCK_URGENT_SEC:
+		return Color("C4573A")
+	if remaining <= GameBalance.DAY_CLOCK_WARN_SEC:
+		return Color("D98E4A")
+	return Color("EAF4EF")
+
+## The auto-run loop's stand-in for the report modal: a compact card under the
+## clock with the day's grade, profit and freshness, which fades on its own so
+## the player never has to dismiss anything mid-build.
+func _show_day_summary(r: DayReportData) -> void:
+	var grade_color: String = GRADE_COLORS.get(r.grade, Color.WHITE).to_html(false)
+	var profit_color := "#7FBF7F" if r.profit >= 0.0 else "#C4573A"
+	var text := "[b]Day %d done[/b] · grade [color=#%s][b]%s[/b][/color] (%d)\n" % [r.day, grade_color, r.grade, roundi(r.grade_score)]
+	text += "[color=%s]%s§%d[/color] · %d%% fresh · %d%% happy" % [profit_color, "+" if r.profit >= 0.0 else "−", absi(roundi(r.profit)), roundi(r.avg_freshness_overall), roundi(r.avg_happiness)]
+	if r.is_personal_best and r.day > 1:
+		text += "\n[color=#C9A227]New personal best score![/color]"
+	elif r.capacity_blocked > 0.0:
+		text += "\n[color=#C4573A]%d food blocked by route capacity[/color]" % roundi(r.capacity_blocked)
+	_summary_label.text = text
+	_summary_panel.visible = true
+	if _summary_tween != null and _summary_tween.is_valid():
+		_summary_tween.kill()
+	_summary_tween = create_tween()
+	_summary_tween.tween_interval(GameBalance.DAY_SUMMARY_HOLD_SEC)
+	_summary_tween.tween_callback(func() -> void: _summary_panel.visible = false)
 
 ## ---------- hover tooltip ----------
 
@@ -578,7 +723,10 @@ func _settlement_tip_text(n: NodeData) -> String:
 ## ---------- daily report ----------
 
 func _show_report(r: DayReportData) -> void:
-	_report_sub.text = "Day %d" % _state.day
+	# The report's own day, not _state.day -- in the auto-run loop the calendar
+	# has already rolled over by the time this can be reopened for review.
+	_report_sub.text = "Day %d" % r.day
+	_report_continue.text = "Continue to next day" if _report_advances_day else "Close"
 	var text := ""
 	text += "Income: §%d\n" % roundi(r.income)
 	text += "Route upkeep: −§%d\n" % roundi(r.route_upkeep)
@@ -597,7 +745,7 @@ func _show_report(r: DayReportData) -> void:
 	for s in r.settlement_scores:
 		text += "%s: %d%% happy · %d%% fresh\n" % [s.settlement.display_name, roundi(s.sat), roundi(s.avg_fresh)]
 	_report_text.text = text
-	if r.is_personal_best and _state.day > 1:
+	if r.is_personal_best and r.day > 1:
 		_report_banner.text = "🏆 New personal best score! Grade %s, %d/100. Can you clean the network up further?" % [r.grade, roundi(r.grade_score)]
 		_report_banner.visible = true
 	elif r.capacity_blocked > 0.0:
@@ -885,6 +1033,7 @@ func _update_ui() -> void:
 		return
 	_funds_label.text = "§ %d" % roundi(_state.balance)
 	_day_label.text = "%d" % _state.day
+	_update_clock_ui()
 	if _state.best_grade != "":
 		_best_grade_label.text = _state.best_grade
 		_best_grade_label.add_theme_color_override("font_color", GRADE_COLORS.get(_state.best_grade, Color.WHITE))
@@ -979,10 +1128,15 @@ func _build_ui() -> void:
 
 	side_box.add_child(HSeparator.new())
 	var run_day := Button.new()
-	run_day.text = "Run the Day ▸"
+	run_day.text = "Run the Day Now ▸"
 	run_day.custom_minimum_size.y = 44
-	run_day.pressed.connect(_end_day)
+	run_day.pressed.connect(_run_day)
 	side_box.add_child(run_day)
+	var run_day_note := Label.new()
+	run_day_note.autowrap_mode = TextServer.AUTOWRAP_WORD
+	run_day_note.text = "The day runs by itself when the top-right clock hits 0:00 -- this just runs it early."
+	run_day_note.add_theme_font_size_override("font_size", 11)
+	side_box.add_child(run_day_note)
 
 	_hint_label = Label.new()
 	_hint_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
@@ -996,7 +1150,9 @@ func _build_ui() -> void:
 
 	_toast = Label.new()
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	_toast.position = Vector2(-220, 12)
+	# Centered over the play area rather than the window, so it clears both the
+	# right sidebar and the day clock panel tucked just inside it.
+	_toast.position = Vector2(-220 - SIDEBAR_INSET * 0.5, 12)
 	_toast.size = Vector2(440, 42)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1018,6 +1174,7 @@ func _build_ui() -> void:
 	_tip_panel.add_child(_tip_label)
 
 	_build_map_controls(root)
+	_build_day_clock(root)
 
 	_report_overlay = ColorRect.new()
 	_report_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1053,11 +1210,123 @@ func _build_ui() -> void:
 	_report_text.fit_content = true
 	_report_text.custom_minimum_size = Vector2(420, 0)
 	report_scroll.add_child(_report_text)
-	var continue_button := Button.new()
-	continue_button.text = "Continue to next day"
-	continue_button.custom_minimum_size.y = 40
-	continue_button.pressed.connect(_close_report)
-	report_box.add_child(continue_button)
+	_report_continue = Button.new()
+	_report_continue.text = "Continue to next day"
+	_report_continue.custom_minimum_size.y = 40
+	_report_continue.pressed.connect(_close_report)
+	report_box.add_child(_report_continue)
+
+## ---------- day clock (top-right) ----------
+
+## The countdown to the next automatic day run, plus its transport controls
+## (pause, speed, auto/manual) and the review button for the last report.
+## Anchored to the top-right corner and grown leftward from just inside the
+## sidebar, so it sits in the top-right of the play area rather than under the
+## right-hand panel. The end-of-day summary card stacks directly beneath it.
+const CLOCK_PANEL_WIDTH := 214.0
+const SIDEBAR_INSET := 312.0 # sidebar width (300) + its 12px margin
+
+func _build_day_clock(root: Control) -> void:
+	var column := VBoxContainer.new()
+	column.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	column.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	column.grow_vertical = Control.GROW_DIRECTION_END
+	column.offset_left = -SIDEBAR_INSET
+	column.offset_right = -SIDEBAR_INSET
+	column.offset_top = 12
+	column.offset_bottom = 12
+	column.custom_minimum_size.x = CLOCK_PANEL_WIDTH
+	column.add_theme_constant_override("separation", 8)
+	root.add_child(column)
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.92))
+	column.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	panel.add_child(box)
+
+	var head := HBoxContainer.new()
+	box.add_child(head)
+	_clock_day_label = Label.new()
+	_clock_day_label.text = "Day 1"
+	_clock_day_label.add_theme_font_size_override("font_size", 15)
+	_clock_day_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_clock_day_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(_clock_day_label)
+	_clock_time_label = Label.new()
+	_clock_time_label.text = "1:00"
+	_clock_time_label.add_theme_font_size_override("font_size", 30)
+	_clock_time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	head.add_child(_clock_time_label)
+
+	_clock_bar = ProgressBar.new()
+	_clock_bar.max_value = 100.0
+	_clock_bar.value = 100.0
+	_clock_bar.show_percentage = false
+	_clock_bar.custom_minimum_size.y = 8
+	box.add_child(_clock_bar)
+
+	_clock_mode_label = Label.new()
+	_clock_mode_label.add_theme_font_size_override("font_size", 11)
+	_clock_mode_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	box.add_child(_clock_mode_label)
+
+	var controls := HBoxContainer.new()
+	controls.add_theme_constant_override("separation", 4)
+	box.add_child(controls)
+	_pause_button = Button.new()
+	_pause_button.text = "Pause ||"
+	_pause_button.custom_minimum_size.y = 34
+	_pause_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pause_button.add_theme_font_size_override("font_size", 13)
+	_pause_button.pressed.connect(_toggle_pause)
+	controls.add_child(_pause_button)
+	_speed_button = Button.new()
+	_speed_button.text = GameBalance.DAY_SPEED_LABELS[0]
+	_speed_button.custom_minimum_size = Vector2(46, 34)
+	_speed_button.add_theme_font_size_override("font_size", 13)
+	_speed_button.pressed.connect(_cycle_speed)
+	controls.add_child(_speed_button)
+
+	var modes := HBoxContainer.new()
+	modes.add_theme_constant_override("separation", 4)
+	box.add_child(modes)
+	_auto_button = Button.new()
+	_auto_button.text = "Auto"
+	_auto_button.toggle_mode = true
+	_auto_button.button_pressed = _state.auto_run
+	_auto_button.custom_minimum_size.y = 32
+	_auto_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auto_button.add_theme_font_size_override("font_size", 13)
+	_auto_button.toggled.connect(_toggle_auto_run)
+	modes.add_child(_auto_button)
+	_report_button = Button.new()
+	_report_button.text = "Report"
+	_report_button.custom_minimum_size.y = 32
+	_report_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_report_button.add_theme_font_size_override("font_size", 13)
+	_report_button.pressed.connect(_review_report)
+	modes.add_child(_report_button)
+
+	var run_now := Button.new()
+	run_now.text = "Run Day Now ▸"
+	run_now.custom_minimum_size.y = 34
+	run_now.add_theme_font_size_override("font_size", 13)
+	run_now.pressed.connect(_run_day)
+	box.add_child(run_now)
+
+	_summary_panel = PanelContainer.new()
+	_summary_panel.add_theme_stylebox_override("panel", _panel_style(Color("19312c"), 0.94))
+	_summary_panel.visible = false
+	column.add_child(_summary_panel)
+	_summary_label = RichTextLabel.new()
+	_summary_label.bbcode_enabled = true
+	_summary_label.fit_content = true
+	_summary_label.custom_minimum_size = Vector2(CLOCK_PANEL_WIDTH - 24, 0)
+	_summary_label.add_theme_font_size_override("normal_font_size", 12)
+	_summary_label.add_theme_font_size_override("bold_font_size", 12)
+	_summary_panel.add_child(_summary_label)
 
 ## ---------- map controls (zoom/pan, top-left) ----------
 
