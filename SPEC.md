@@ -44,6 +44,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 26. **Bulldoze and Upgrade can be swept across many tiles in one drag.** Both were strictly one click per tile, which made clearing a bad run or upgrading a long road a repetitive series of taps -- and on a touchscreen, a series of taps that is easy to mis-hit. Either tool can now be dragged: every tile the pointer crosses is marked, and the tool is applied to all of them on release. The sweep starts on press with no hold threshold (unlike a route drag, it only ever touches tiles that already exist, and nothing happens until release, so there is no accidental-build risk to guard against), and a press released without moving is still the ordinary single-tile action. Route drawing is unchanged -- it traces a path with start/end rules, not a set of tiles. See §4.1.
 
+27. **A route is tinted with the colour of the source it draws from.** Every route tile takes the colour of the food produced by the source its network is explicitly connected to, so the map says at a glance which supply a given road carries -- until now every road was the same brown regardless of what ran along it, and telling the grain road from the milk road meant tracing it back by eye. All source *markers* share one colour (§16), so the food colour is what actually distinguishes one source from another, and it is the colour language the speech bubbles already use. A road connected to no source keeps its plain built colour; roads joined at a hub share a network and take the average of its sources' colours. The legend lists the mapping, built from the region's own sources. See §4.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -396,6 +398,17 @@ Bulldoze and Upgrade are **sweep** tools: dragging either one across a run of ti
 - **One level per tile per sweep.** A tile crossed several times in one gesture is still upgraded once.
 
 The preview colour says what the tool will do: red markers on the tiles a bulldoze sweep will clear, green on the tiles an upgrade sweep will lift, gray when the sweep is blocked and will do nothing. A faint line traces every crossed cell, affected or not, so the gesture reads even where it passes over empty ground.
+
+### Route tint by source (added in v0.4 item 27)
+
+Each route tile is drawn in the colour of the food produced by the source its network draws from:
+
+- **Attribution follows explicit connections**, the same rule as everything else since v0.5: a road belongs to a source when some tile of its network was dragged onto that source. Roads joined at a hub share a network, so they share its sources.
+- **One source → that source's food colour. Several → their average.** A road whose network reaches no source at all is left its plain built colour, which is also what a freshly-drawn, not-yet-connected stub looks like.
+- **Hue swings fully to the source colour; brightness stays the road's own.** The tint multiplies the block's authored vertex colours rather than repainting them flat, so Dirt, Paved and Main stay distinguishable from each other and keep their surface detail while all three carry the source's colour. A partial blend was tried first and rejected: five muted food colours over a brown road all read as "brownish".
+- **The legend lists the mapping**, generated from the region's own sources rather than hardcoded, so it can't drift from what is actually drawn.
+
+This is why the tint is by *food* rather than by source marker: every source marker shares one colour (§16), so the food is the only thing that visually distinguishes one source from another -- and it matches the colours already used by the source/settlement speech bubbles (§10.1).
 
 ### Established-route overlay (added in v0.4, endpoints marked in v0.5)
 

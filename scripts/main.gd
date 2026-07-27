@@ -1002,14 +1002,17 @@ func _show_report(r: DayReportData) -> void:
 
 func _render_grid() -> void:
 	_clear_children(_grid_visuals)
+	var sources_by_cell := SimulationEngine.sources_by_cell(_state, _nodes_by_pos)
 	for pos in _state.grid:
 		var cell = _state.grid[pos]
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
 		if cell.kind == "route":
+			var source_ids: Array = sources_by_cell.get(pos, [])
 			if _map_data.is_river(pos.x, pos.y):
-				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
+				_add_tile_box(world_pos, BRIDGE_COLOR * _route_source_tint(source_ids, BRIDGE_COLOR), 0.16)
 			else:
-				_add_route_block(world_pos, cell.level)
+				var base: Color = ROUTE_LEVEL_COLORS.get(cell.level, Color.WHITE)
+				_add_route_block(world_pos, cell.level, _route_source_tint(source_ids, base))
 		elif cell.kind == "storage":
 			var marker: NodeMarker = STORAGE_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
@@ -1168,16 +1171,97 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
 ## so a route tile always uses the same unrotated scene regardless of its
 ## shape or facing -- there's no corner variant and nothing to rotate.
-func _add_route_block(pos: Vector3, level: String) -> void:
+func _add_route_block(pos: Vector3, level: String, tint := Color.WHITE) -> void:
 	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
 	if scene == null:
-		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
+		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE) * tint, 0.16)
 		return
 	var block: Node3D = scene.instantiate()
 	_grid_visuals.add_child(block)
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
 	# No scale needed: the block's footprint is authored at the real 2x2
 	# world-space cell size already (see generate_blocks.py).
+	if tint != Color.WHITE:
+		_tint_route_block(block, tint)
+
+## ---------- route tinting by source (ROUTE-16) ----------
+##
+## A route tile is tinted with the food colour of the source its network is
+## connected to, so the map says at a glance which supply a given road
+## carries -- the same colour language the source/settlement speech bubbles
+## already use (all source markers themselves share one colour, so the food
+## is what actually distinguishes them). A road connected to no source stays
+## its plain built colour; one whose network reaches several sources (roads
+## joined at a hub) gets the average of their colours.
+##
+## The tint is applied as a MULTIPLIER over the block's authored vertex
+## colours rather than a flat repaint, so Dirt/Paved/Main keep their surface
+## detail. A plain multiply is too weak to read, though -- every road base is
+## already brown, and multiplying brown by a food colour just gives more
+## brown. So the multiplier is derived as `target / base`, where the target
+## is the food colour rescaled to the road's own brightness: the hue swings
+## fully to the source's colour while the road keeps the light/dark identity
+## that separates Dirt from Paved from Main. Channels above 1.0 brighten
+## rather than darken, which is what makes a green or blue road possible on a
+## brown base; the cap keeps that from blowing out.
+## The hue swings all the way to the source's colour -- anything less and
+## five muted food colours over a brown road all read as "brownish". What's
+## preserved instead is relative brightness: the target is the food colour
+## rescaled to the road's own luminance (times ROUTE_TINT_BRIGHTNESS, a
+## touch darker so the result reads as a saturated road rather than a pale
+## wash), which is what keeps Dirt, Paved and Main distinguishable from each
+## other while all three carry their source's colour.
+const ROUTE_TINT_BRIGHTNESS := 0.9
+const ROUTE_TINT_MAX_GAIN := 3.0
+
+## Multiplier for a tile whose network reaches `source_ids`, over a road
+## whose untinted colour is `base`. White (a no-op multiply) when that list
+## is empty, so a sourceless road renders exactly as before.
+func _route_source_tint(source_ids: Array, base: Color) -> Color:
+	if source_ids.is_empty():
+		return Color.WHITE
+	var mixed := Color(0.0, 0.0, 0.0, 1.0)
+	for source_id in source_ids:
+		var color := _source_food_color(source_id)
+		mixed.r += color.r
+		mixed.g += color.g
+		mixed.b += color.b
+	var count := float(source_ids.size())
+	mixed = Color(mixed.r / count, mixed.g / count, mixed.b / count, 1.0)
+	var scale: float = base.get_luminance() * ROUTE_TINT_BRIGHTNESS / maxf(mixed.get_luminance(), 0.001)
+	var target := Color(mixed.r * scale, mixed.g * scale, mixed.b * scale, 1.0)
+	return Color(
+		clampf(target.r / maxf(base.r, 0.001), 0.0, ROUTE_TINT_MAX_GAIN),
+		clampf(target.g / maxf(base.g, 0.001), 0.0, ROUTE_TINT_MAX_GAIN),
+		clampf(target.b / maxf(base.b, 0.001), 0.0, ROUTE_TINT_MAX_GAIN),
+		1.0)
+
+## A source's colour is the colour of what it produces (one food each in the
+## MVP region; averaged if a source ever produces several).
+func _source_food_color(source_id: String) -> Color:
+	var node: NodeData = _nodes_by_id.get(source_id)
+	if node == null or node.produces.is_empty():
+		return Color.WHITE
+	var foods := GameBalance.food_types()
+	var mixed := Color(0.0, 0.0, 0.0, 1.0)
+	for food_id in node.produces:
+		var color: Color = foods[food_id].color
+		mixed.r += color.r
+		mixed.g += color.g
+		mixed.b += color.b
+	var count := float(node.produces.size())
+	return Color(mixed.r / count, mixed.g / count, mixed.b / count, 1.0)
+
+## Multiplies the block's vertex colours by `tint` on every mesh under it,
+## keeping the authored shading instead of flattening it to one colour.
+func _tint_route_block(node: Node, tint: Color) -> void:
+	if node is MeshInstance3D:
+		var material := StandardMaterial3D.new()
+		material.vertex_color_use_as_albedo = true
+		material.albedo_color = tint
+		node.material_override = material
+	for child in node.get_children():
+		_tint_route_block(child, tint)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -1526,6 +1610,18 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
 	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
 	_add_legend_row(_legend_box, BRIDGE_COLOR, "River / bridge")
+
+	# Which road belongs to which supply (ROUTE-16). Built from the map's own
+	# sources, so it can never drift from what's actually tinted out there.
+	_add_section_title(_legend_box, "ROUTE TINT BY SOURCE")
+	var foods := GameBalance.food_types()
+	for node in _map_data.node_placements:
+		if node.node_type != GameEnums.NodeType.SOURCE:
+			continue
+		var food_names: Array[String] = []
+		for food_id in node.produces:
+			food_names.append(foods[food_id].display_name)
+		_add_legend_row(_legend_box, _source_food_color(node.node_id), "%s (%s)" % [node.display_name, ", ".join(food_names)])
 
 func _on_legend_toggled(pressed: bool) -> void:
 	_legend_box.visible = pressed

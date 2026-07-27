@@ -184,6 +184,8 @@ func _report() -> void:
 	_main.call("_commit_drag")
 	assert(state.has_connection(route_to_settlement_c, village_c.grid_position), "Dragging from an unestablished route tile onto a settlement must record the connection")
 
+	_check_route_source_attribution(state, mid_cell, unfinished_a, farm)
+
 	_check_tool_sweeps(state, camera, terrain, route_to_settlement_b, route_to_settlement_c)
 
 	# Storage tool: only buildable on an existing route tile.
@@ -217,6 +219,24 @@ func _report() -> void:
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
 	print("verify_main checks passed.")
+
+## ROUTE-16: every route tile is attributed to the source(s) its network is
+## explicitly connected to, which is what Main tints the tile by. A road
+## dragged from the farm reports the farm; one connected to no source at all
+## reports nothing and stays untinted.
+func _check_route_source_attribution(state: GameState, farm_road: Vector2i, sourceless_road: Vector2i, farm: NodeData) -> void:
+	var by_cell := SimulationEngine.sources_by_cell(state, _main.get("_nodes_by_pos"))
+	assert(by_cell.get(farm_road, []) == [farm.node_id], "A road dragged from the farm must be attributed to the farm")
+	assert(by_cell.get(sourceless_road, []).is_empty(), "A road connected to no source must be attributed to none")
+	# main.gd has no class_name, so reach its constants through the script.
+	var dirt_base: Color = _main.get_script().get_script_constant_map()["ROUTE_LEVEL_COLORS"].dirt
+	assert(_main.call("_route_source_tint", by_cell[farm_road], dirt_base) != Color.WHITE, "A road with a source must be tinted")
+	assert(_main.call("_route_source_tint", [], dirt_base) == Color.WHITE, "A road with no source must stay untinted")
+	# The tint follows what the source produces, not the shared source-marker
+	# colour -- that's the whole point of tinting by source.
+	var grain_color: Color = GameBalance.food_types()["grain"].color
+	assert(_main.call("_source_food_color", farm.node_id).is_equal_approx(grain_color), "The farm's tint colour must be its grain colour")
+	print("Route source attribution (ROUTE-16) checks passed.")
 
 ## ROUTE-15: bulldoze and upgrade also work as a drag, applying to every tile
 ## the sweep crosses. Drives real press/drag/release gestures over two
