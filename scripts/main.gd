@@ -1032,7 +1032,7 @@ func _update_ui() -> void:
 	if _funds_label == null:
 		return
 	_funds_label.text = "§ %d" % roundi(_state.balance)
-	_day_label.text = "%d" % _state.day
+	_day_label.text = "Day %d" % _state.day
 	_update_clock_ui()
 	if _state.best_grade != "":
 		_best_grade_label.text = _state.best_grade
@@ -1061,87 +1061,10 @@ func _build_ui() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(root)
 
-	var side := PanelContainer.new()
-	side.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	side.offset_left = -300
-	side.offset_top = 12
-	side.offset_right = -12
-	side.offset_bottom = -12
-	side.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.94))
-	root.add_child(side)
-	var side_scroll := ScrollContainer.new()
-	side.add_child(side_scroll)
-	var side_box := VBoxContainer.new()
-	side_box.add_theme_constant_override("separation", 10)
-	side_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side_scroll.add_child(side_box)
-
-	_add_section_title(side_box, "TREASURY -- DAY")
-	var treasury_row := HBoxContainer.new()
-	side_box.add_child(treasury_row)
-	_day_label = Label.new()
-	_day_label.add_theme_font_size_override("font_size", 14)
-	treasury_row.add_child(_day_label)
-	_funds_label = Label.new()
-	_funds_label.add_theme_font_size_override("font_size", 20)
-	_funds_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_funds_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	treasury_row.add_child(_funds_label)
-
-	side_box.add_child(HSeparator.new())
-	_add_section_title(side_box, "EFFICIENCY CHASE")
-	_best_grade_label = _add_stat_row(side_box, "Best grade so far")
-	_best_score_label = _add_stat_row(side_box, "Best day score")
-	_avg_score_label = _add_stat_row(side_box, "Last 7-day average")
-
-	side_box.add_child(HSeparator.new())
-	_add_section_title(side_box, "BUILD -- INFRASTRUCTURE")
-	_add_tool_button(side_box, "Draw Route  (§8/tile, +§40 bridge)", "route")
-	_add_tool_button(side_box, "Upgrade Route  (Dirt→Paved→Main)", "upgrade")
-	_add_section_title(side_box, "BUILD -- STORAGE")
-	_add_tool_button(side_box, "Normal Storage  §80", "normal")
-	_add_tool_button(side_box, "Cool Storage  §180", "cool")
-	_add_tool_button(side_box, "Freeze Storage  §400", "freeze")
-	_add_section_title(side_box, "BUILD -- HUBS")
-	var hub_note := Label.new()
-	hub_note.autowrap_mode = TextServer.AUTOWRAP_WORD
-	hub_note.text = "Hubs form automatically at 3-way forks (auto-charged, §150) -- each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
-	hub_note.add_theme_font_size_override("font_size", 11)
-	side_box.add_child(hub_note)
-	_add_tool_button(side_box, "Upgrade to Regional Hub  §%d" % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), "hubRegional")
-	_add_section_title(side_box, "BUILD -- OTHER")
-	_add_tool_button(side_box, "Bulldoze  (remove a tile)", "remove")
-
-	side_box.add_child(HSeparator.new())
-	_add_section_title(side_box, "LEGEND")
-	_add_legend_row(side_box, MarkerColors.SOURCE_COLOR, "Food source")
-	_add_legend_row(side_box, MarkerColors.SETTLEMENT_COLOR, "Settlement")
-	_add_legend_row(side_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
-	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
-	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
-	_add_legend_row(side_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (auto-forms at forks)")
-	_add_legend_row(side_box, Color("C4573A"), "Junction needs a hub (low funds)")
-	_add_legend_row(side_box, Color("8B6B9C"), "Junction over the hub cap")
-	_add_legend_row(side_box, Color("D98E4A"), "! Tile near capacity (90%+, last run)")
-	_add_legend_row(side_box, Color("C4573A"), "! Tile over capacity (last run)")
-	_add_legend_row(side_box, BRIDGE_COLOR, "River / bridge")
-
-	side_box.add_child(HSeparator.new())
-	var run_day := Button.new()
-	run_day.text = "Run the Day Now ▸"
-	run_day.custom_minimum_size.y = 44
-	run_day.pressed.connect(_run_day)
-	side_box.add_child(run_day)
-	var run_day_note := Label.new()
-	run_day_note.autowrap_mode = TextServer.AUTOWRAP_WORD
-	run_day_note.text = "The day runs by itself when the top-right clock hits 0:00 -- this just runs it early."
-	run_day_note.add_theme_font_size_override("font_size", 11)
-	side_box.add_child(run_day_note)
-
 	_hint_label = Label.new()
 	_hint_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_hint_label.offset_left = 12
-	_hint_label.offset_right = -312
+	_hint_label.offset_left = 12 + CONTROL_PANEL_WIDTH + 10
+	_hint_label.offset_right = -12
 	_hint_label.offset_top = -40
 	_hint_label.offset_bottom = -12
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -1150,9 +1073,10 @@ func _build_ui() -> void:
 
 	_toast = Label.new()
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	# Centered over the play area rather than the window, so it clears both the
-	# right sidebar and the day clock panel tucked just inside it.
-	_toast.position = Vector2(-220 - SIDEBAR_INSET * 0.5, 12)
+	# Centered over the play area, which the left control panel eats into --
+	# so the toast shifts right by half that panel's footprint to stay clear
+	# of it and of the day clock in the opposite corner.
+	_toast.position = Vector2(-220 + (12 + CONTROL_PANEL_WIDTH) * 0.5, 12)
 	_toast.size = Vector2(440, 42)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1173,7 +1097,7 @@ func _build_ui() -> void:
 	_tip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_tip_panel.add_child(_tip_label)
 
-	_build_map_controls(root)
+	_build_control_panel(root)
 	_build_day_clock(root)
 
 	_report_overlay = ColorRect.new()
@@ -1220,19 +1144,19 @@ func _build_ui() -> void:
 
 ## The countdown to the next automatic day run, plus its transport controls
 ## (pause, speed, auto/manual) and the review button for the last report.
-## Anchored to the top-right corner and grown leftward from just inside the
-## sidebar, so it sits in the top-right of the play area rather than under the
-## right-hand panel. The end-of-day summary card stacks directly beneath it.
+## Anchored to and grown leftward from the top-right corner, diagonally
+## opposite the control panel so the two never crowd each other. The
+## end-of-day summary card stacks directly beneath it.
 const CLOCK_PANEL_WIDTH := 214.0
-const SIDEBAR_INSET := 312.0 # sidebar width (300) + its 12px margin
+const CLOCK_PANEL_MARGIN := 12.0
 
 func _build_day_clock(root: Control) -> void:
 	var column := VBoxContainer.new()
 	column.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	column.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	column.grow_vertical = Control.GROW_DIRECTION_END
-	column.offset_left = -SIDEBAR_INSET
-	column.offset_right = -SIDEBAR_INSET
+	column.offset_left = -CLOCK_PANEL_MARGIN
+	column.offset_right = -CLOCK_PANEL_MARGIN
 	column.offset_top = 12
 	column.offset_bottom = 12
 	column.custom_minimum_size.x = CLOCK_PANEL_WIDTH
@@ -1328,33 +1252,118 @@ func _build_day_clock(root: Control) -> void:
 	_summary_label.add_theme_font_size_override("bold_font_size", 12)
 	_summary_panel.add_child(_summary_label)
 
-## ---------- map controls (zoom/pan, top-left) ----------
+## ---------- control panel (everything, left edge) ----------
+##
+## One panel carries the whole HUD: run stats, every build tool, the map
+## zoom/pan controls, and the legend. It replaces the old split between a
+## top-left map-controls panel and a 300px right-hand sidebar (retired in
+## v0.5) -- two panels ate both edges of the screen, and every build action
+## meant crossing from one to the other. Only the day clock (§10.8) lives
+## outside it, in the opposite corner.
+##
+## The panel is deliberately narrow, so tool buttons are short labels with the
+## price attached; the full explanation of the selected tool lands in the
+## bottom hint bar (TOOL_HINTS) and in each button's tooltip. The legend is
+## collapsed by default -- it's reference material, not a control -- and the
+## whole column scrolls, so nothing is unreachable on a short window.
 
-func _build_map_controls(root: Control) -> void:
+const CONTROL_PANEL_WIDTH := 232.0
+const CONTROL_PANEL_BOTTOM_MARGIN := 60.0 # clears the bottom hint bar
+const CONTROLLER_BUTTON_SIZE := Vector2(38, 38)
+const CONTROLLER_FONT_SIZE := 18
+
+var _panel_scroll: ScrollContainer
+var _legend_box: VBoxContainer
+var _legend_button: Button
+
+func _build_control_panel(root: Control) -> void:
 	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	panel.offset_left = 12
 	panel.offset_top = 12
-	panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.9))
+	panel.offset_right = 12 + CONTROL_PANEL_WIDTH
+	panel.offset_bottom = -CONTROL_PANEL_BOTTOM_MARGIN
+	panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.92))
 	root.add_child(panel)
+	_panel_scroll = ScrollContainer.new()
+	_panel_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(_panel_scroll)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 6)
-	panel.add_child(box)
-	_add_section_title(box, "MAP")
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 5)
+	_panel_scroll.add_child(box)
 
+	_build_status_section(box)
+	box.add_child(HSeparator.new())
+	_build_tools_section(box)
+	box.add_child(HSeparator.new())
+	_build_map_section(box)
+	box.add_child(HSeparator.new())
+	_build_legend_section(box)
+
+## Day, treasury, and the efficiency chase (LOOP-01/LOOP-06) in four numbers.
+func _build_status_section(box: VBoxContainer) -> void:
+	var treasury_row := HBoxContainer.new()
+	box.add_child(treasury_row)
+	_day_label = Label.new()
+	_day_label.add_theme_font_size_override("font_size", 14)
+	_day_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_day_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	treasury_row.add_child(_day_label)
+	_funds_label = Label.new()
+	_funds_label.add_theme_font_size_override("font_size", 20)
+	_funds_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	treasury_row.add_child(_funds_label)
+
+	var stats_row := HBoxContainer.new()
+	stats_row.add_theme_constant_override("separation", 4)
+	box.add_child(stats_row)
+	_best_grade_label = _add_stat_column(stats_row, "Grade", "Best grade so far")
+	_best_score_label = _add_stat_column(stats_row, "Best", "Best day score")
+	_avg_score_label = _add_stat_column(stats_row, "7-day", "Average score over the last 7 days")
+
+func _build_tools_section(box: VBoxContainer) -> void:
+	_add_section_title(box, "ROUTES")
+	var route_grid := _add_tool_grid(box)
+	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.BRIDGE_COST)])
+	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade Route -- Dirt to Paved (§%d), Paved to Main (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost)])
+
+	_add_section_title(box, "STORAGE")
+	var storage_grid := _add_tool_grid(box)
+	for tool in ["normal", "cool", "freeze"]:
+		var st = GameBalance.STORAGE_TYPES[STORAGE_TOOLS[tool]]
+		var label: String = st.name.replace(" Storage", "")
+		_add_tool_button(storage_grid, "%s  §%d" % [label, roundi(st.build)], tool, "%s -- §%d to build, §%d/day upkeep, protects the next %d tiles at %d%% decay." % [st.name, roundi(st.build), roundi(st.upkeep), st.protection, roundi(st.mult * 100)])
+
+	_add_section_title(box, "HUBS & CLEARING")
+	var other_grid := _add_tool_grid(box)
+	_add_tool_button(other_grid, "Hub+  §%d" % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), "hubRegional", "Upgrade a Small Hub to Regional for §%d. Hubs themselves form automatically at completed-route forks (auto-charged §%d), up to %d per road network." % [roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), GameBalance.HUB_CAP_PER_NETWORK])
+	_add_tool_button(other_grid, "Bulldoze", "remove", "Remove a built tile. No refund.")
+
+func _build_map_section(box: VBoxContainer) -> void:
+	_add_section_title(box, "MAP")
 	var zoom_row := HBoxContainer.new()
 	zoom_row.add_theme_constant_override("separation", 4)
 	box.add_child(zoom_row)
 	var zoom_label := Label.new()
 	zoom_label.text = "Zoom"
 	zoom_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	zoom_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	zoom_row.add_child(zoom_label)
 	_add_hold_button(zoom_row, "−", func() -> void: _zoom_dir = 1.0, func() -> void: _zoom_dir = 0.0)
 	_add_hold_button(zoom_row, "+", func() -> void: _zoom_dir = -1.0, func() -> void: _zoom_dir = 0.0)
 
+	var pan_row := HBoxContainer.new()
+	pan_row.add_theme_constant_override("separation", 4)
+	box.add_child(pan_row)
+	var pan_label := Label.new()
+	pan_label.text = "Pan"
+	pan_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pan_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	pan_row.add_child(pan_label)
 	var pan_grid := GridContainer.new()
 	pan_grid.columns = 3
-	box.add_child(pan_grid)
+	pan_row.add_child(pan_grid)
 	pan_grid.add_child(_pan_spacer())
 	_add_pan_button(pan_grid, "^", Vector2(0, 1))
 	pan_grid.add_child(_pan_spacer())
@@ -1371,51 +1380,73 @@ func _build_map_controls(root: Control) -> void:
 	var bubbles_label := Label.new()
 	bubbles_label.text = "Bubbles"
 	bubbles_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bubbles_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bubbles_row.add_child(bubbles_label)
 	_bubbles_button = Button.new()
 	_bubbles_button.toggle_mode = true
 	_bubbles_button.button_pressed = true
 	_bubbles_button.text = "On"
-	_bubbles_button.custom_minimum_size = Vector2(52, 36)
+	_bubbles_button.custom_minimum_size = Vector2(48, 32)
 	_bubbles_button.toggled.connect(_on_bubbles_toggled)
 	bubbles_row.add_child(_bubbles_button)
 
-	# Shortcuts for the two most-used build tools, so drawing and erasing
-	# routes don't require reaching over to the right-hand sidebar. These
-	# register alongside the sidebar's own Draw Route / Bulldoze buttons (see
-	# _add_tool_button), and _set_tool keeps every copy of a tool in sync.
-	box.add_child(HSeparator.new())
-	_add_section_title(box, "BUILD")
-	var build_row := HBoxContainer.new()
-	build_row.add_theme_constant_override("separation", 4)
-	box.add_child(build_row)
-	_add_controller_tool_button(build_row, "Route", "route")
-	_add_controller_tool_button(build_row, "Erase", "remove")
+## Reference material, so it starts collapsed and the panel stays short.
+func _build_legend_section(box: VBoxContainer) -> void:
+	_legend_button = Button.new()
+	_legend_button.text = "Legend  ▾"
+	_legend_button.toggle_mode = true
+	_legend_button.custom_minimum_size.y = 30
+	_legend_button.add_theme_font_size_override("font_size", 12)
+	_legend_button.toggled.connect(_on_legend_toggled)
+	box.add_child(_legend_button)
 
-const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
-const CONTROLLER_FONT_SIZE := 24
+	_legend_box = VBoxContainer.new()
+	_legend_box.add_theme_constant_override("separation", 2)
+	_legend_box.visible = false
+	box.add_child(_legend_box)
+	_add_legend_row(_legend_box, MarkerColors.SOURCE_COLOR, "Food source")
+	_add_legend_row(_legend_box, MarkerColors.SETTLEMENT_COLOR, "Settlement")
+	_add_legend_row(_legend_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
+	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
+	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
+	_add_legend_row(_legend_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (auto-forms at forks)")
+	_add_legend_row(_legend_box, Color("C4573A"), "Junction needs a hub (low funds)")
+	_add_legend_row(_legend_box, Color("8B6B9C"), "Junction over the hub cap")
+	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
+	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
+	_add_legend_row(_legend_box, BRIDGE_COLOR, "River / bridge")
+
+func _on_legend_toggled(pressed: bool) -> void:
+	_legend_box.visible = pressed
+	_legend_button.text = "Legend  ▴" if pressed else "Legend  ▾"
+	if pressed:
+		# The legend sits at the bottom of a panel that's taller than the
+		# window once it's open, so scroll down to what the click just
+		# revealed instead of making the player hunt for it. Two frames of
+		# delay: one for the container to re-sort at its new height, one more
+		# for the scrollbar's range to catch up -- setting the offset any
+		# earlier just clamps it against the old, shorter range.
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_panel_scroll.scroll_vertical = roundi(_panel_scroll.get_v_scroll_bar().max_value)
 
 func _pan_spacer() -> Control:
 	var spacer := Control.new()
-	spacer.custom_minimum_size = CONTROLLER_BUTTON_SIZE
+	spacer.custom_minimum_size = Vector2(CONTROLLER_BUTTON_SIZE.x * 0.5, CONTROLLER_BUTTON_SIZE.y * 0.5)
 	return spacer
 
 func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
 	_add_hold_button(parent, text, func() -> void: _pan_dir += dir, func() -> void: _pan_dir -= dir)
 
-## A compact toggle button on the top-left controller panel that selects a
-## build tool, mirroring the right-hand sidebar's tool button for the same
-## tool (both register in _tool_buttons, so _set_tool keeps them in sync).
-func _add_controller_tool_button(parent: Container, text: String, tool: String) -> void:
-	var button := Button.new()
-	button.text = text
-	button.toggle_mode = true
-	button.custom_minimum_size = Vector2(52, 40)
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	button.add_theme_font_size_override("font_size", 14)
-	button.pressed.connect(_set_tool.bind(tool))
-	parent.add_child(button)
-	_tool_buttons.get_or_add(tool, []).append(button)
+## Two-column row of build tools. Every tool button lives in one of these, so
+## the seven tools take four rows instead of seven full-width bars.
+func _add_tool_grid(parent: VBoxContainer) -> GridContainer:
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	parent.add_child(grid)
+	return grid
 
 func _add_hold_button(parent: Container, text: String, on_press: Callable, on_release: Callable) -> Button:
 	var button := Button.new()
@@ -1433,23 +1464,37 @@ func _add_section_title(parent: VBoxContainer, text: String) -> void:
 	label.add_theme_font_size_override("font_size", 12)
 	parent.add_child(label)
 
-func _add_stat_row(parent: VBoxContainer, label_text: String) -> Label:
-	var row := HBoxContainer.new()
-	parent.add_child(row)
+## One captioned number in the status strip. Returns the value label, which
+## _update_ui writes into.
+func _add_stat_column(parent: HBoxContainer, caption: String, tooltip: String) -> Label:
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.tooltip_text = tooltip
+	column.mouse_filter = Control.MOUSE_FILTER_PASS
+	parent.add_child(column)
 	var label := Label.new()
-	label.text = label_text
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(label)
+	label.text = caption
+	label.add_theme_font_size_override("font_size", 10)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(label)
 	var value := Label.new()
 	value.text = "—"
-	row.add_child(value)
+	value.add_theme_font_size_override("font_size", 15)
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(value)
 	return value
 
-func _add_tool_button(parent: VBoxContainer, text: String, tool: String) -> void:
+## A build-tool toggle. The short label keeps the panel narrow; the full
+## explanation lives in the tooltip and, once selected, in the hint bar.
+func _add_tool_button(parent: Container, text: String, tool: String, tooltip := "") -> void:
 	var button := Button.new()
 	button.text = text
+	button.tooltip_text = tooltip
 	button.toggle_mode = true
 	button.custom_minimum_size.y = 36
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.add_theme_font_size_override("font_size", 13)
 	button.pressed.connect(_set_tool.bind(tool))
 	parent.add_child(button)
 	_tool_buttons.get_or_add(tool, []).append(button)
