@@ -42,6 +42,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 24. **The day runs itself on a real-time clock.** A day is now a 60-second countdown shown in the top-right corner rather than a "Run the Day" click. The player keeps building while it drains; at 0:00 the day simulates, the calendar advances, and the next day's clock starts immediately, so planning and simulation are continuous instead of alternating around a button press. The clock can be paused (button or spacebar), run at 1x/2x/4x, or switched off entirely for the older manual loop, and a day can still be run early. Because a modal every 60 seconds would defeat the point, an auto-run day posts a small self-dismissing summary card (day, grade/score, profit, freshness, happiness) under the clock instead of the full-screen report; the full report stays one Report-button click away, and opening it freezes the clock so reading it never costs build time. See §3.5, §10.8.
 25. **One left-hand control panel replaces the right sidebar.** The 300px build sidebar on the right edge is retired, and everything it carried -- treasury/day, the efficiency-chase numbers, every build tool, and the legend -- moves into the top-left map-controls panel, which becomes the game's single HUD panel. Two panels ate both edges of the screen and split related controls across them, which is why the most-used tools had to be duplicated on both (item 9/14's shortcuts); one panel gives the map back most of that width and makes each tool exist exactly once, with the day clock alone in the opposite corner. Tool buttons are now short and priced (e.g. "Cool §180"), with the full description in the tooltip and the hint bar, and the legend collapses. See §10.7.
 
+26. **Bulldoze and Upgrade can be swept across many tiles in one drag.** Both were strictly one click per tile, which made clearing a bad run or upgrading a long road a repetitive series of taps -- and on a touchscreen, a series of taps that is easy to mis-hit. Either tool can now be dragged: every tile the pointer crosses is marked, and the tool is applied to all of them on release. The sweep starts on press with no hold threshold (unlike a route drag, it only ever touches tiles that already exist, and nothing happens until release, so there is no accidental-build risk to guard against), and a press released without moving is still the ordinary single-tile action. Route drawing is unchanged -- it traces a path with start/end rules, not a set of tiles. See §4.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -382,6 +384,18 @@ new route to physically overlap an unrelated existing one. Two separately-
 built roads, or a road and a node, only ever get linked by a drag that ends
 exactly ON that shared hub, settlement, or unestablished route tile --
 never by crossing through the middle of one another.
+
+### Sweeping bulldoze and upgrade across tiles (added in v0.4 item 26)
+
+Bulldoze and Upgrade are **sweep** tools: dragging either one across a run of tiles applies it to every tile the pointer crosses, instead of requiring a click per tile.
+
+- **Starts immediately on press.** There is no hold threshold, unlike a route drag. A sweep only ever acts on tiles that already exist, nothing is applied until release, and the preview shows exactly what will happen first -- so there is nothing to protect against, and skipping the hold keeps the gesture clear of the long-press that mobile browsers intercept.
+- **A tap is still a tap.** A press released without ever reaching a second cell performs the ordinary single-tile action, exactly as before.
+- **Cells the tool can't act on are skipped, not fatal.** Empty ground under a bulldoze sweep, or a route already at Main under an upgrade sweep, is simply passed over -- a slightly wobbly drag across a road still does the obvious thing.
+- **All or nothing on cost.** An upgrade sweep whose total exceeds the treasury applies to nothing at all, matching the route drag's transactional rule. The preview turns gray while it is unaffordable, so the player can shorten the sweep before releasing rather than being surprised by a rejection. Bulldoze costs nothing and can never be blocked this way.
+- **One level per tile per sweep.** A tile crossed several times in one gesture is still upgraded once.
+
+The preview colour says what the tool will do: red markers on the tiles a bulldoze sweep will clear, green on the tiles an upgrade sweep will lift, gray when the sweep is blocked and will do nothing. A faint line traces every crossed cell, affected or not, so the gesture reads even where it passes over empty ground.
 
 ### Established-route overlay (added in v0.4, endpoints marked in v0.5)
 

@@ -48,14 +48,19 @@ const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map 
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
 	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
-	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
+	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost).",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"freeze": "Click an existing route tile to build Freeze Storage there (good for seafood -- some foods dislike freezing).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
 	"hubRegional": "Click an existing Small Hub to upgrade it to Regional for §200.",
-	"remove": "Click a built tile to bulldoze it (no refund).",
+	"remove": "Click a built tile to bulldoze it, or drag across several to clear them all at once (no refund).",
 }
+
+## Tools whose action can be swept across many tiles in one drag, rather than
+## clicked one tile at a time. Route drawing is NOT one of them -- it traces a
+## path with its own start/end rules (see _recompute_drag_validity).
+const SWEEP_TOOLS := {"remove": true, "upgrade": true}
 
 @onready var _terrain: TerrainRenderer = $TerrainMap
 @onready var _node_spawner: NodeSpawner = $NodeMarkers
@@ -158,6 +163,35 @@ var _drag_preview_visuals: Node3D
 
 const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
 const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
+
+## ---------- sweep drags (bulldoze / upgrade) ----------
+## Bulldoze and Upgrade also work as a drag: sweeping across a run of tiles
+## marks every one the pointer crosses and applies the tool to all of them on
+## release, instead of demanding one click per tile. Unlike a route drag this
+## has no path rules -- the crossed cells are just a set -- so it needs its
+## own validity pass and preview (see _recompute_sweep / _commit_sweep).
+##
+## A sweep starts on press with no hold threshold, unlike the route drag: it
+## only ever touches tiles that already exist, nothing is applied until
+## release, and the preview shows exactly what will happen first -- so there
+## is no accidental-build risk to protect against, and skipping the hold keeps
+## the gesture off the mobile long-press that swallows it.
+##
+## The colour says what the tool will do (red = these get cleared, green =
+## these get upgraded); gray means the sweep is blocked and will do nothing,
+## which today only happens when an upgrade sweep outruns the treasury.
+const SWEEP_REMOVE_COLOR := Color(0.85, 0.3, 0.3, 0.62)
+const SWEEP_UPGRADE_COLOR := Color(0.4, 0.85, 0.45, 0.62)
+const SWEEP_BLOCKED_COLOR := Color(0.55, 0.58, 0.62, 0.5)
+## The line traced through every crossed cell, affected or not, so the gesture
+## itself reads even where it passes over empty ground.
+const SWEEP_TRACE_COLOR := Color(0.9, 0.93, 0.96, 0.3)
+
+## Which gesture is in progress: "route" for a path-building drag, "sweep" for
+## a bulldoze/upgrade sweep, "" when nothing is being dragged.
+var _drag_kind := ""
+var _sweep_cells: Array[Vector2i] = []
+var _sweep_cost := 0.0
 
 ## Overlay marking established (source->settlement) routes -- a bright, mostly
 ## opaque gold line floating just above the road surface (see
@@ -262,24 +296,41 @@ func _start_press(screen_position: Vector2) -> void:
 	# restricted. Other tools behave exactly as a normal click on release.
 	var node := _node_at(cell)
 	var cell_data = _state.grid.get(cell)
+	_drag_kind = ""
 	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (
 		(node != null and node.node_type == GameEnums.NodeType.SOURCE) or
 		(cell_data != null and cell_data.kind == "hub") or
 		(cell_data != null and cell_data.kind == "route" and not _established_route_cells().has(cell))
 	)
+	if _press_eligible:
+		_drag_kind = "route"
+		return
+	# A bulldoze/upgrade sweep begins right away rather than waiting out the
+	# hold threshold -- see the SWEEP_* comment block for why that's safe here.
+	if SWEEP_TOOLS.has(_tool) and _cell_in_bounds(cell) and node == null:
+		_drag_kind = "sweep"
+		_drag_active = true
+		_tip_panel.visible = false
+		_drag_path = [cell]
+		_recompute_sweep()
+		_update_drag_preview()
 
 func _end_press(screen_position: Vector2) -> void:
 	if _drag_active:
+		var kind := _drag_kind
 		_drag_active = false
 		_press_eligible = false
+		_drag_kind = ""
 		# A hold-then-release without ever dragging to a second cell is a
 		# plain tap on the anchor (info tip for a node, a hint for an existing
-		# route tile) -- holding still shouldn't behave differently from
-		# tapping.
-		if _drag_path.size() > 1:
-			_commit_drag()
-		else:
+		# route tile, the single-tile action for a sweep tool) -- holding
+		# still shouldn't behave differently from tapping.
+		if _drag_path.size() <= 1:
 			_handle_click(_press_cell)
+		elif kind == "sweep":
+			_commit_sweep()
+		else:
+			_commit_drag()
 		_clear_drag_preview()
 		return
 	_press_eligible = false
@@ -302,7 +353,10 @@ func _extend_drag_path(cell: Vector2i) -> void:
 	else:
 		for step in _cells_between(_drag_path[-1], cell):
 			_drag_path.append(step)
-	_recompute_drag_validity()
+	if _drag_kind == "sweep":
+		_recompute_sweep()
+	else:
+		_recompute_drag_validity()
 	_update_drag_preview()
 
 ## The orthogonally-connected cells from `a` (exclusive) to `b` (inclusive):
@@ -411,11 +465,91 @@ func _commit_drag() -> void:
 	_show_toast("Built %s." % " and ".join(parts))
 	_after_action()
 
+## ---------- sweep drags: bulldoze / upgrade over a run of tiles ----------
+
+## Re-derives which of the crossed cells the active sweep tool would actually
+## act on (_sweep_cells) and what that costs. Cells the tool can't touch --
+## empty ground, or a route already at Main for the upgrade tool -- are simply
+## skipped rather than failing the sweep, so a slightly wobbly drag across a
+## road still does the obvious thing. Only affordability can invalidate a
+## sweep, and only for upgrades.
+func _recompute_sweep() -> void:
+	_sweep_cells.clear()
+	_sweep_cost = 0.0
+	_drag_valid = true
+	_drag_invalid_reason = ""
+	var seen: Dictionary = {}
+	for cell in _drag_path:
+		if seen.has(cell):
+			continue
+		seen[cell] = true
+		var cell_data = _state.grid.get(cell)
+		if cell_data == null:
+			continue
+		if _tool == "remove":
+			_sweep_cells.append(cell)
+		elif _tool == "upgrade" and cell_data.kind == "route":
+			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
+			if lvl.next == "":
+				continue
+			_sweep_cells.append(cell)
+			_sweep_cost += lvl.upgrade_cost
+	# All-or-nothing, matching the route drag: a sweep that outruns the
+	# treasury applies to nothing at all, and says so before release by
+	# turning gray. Shortening the sweep is the fix.
+	if _sweep_cost > _state.balance:
+		_drag_valid = false
+		_drag_invalid_reason = "Not enough treasury to upgrade all %d tiles (§%d needed)." % [_sweep_cells.size(), roundi(_sweep_cost)]
+
+## Applies the sweep tool to every marked tile in one batch, then runs the
+## usual post-action pass once for the whole gesture. An unaffordable sweep,
+## or one that crossed nothing the tool can act on, does nothing at all.
+func _commit_sweep() -> void:
+	if not _drag_valid:
+		_show_toast(_drag_invalid_reason, true)
+		return
+	if _sweep_cells.is_empty():
+		_show_toast("Nothing to %s along that sweep." % ("clear" if _tool == "remove" else "upgrade"), true)
+		return
+	var count := _sweep_cells.size()
+	var plural := "" if count == 1 else "s"
+	if _tool == "remove":
+		for cell in _sweep_cells:
+			_state.grid.erase(cell)
+			_state.remove_connections(cell)
+		_show_toast("Cleared %d tile%s." % [count, plural])
+	else:
+		for cell in _sweep_cells:
+			var cell_data = _state.grid[cell]
+			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
+			_state.balance -= lvl.upgrade_cost
+			cell_data.level = lvl.next
+		_show_toast("Upgraded %d tile%s for §%d." % [count, plural, roundi(_sweep_cost)])
+	_after_action()
+
+## The crossed cells traced as a faint line (so the gesture reads even over
+## empty ground), with a solid marker on every tile the tool will actually
+## act on -- red for a bulldoze sweep, green for an upgrade, gray when the
+## sweep is blocked and will do nothing.
+func _update_sweep_preview() -> void:
+	var world_positions: Array[Vector3] = []
+	for cell in _drag_path:
+		world_positions.append(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.3, 0))
+	for i in range(1, world_positions.size()):
+		_add_drag_segment(world_positions[i - 1], world_positions[i], SWEEP_TRACE_COLOR)
+	var color := SWEEP_BLOCKED_COLOR
+	if _drag_valid:
+		color = SWEEP_REMOVE_COLOR if _tool == "remove" else SWEEP_UPGRADE_COLOR
+	for cell in _sweep_cells:
+		_add_drag_marker(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.3, 0), color)
+
 func _clear_drag_preview() -> void:
 	_clear_children(_drag_preview_visuals)
 	_drag_path.clear()
 	_drag_new_cells.clear()
 	_drag_new_connections.clear()
+	_sweep_cells.clear()
+	_sweep_cost = 0.0
 
 ## Translucent green (valid) or red (invalid) boxes on every crossed cell,
 ## connected by thin bars between orthogonal neighbors, so the path reads
@@ -423,6 +557,9 @@ func _clear_drag_preview() -> void:
 ## _state.grid isn't touched until _commit_drag().
 func _update_drag_preview() -> void:
 	_clear_children(_drag_preview_visuals)
+	if _drag_kind == "sweep":
+		_update_sweep_preview()
+		return
 	var color := DRAG_PREVIEW_VALID_COLOR if _drag_valid else DRAG_PREVIEW_INVALID_COLOR
 	var world_positions: Array[Vector3] = []
 	for cell in _drag_path:

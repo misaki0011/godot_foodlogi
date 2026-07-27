@@ -184,6 +184,8 @@ func _report() -> void:
 	_main.call("_commit_drag")
 	assert(state.has_connection(route_to_settlement_c, village_c.grid_position), "Dragging from an unestablished route tile onto a settlement must record the connection")
 
+	_check_tool_sweeps(state, camera, terrain, route_to_settlement_b, route_to_settlement_c)
+
 	# Storage tool: only buildable on an existing route tile.
 	_main.call("_set_tool", "cool")
 	_main.call("_handle_click", mid_cell)
@@ -215,6 +217,56 @@ func _report() -> void:
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
 	print("verify_main checks passed.")
+
+## ROUTE-15: bulldoze and upgrade also work as a drag, applying to every tile
+## the sweep crosses. Drives real press/drag/release gestures over two
+## adjacent route tiles: upgrade sweeps both a level, bulldoze sweeps both
+## away (with their connections). A single tap must still do the one-tile
+## action it always did.
+func _check_tool_sweeps(state: GameState, camera: Camera3D, terrain: GridMap, cell_a: Vector2i, cell_b: Vector2i) -> void:
+	assert(state.grid.has(cell_a) and state.grid.has(cell_b), "The sweep checks need two built route tiles")
+	assert(state.grid[cell_a].level == "dirt" and state.grid[cell_b].level == "dirt")
+	var a_screen := _cell_screen(camera, terrain, cell_a)
+	var b_screen := _cell_screen(camera, terrain, cell_b)
+	var upgrade_cost: float = GameBalance.ROUTE_LEVELS.dirt.upgrade_cost
+
+	# Upgrade sweep: one drag, both tiles, both charged.
+	_main.call("_set_tool", "upgrade")
+	var balance_before: float = state.balance
+	_main.call("_start_press", a_screen)
+	assert(_main.get("_drag_active"), "A sweep tool must start dragging on press, with no hold delay")
+	assert(_main.get("_drag_kind") == "sweep")
+	_main.call("_extend_drag_path", cell_b)
+	_main.call("_end_press", b_screen)
+	assert(state.grid[cell_a].level == "paved" and state.grid[cell_b].level == "paved", "An upgrade sweep must upgrade every tile it crossed")
+	assert(is_equal_approx(state.balance, balance_before - upgrade_cost * 2.0), "Each swept upgrade must be charged")
+
+	# An upgrade sweep the treasury can't cover applies to nothing at all.
+	var poor_balance: float = GameBalance.ROUTE_LEVELS.paved.upgrade_cost * 1.5
+	state.balance = poor_balance
+	_main.call("_start_press", a_screen)
+	_main.call("_extend_drag_path", cell_b)
+	assert(not _main.get("_drag_valid"), "A sweep that outruns the treasury must be invalid")
+	_main.call("_end_press", b_screen)
+	assert(state.grid[cell_a].level == "paved" and state.grid[cell_b].level == "paved", "An unaffordable sweep must upgrade nothing")
+	assert(is_equal_approx(state.balance, poor_balance), "An unaffordable sweep must charge nothing")
+	state.balance = balance_before
+
+	# A single tap with a sweep tool still does the one-tile action.
+	_main.call("_start_press", a_screen)
+	_main.call("_end_press", a_screen)
+	assert(state.grid[cell_a].level == "main", "A tap with the upgrade tool must still upgrade that one tile")
+	assert(state.grid[cell_b].level == "paved", "A tap must not touch any other tile")
+
+	# Bulldoze sweep: one drag clears every tile it crossed, connections and all.
+	_main.call("_set_tool", "remove")
+	assert(state.has_connection(cell_a, cell_b), "The two tiles must be connected before the bulldoze sweep")
+	_main.call("_start_press", a_screen)
+	_main.call("_extend_drag_path", cell_b)
+	_main.call("_end_press", b_screen)
+	assert(not state.grid.has(cell_a) and not state.grid.has(cell_b), "A bulldoze sweep must clear every tile it crossed")
+	assert(not state.has_connection(cell_a, cell_b), "A bulldoze sweep must drop the cleared tiles' connections")
+	print("Tool sweeps (ROUTE-15) checks passed.")
 
 ## LOOP-07: the auto-run day clock. Drives the countdown to zero directly
 ## rather than waiting a real minute, and checks each mode's contract: auto
@@ -281,6 +333,11 @@ func _check_day_clock(state: GameState) -> void:
 	_main.call("_close_report")
 	assert(state.day == day_before, "Reviewing a past report must not advance the day")
 	print("Day clock (LOOP-07) checks passed.")
+
+## Screen position of a grid cell's centre, for driving real press/drag
+## gestures through Main's input entry points.
+func _cell_screen(camera: Camera3D, terrain: GridMap, cell: Vector2i) -> Vector2:
+	return camera.unproject_position(terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3.UP)
 
 func _node_by_id(map_data: MapData, node_id: String) -> NodeData:
 	for node in map_data.node_placements:
