@@ -39,6 +39,9 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 22. **A drag may also start or end on a route tile that isn't part of an established route yet.** Items 18-19 restricted a drag to start on a source/hub and end on a hub/settlement, which -- combined with item 20's "no crossing existing tiles" -- meant unfinished infrastructure (a route segment that doesn't yet reach both a source and a settlement, e.g. one built out from a hub that has no source connection yet) could only ever be picked up again at its own governing hub, never at any of its plain route tiles. This relaxes both ends: a drag may also start or end on a route tile that `SimulationEngine.established_route_cells` does NOT contain -- i.e. one that isn't currently part of a live, delivering path. An already-established route tile is unaffected and still only reachable through its own hub or settlement (never picked up mid-network) -- this exception exists purely so unfinished, not-yet-delivering infrastructure can be extended or joined piece by piece without forcing a hub at every waypoint. The interior-must-be-empty-ground rule (item 20) is unchanged: this only widens what counts as a valid START or END, not what a drag may cross through. See §4.1.
 23. **One symmetric route tile design per level, usable in any direction.** Each route level (Dirt, Paved, Main) previously rendered a directional tread/stripe requiring a rotated mesh for "lr" vs. "ud", plus a dedicated L-shaped corner mesh (rotated four ways) wherever a tile bent -- this doubled the asset count per upgradeable level and made every route tile's appearance depend on a shape/facing computed from its real connections (see the now-removed "Route tile directional shape" system). Dirt and Main are redesigned to be radially symmetric, the same way Paved's four-cobblestone layout already was: Dirt uses a centered square worn-earth patch with four corner pebbles instead of a directional tread strip, and Main uses a painted cross (both axes) instead of a single center line. Because a symmetric mesh reads identically under any rotation, ONE mesh per level now covers every route shape and facing -- there is no corner variant, and nothing is rotated at render time. `SimulationEngine.route_shape()` and its shape-family/facing machinery are removed entirely; a route tile's rendering is now just `level -> mesh`. See §4.1.
 
+24. **The day runs itself on a real-time clock.** A day is now a 60-second countdown shown in the top-right corner rather than a "Run the Day" click. The player keeps building while it drains; at 0:00 the day simulates, the calendar advances, and the next day's clock starts immediately, so planning and simulation are continuous instead of alternating around a button press. The clock can be paused (button or spacebar), run at 1x/2x/4x, or switched off entirely for the older manual loop, and a day can still be run early. Because a modal every 60 seconds would defeat the point, an auto-run day posts a small self-dismissing summary card (day, grade/score, profit, freshness, happiness) under the clock instead of the full-screen report; the full report stays one Report-button click away, and opening it freezes the clock so reading it never costs build time. See §3.5, §10.8.
+25. **One left-hand control panel replaces the right sidebar.** The 300px build sidebar on the right edge is retired, and everything it carried -- treasury/day, the efficiency-chase numbers, every build tool, and the legend -- moves into the top-left map-controls panel, which becomes the game's single HUD panel. Two panels ate both edges of the screen and split related controls across them, which is why the most-used tools had to be duplicated on both (item 9/14's shortcuts); one panel gives the map back most of that width and makes each tool exist exactly once, with the day clock alone in the opposite corner. Tool buttons are now short and priced (e.g. "Cool §180"), with the full description in the tooltip and the hint bar, and the legend collapses. See §10.7.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -196,6 +199,8 @@ Network efficiency: B+
 
 The report should show why smart routing mattered.
 
+This full-screen report is shown at the end of a **manually** run day. A day the clock runs by itself (§3.5) posts a compact, self-dismissing summary card instead -- the auto-run loop can't stop for a dialog every day -- and this full report stays available on demand from the day clock panel (§10.8).
+
 ### 3.4 Upgrade phase
 
 The player spends profit or reputation to unlock:
@@ -206,6 +211,19 @@ The player spends profit or reputation to unlock:
 - Hub upgrades.
 - New regions.
 - Route improvements.
+
+### 3.5 Day clock (added in v0.4 item 24)
+
+The planning phase (§3.1) is not open-ended. Each day is a real-time countdown, and the simulation phase (§3.2) fires when it expires:
+
+- **Day length:** 60 real-time seconds at 1x speed. The clock starts full on day 1 and restarts full after every simulated day, including one the player runs early.
+- **Auto-run (default):** at 0:00 the day simulates itself, the day counter advances, and the next day's clock begins immediately. The player never has to press anything to keep the game moving, and can keep drawing routes, placing storage, building hubs, and bulldozing while the clock drains.
+- **Speed:** 1x / 2x / 4x multipliers on the drain rate, for players who don't want to wait out a day they're happy with.
+- **Pause:** holds the countdown indefinitely (spacebar or the Pause button). Building is still allowed while paused, which is the deliberate "stop the pressure and think" affordance.
+- **Run early:** running the day by hand simulates it immediately and restarts the clock. Running early spends the rest of the day's build time -- it does not bank it.
+- **Manual mode:** switching Auto off stops the clock entirely and restores the older loop, where a day only runs when the player asks and the blocking report's "Continue to next day" is what advances the calendar.
+
+The clock is frozen while the full-screen report (§3.3) is open, so reading a report never costs the player build time.
 
 ---
 
@@ -1301,16 +1319,44 @@ Rejected or missing amount
 Overall status
 ```
 
-### 10.7 Mobile / touch controls
+### 10.7 Control panel (revised in v0.4 item 25)
 
-A fixed panel in the top-left corner of the screen provides map navigation that doesn't depend on a mouse wheel or keyboard, so the game can be played and tested from a phone browser:
+**One** panel along the left edge carries the entire HUD. It replaces the earlier split between a top-left map-controls panel and a 300px right-hand build sidebar: two panels ate both edges of the screen, every build action meant crossing from one to the other, and the most-used tools had to be duplicated on both to soften that. The panel scrolls if the window is too short for it, and only the day clock (§10.8) lives outside it, in the opposite corner.
+
+Top to bottom:
+
+- **Status:** current day and treasury on one row; grade, best score, and 7-day average score as three captioned numbers beneath it (LOOP-01/LOOP-06).
+- **Build tools:** every tool as a short, priced toggle in two columns -- Route §8 / Upgrade, then Normal §80 / Cool §180 / Freeze §400, then Hub §150 / Hub+ §200 / Bulldoze. The panel is narrow, so a button carries only its name and price; the full explanation is in its tooltip and, once selected, in the bottom hint bar. Each tool now exists exactly once, so there is no shortcut copy to keep in sync.
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
 - **Bubbles On/Off (added in v0.4):** a toggle button hides or shows every source/settlement speech bubble (§10.1/UI-01) at once. A busy network can crowd many bubbles together; toggling them off leaves the routes, storage, and hubs visible without needing to zoom out or pan away.
-- **Route / Erase / Hub shortcuts (added in v0.4):** the most-used build tools -- Draw Route, Bulldoze, and (item 14) Build Hub -- also appear as compact toggle buttons on this panel, so building and erasing don't require reaching across to the right-hand sidebar. They select the exact same tools as the sidebar's own buttons, and the active tool stays highlighted on every copy at once.
+- **Legend:** collapsed by default, since it is reference material rather than a control. Expanding it scrolls it into view.
 
-These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
+None of this depends on a mouse wheel or keyboard, so the game stays playable and testable from a phone browser. These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
+
+### 10.8 Day clock panel (added in v0.4 item 24)
+
+A fixed panel in the **top-right** corner of the screen -- diagonally opposite the control panel (§10.7), so the two never crowd each other -- carries the day timer and its transport controls:
+
+```text
+Day 3                    0:47
+[==================        ]
+Day runs itself at 0:00
+[ Pause || ]  [ 1x ]
+[ Auto ]      [ Report ]
+[ Run Day Now > ]
+```
+
+- **Countdown:** minutes:seconds remaining in the current day, drawn large. It turns amber under 15 seconds and red under 5 so the end of a day is legible from the corner of the eye, and goes gray whenever the clock isn't running (paused, or manual mode). The bar beneath it shows the same value as a fraction of the full day.
+- **Pause / speed:** hold the countdown, or cycle 1x/2x/4x (§3.5). Both are disabled in manual mode, where there is no running clock to control. The spacebar toggles pause as well.
+- **Auto:** toggles the auto-running clock against the manual loop. Switching modes always resets the countdown to a full day, so the player is never dropped into an about-to-expire day.
+- **Report:** reopens the last simulated day's full report for review (disabled before the first simulated day). This never advances the calendar -- only the end-of-day report's "Continue to next day" does that.
+- **Run Day Now:** simulates the current day immediately instead of waiting out the clock.
+
+Directly beneath the panel, an auto-run day posts a **summary card** -- day number, grade and score, profit, average freshness, settlement happiness, plus a personal-best or capacity-blocked line -- which fades on its own after a few seconds. It is non-blocking by design: the auto-run loop can't stop for a dialog every day, so the card carries the headline and the Report button carries the detail.
+
+Like the control panel, this one is usable by mouse or touch and never triggers a tile action underneath it.
 
 ---
 

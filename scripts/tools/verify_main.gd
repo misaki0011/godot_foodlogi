@@ -206,6 +206,8 @@ func _report() -> void:
 	assert(tip_panel.visible, "Tapping a settlement must show the info tip")
 	assert(state.grid.size() == grid_size_before_tip, "Tapping a settlement must not attempt to build there")
 
+	_check_day_clock(state)
+
 	var terrain_types_seen := {}
 	for cell in used_cells:
 		var item_id: int = terrain.get_cell_item(cell)
@@ -213,6 +215,72 @@ func _report() -> void:
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
 	print("verify_main checks passed.")
+
+## LOOP-07: the auto-run day clock. Drives the countdown to zero directly
+## rather than waiting a real minute, and checks each mode's contract: auto
+## runs the day and rolls the calendar over without a modal, pause freezes the
+## countdown, and manual mode goes back to the report-then-continue loop.
+func _check_day_clock(state: GameState) -> void:
+	var summary_panel: PanelContainer = _main.get("_summary_panel")
+	var report_overlay: Control = _main.get("_report_overlay")
+	assert(state.auto_run, "The day clock must auto-run by default")
+	assert(not report_overlay.visible)
+	# A couple of frames have already elapsed by now, so the clock has started
+	# draining -- it just must not have expired or overrun a full day.
+	assert(state.day_time_left > 0.0 and state.day_time_left <= GameBalance.DAY_LENGTH_SEC, "The day clock must start full and drain downward")
+	assert(state.day == 1, "The clock must not have run a day within the first frames")
+
+	# Auto-run: the clock reaching zero simulates the day by itself, advances
+	# the calendar, restarts the clock, and reports via the summary card only.
+	var day_before: int = state.day
+	state.day_time_left = 0.01
+	_main.call("_tick_day_clock", 0.05)
+	assert(state.day == day_before + 1, "An expired auto-run clock must advance the day")
+	assert(is_equal_approx(state.day_time_left, GameBalance.DAY_LENGTH_SEC), "The clock must restart after an auto-run day")
+	assert(not report_overlay.visible, "An auto-run day must not open the blocking report")
+	assert(summary_panel.visible, "An auto-run day must show the non-blocking summary card")
+	assert(_main.get("_last_report") != null)
+
+	# Pausing freezes the countdown; resuming resumes it.
+	_main.call("_toggle_pause")
+	assert(state.clock_paused)
+	_main.call("_tick_day_clock", 5.0)
+	assert(is_equal_approx(state.day_time_left, GameBalance.DAY_LENGTH_SEC), "A paused clock must not drain")
+	_main.call("_toggle_pause")
+	assert(not state.clock_paused)
+	_main.call("_tick_day_clock", 1.0)
+	assert(state.day_time_left < GameBalance.DAY_LENGTH_SEC, "A resumed clock must drain again")
+
+	# Speed multiplies the drain rate.
+	state.day_time_left = GameBalance.DAY_LENGTH_SEC
+	_main.call("_cycle_speed")
+	_main.call("_tick_day_clock", 1.0)
+	var drained: float = GameBalance.DAY_LENGTH_SEC - state.day_time_left
+	assert(is_equal_approx(drained, GameBalance.DAY_SPEEDS[state.speed_index]), "Clock drain must scale with the selected speed")
+
+	# Manual mode: nothing runs on its own, and a day run opens the report
+	# whose Continue button is what advances the calendar.
+	_main.call("_toggle_auto_run", false)
+	assert(not state.auto_run)
+	day_before = state.day
+	_main.call("_tick_day_clock", 999.0)
+	assert(is_equal_approx(state.day_time_left, GameBalance.DAY_LENGTH_SEC), "A manual clock must not drain")
+	assert(state.day == day_before, "Manual mode must never run a day on its own")
+	_main.call("_run_day")
+	assert(report_overlay.visible, "A manual day run must open the report")
+	assert(state.day == day_before, "run_day itself must not advance the day in manual mode")
+	_main.call("_close_report")
+	assert(not report_overlay.visible)
+	assert(state.day == day_before + 1, "Closing the end-of-day report advances the day")
+
+	# Reviewing the last report afterwards must not advance the day again.
+	_main.call("_toggle_auto_run", true)
+	day_before = state.day
+	_main.call("_review_report")
+	assert(report_overlay.visible)
+	_main.call("_close_report")
+	assert(state.day == day_before, "Reviewing a past report must not advance the day")
+	print("Day clock (LOOP-07) checks passed.")
 
 func _node_by_id(map_data: MapData, node_id: String) -> NodeData:
 	for node in map_data.node_placements:

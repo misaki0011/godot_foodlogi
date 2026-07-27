@@ -12,6 +12,22 @@ const HUB_REGIONAL_UPGRADE_COST := 200.0
 const GRID_SIZE := Vector2i(21, 14)
 const RIVER_COL := 10
 
+## ---------- day clock (LOOP-07) ----------
+## Real-time seconds one in-game day lasts while the auto-run clock is
+## ticking. The player keeps building while it counts down; when it hits
+## zero the day simulates itself and the next one starts, so the normal loop
+## never stops for a "Run the Day" click.
+const DAY_LENGTH_SEC := 60.0
+## Selectable clock multipliers, cycled by the speed button.
+const DAY_SPEEDS: Array[float] = [1.0, 2.0, 4.0]
+const DAY_SPEED_LABELS: Array[String] = ["1x", "2x", "4x"]
+## Countdown thresholds (in unscaled seconds) where the timer turns amber
+## and then red, so the last stretch of a day reads at a glance.
+const DAY_CLOCK_WARN_SEC := 15.0
+const DAY_CLOCK_URGENT_SEC := 5.0
+## How long the non-blocking end-of-day summary card stays on screen.
+const DAY_SUMMARY_HOLD_SEC := 5.0
+
 ## level id ("dirt"/"paved"/"main") -> stats. "next" is "" at max level.
 const ROUTE_LEVELS := {
 	"dirt": {"cap": 60.0, "upkeep_mult": 1.0, "upgrade_cost": 0.0, "next": "paved", "label": "Dirt"},

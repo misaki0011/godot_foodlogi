@@ -80,7 +80,25 @@ var _bubbles_button: Button
 var _tool_buttons: Dictionary = {}
 var _tip_panel: PanelContainer
 var _tip_label: RichTextLabel
+var _clock_day_label: Label
+var _clock_time_label: Label
+var _clock_bar: ProgressBar
+var _clock_mode_label: Label
+var _pause_button: Button
+var _speed_button: Button
+var _auto_button: Button
+var _report_button: Button
+var _summary_panel: PanelContainer
+var _summary_label: RichTextLabel
+var _summary_tween: Tween
+var _clock_shown_sec := -1
+var _last_report: DayReportData
+## True while the open report modal is the end-of-day one, whose "Continue"
+## rolls the calendar over. Reviewing an already-closed day's report (the
+## clock panel's Report button) leaves it false, so closing just dismisses.
+var _report_advances_day := false
 var _report_overlay: Control
+var _report_continue: Button
 var _report_sub: Label
 var _report_text: RichTextLabel
 var _report_banner: Label
@@ -185,9 +203,12 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	if _report_overlay.visible:
+		# The report modal holds the whole game -- including the day clock --
+		# so a player reading it never loses time off the running day.
 		_pan_dir = Vector2.ZERO
 		_zoom_dir = 0.0
 		return
+	_tick_day_clock(delta)
 	if _zoom_dir != 0.0:
 		_camera.size = clampf(_camera.size + _zoom_dir * ZOOM_SPEED * delta, ZOOM_MIN, ZOOM_MAX)
 	if _pan_dir != Vector2.ZERO:
@@ -210,6 +231,9 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _report_overlay.visible:
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
+		_toggle_pause()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
@@ -591,16 +615,136 @@ func _after_action() -> void:
 	_render_grid()
 	_update_ui()
 
-func _end_day() -> void:
+## ---------- auto-run day clock (LOOP-07) ----------
+##
+## The day is on a real-time countdown rather than a button: the player keeps
+## building while the top-right clock drains, and when it reaches zero the day
+## simulates itself, the calendar rolls over, and the clock restarts -- so the
+## build/simulate loop never stops for a click. Because that loop can't afford
+## a modal every day, an auto-run day reports through a small, non-blocking
+## summary card instead (the full report stays one Report-button click away,
+## and opening it freezes the clock via _process's early return).
+##
+## Turning Auto off restores the manual loop exactly: the clock stops, nothing
+## runs on its own, and "Run Day Now" opens the blocking end-of-day report
+## whose Continue button advances the day.
+
+## Drains the current day and simulates it when it runs out. Called once per
+## frame from _process, which is already skipped while the report modal is
+## open, so the clock only ticks during actual play.
+func _tick_day_clock(delta: float) -> void:
+	if not _state.auto_run or _state.clock_paused:
+		return
+	_state.day_time_left -= delta * GameBalance.DAY_SPEEDS[_state.speed_index]
+	if _state.day_time_left <= 0.0:
+		_run_day()
+	_update_clock_ui()
+
+## Simulates one day, from either the clock hitting zero or the player asking
+## for it early. Always restarts the clock, so an early run costs the rest of
+## the day's build time rather than banking it.
+func _run_day() -> void:
 	var report := SimulationEngine.run_day(_state, _map_data.node_placements)
-	_show_report(report)
+	_last_report = report
+	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
+	_clock_shown_sec = -1
+	if _state.auto_run:
+		_state.day += 1
+		_show_day_summary(report)
+	else:
+		_report_advances_day = true
+		_show_report(report)
 	_render_grid()
 	_update_ui()
 
 func _close_report() -> void:
 	_report_overlay.visible = false
-	_state.day += 1
+	if _report_advances_day:
+		_report_advances_day = false
+		_state.day += 1
 	_update_ui()
+
+## Reopens the last simulated day's full report for review. The day has
+## already rolled over by then, so closing it must not advance again.
+func _review_report() -> void:
+	if _last_report == null:
+		return
+	_report_advances_day = false
+	_show_report(_last_report)
+
+func _toggle_pause() -> void:
+	if not _state.auto_run:
+		return
+	_state.clock_paused = not _state.clock_paused
+	_update_clock_ui()
+
+func _toggle_auto_run(pressed: bool) -> void:
+	_state.auto_run = pressed
+	# Leaving manual mode shouldn't drop the player straight into an
+	# already-expired day, and a paused hold is meaningless once the clock is
+	# stopped, so both reset on the way in and out.
+	_state.clock_paused = false
+	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
+	_clock_shown_sec = -1
+	_update_clock_ui()
+	_show_toast("Auto-run on -- the day advances by itself." if pressed else "Auto-run off -- run each day yourself.")
+
+func _cycle_speed() -> void:
+	_state.speed_index = (_state.speed_index + 1) % GameBalance.DAY_SPEEDS.size()
+	_update_clock_ui()
+
+func _update_clock_ui() -> void:
+	if _clock_time_label == null:
+		return
+	_clock_day_label.text = "Day %d" % _state.day
+	var remaining: float = maxf(_state.day_time_left, 0.0)
+	# Only rewrite the countdown when the displayed second actually changes.
+	var whole_sec := ceili(remaining)
+	if whole_sec != _clock_shown_sec:
+		_clock_shown_sec = whole_sec
+		_clock_time_label.text = "%d:%02d" % [whole_sec / 60, whole_sec % 60]
+	_clock_time_label.add_theme_color_override("font_color", _clock_color(remaining))
+	_clock_bar.value = remaining / GameBalance.DAY_LENGTH_SEC * 100.0
+	_pause_button.text = "Resume ▸" if _state.clock_paused else "Pause ||"
+	_pause_button.disabled = not _state.auto_run
+	_speed_button.text = GameBalance.DAY_SPEED_LABELS[_state.speed_index]
+	_speed_button.disabled = not _state.auto_run
+	_report_button.disabled = _last_report == null
+	if not _state.auto_run:
+		_clock_mode_label.text = "Manual -- run the day yourself"
+	elif _state.clock_paused:
+		_clock_mode_label.text = "Paused -- space or Resume to continue"
+	else:
+		_clock_mode_label.text = "Day runs itself at 0:00"
+
+func _clock_color(remaining: float) -> Color:
+	if not _state.auto_run or _state.clock_paused:
+		return Color("8FA3AD")
+	if remaining <= GameBalance.DAY_CLOCK_URGENT_SEC:
+		return Color("C4573A")
+	if remaining <= GameBalance.DAY_CLOCK_WARN_SEC:
+		return Color("D98E4A")
+	return Color("EAF4EF")
+
+## The auto-run loop's stand-in for the report modal: a compact card under the
+## clock with the day's grade, profit and freshness, which fades on its own so
+## the player never has to dismiss anything mid-build.
+func _show_day_summary(r: DayReportData) -> void:
+	var grade_color: String = GRADE_COLORS.get(r.grade, Color.WHITE).to_html(false)
+	var profit_color := "#7FBF7F" if r.profit >= 0.0 else "#C4573A"
+	var text := "[b]Day %d done[/b] · grade [color=#%s][b]%s[/b][/color] (%d)\n" % [r.day, grade_color, r.grade, roundi(r.grade_score)]
+	text += "[color=%s]%s§%d[/color] · %d%% fresh · %d%% happy" % [profit_color, "+" if r.profit >= 0.0 else "−", absi(roundi(r.profit)), roundi(r.avg_freshness_overall), roundi(r.avg_happiness)]
+	if r.is_personal_best and r.day > 1:
+		text += "\n[color=#C9A227]New personal best score![/color]"
+	elif r.capacity_blocked > 0.0:
+		text += "\n[color=#C4573A]%d food blocked by route capacity[/color]" % roundi(r.capacity_blocked)
+	_summary_label.text = text
+	_summary_panel.visible = true
+	if _summary_tween != null and _summary_tween.is_valid():
+		_summary_tween.kill()
+	_summary_tween = create_tween()
+	_summary_tween.tween_interval(GameBalance.DAY_SUMMARY_HOLD_SEC)
+	_summary_tween.tween_callback(func() -> void: _summary_panel.visible = false)
 
 ## ---------- hover tooltip ----------
 
@@ -685,7 +829,10 @@ func _settlement_tip_text(n: NodeData) -> String:
 ## ---------- daily report ----------
 
 func _show_report(r: DayReportData) -> void:
-	_report_sub.text = "Day %d" % _state.day
+	_report_sub.text = "Day %d" % r.day
+	# Reviewing a past report (clock panel's Report button) just closes; only
+	# the end-of-day report rolls the calendar over.
+	_report_continue.text = "Continue to next day" if _report_advances_day else "Close"
 	var text := ""
 	text += "Income: §%d\n" % roundi(r.income)
 	text += "Route upkeep: −§%d\n" % roundi(r.route_upkeep)
@@ -704,7 +851,7 @@ func _show_report(r: DayReportData) -> void:
 	for s in r.settlement_scores:
 		text += "%s: %d%% happy · %d%% fresh\n" % [s.settlement.display_name, roundi(s.sat), roundi(s.avg_fresh)]
 	_report_text.text = text
-	if r.is_personal_best and _state.day > 1:
+	if r.is_personal_best and r.day > 1:
 		_report_banner.text = "🏆 New personal best score! Grade %s, %d/100. Can you clean the network up further?" % [r.grade, roundi(r.grade_score)]
 		_report_banner.visible = true
 	elif r.capacity_blocked > 0.0:
@@ -969,7 +1116,8 @@ func _update_ui() -> void:
 	if _funds_label == null:
 		return
 	_funds_label.text = "§ %d" % roundi(_state.balance)
-	_day_label.text = "%d" % _state.day
+	_day_label.text = "Day %d" % _state.day
+	_update_clock_ui()
 	if _state.best_grade != "":
 		_best_grade_label.text = _state.best_grade
 		_best_grade_label.add_theme_color_override("font_color", GRADE_COLORS.get(_state.best_grade, Color.WHITE))
@@ -997,83 +1145,10 @@ func _build_ui() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(root)
 
-	var side := PanelContainer.new()
-	side.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	side.offset_left = -300
-	side.offset_top = 12
-	side.offset_right = -12
-	side.offset_bottom = -12
-	side.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.94))
-	root.add_child(side)
-	var side_scroll := ScrollContainer.new()
-	side.add_child(side_scroll)
-	var side_box := VBoxContainer.new()
-	side_box.add_theme_constant_override("separation", 10)
-	side_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	side_scroll.add_child(side_box)
-
-	_add_section_title(side_box, "TREASURY -- DAY")
-	var treasury_row := HBoxContainer.new()
-	side_box.add_child(treasury_row)
-	_day_label = Label.new()
-	_day_label.add_theme_font_size_override("font_size", 14)
-	treasury_row.add_child(_day_label)
-	_funds_label = Label.new()
-	_funds_label.add_theme_font_size_override("font_size", 20)
-	_funds_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_funds_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	treasury_row.add_child(_funds_label)
-
-	side_box.add_child(HSeparator.new())
-	_add_section_title(side_box, "EFFICIENCY CHASE")
-	_best_grade_label = _add_stat_row(side_box, "Best grade so far")
-	_best_score_label = _add_stat_row(side_box, "Best day score")
-	_avg_score_label = _add_stat_row(side_box, "Last 7-day average")
-
-	side_box.add_child(HSeparator.new())
-	_add_section_title(side_box, "BUILD -- INFRASTRUCTURE")
-	_add_tool_button(side_box, "Draw Route  (§8/tile, +§40 bridge)", "route")
-	_add_tool_button(side_box, "Upgrade Route  (Dirt→Paved→Main)", "upgrade")
-	_add_section_title(side_box, "BUILD -- STORAGE")
-	_add_tool_button(side_box, "Normal Storage  §80", "normal")
-	_add_tool_button(side_box, "Cool Storage  §180", "cool")
-	_add_tool_button(side_box, "Freeze Storage  §400", "freeze")
-	_add_section_title(side_box, "BUILD -- HUBS")
-	var hub_note := Label.new()
-	hub_note.autowrap_mode = TextServer.AUTOWRAP_WORD
-	hub_note.text = "Use Build Hub to place a Small Hub on any existing route tile. Each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
-	hub_note.add_theme_font_size_override("font_size", 11)
-	side_box.add_child(hub_note)
-	_add_tool_button(side_box, "Build Small Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild")
-	_add_tool_button(side_box, "Upgrade to Regional Hub  §%d" % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), "hubRegional")
-	_add_section_title(side_box, "BUILD -- OTHER")
-	_add_tool_button(side_box, "Bulldoze  (remove a tile)", "remove")
-
-	side_box.add_child(HSeparator.new())
-	_add_section_title(side_box, "LEGEND")
-	_add_legend_row(side_box, MarkerColors.SOURCE_COLOR, "Food source")
-	_add_legend_row(side_box, MarkerColors.SETTLEMENT_COLOR, "Settlement")
-	_add_legend_row(side_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
-	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
-	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
-	_add_legend_row(side_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build manually at flagged forks)")
-	_add_legend_row(side_box, Color("4FA8A0"), "Fork available -- Build Hub tool")
-	_add_legend_row(side_box, Color("8B6B9C"), "Junction over the hub cap")
-	_add_legend_row(side_box, Color("D98E4A"), "! Tile near capacity (90%+, last run)")
-	_add_legend_row(side_box, Color("C4573A"), "! Tile over capacity (last run)")
-	_add_legend_row(side_box, BRIDGE_COLOR, "River / bridge")
-
-	side_box.add_child(HSeparator.new())
-	var run_day := Button.new()
-	run_day.text = "Run the Day ▸"
-	run_day.custom_minimum_size.y = 44
-	run_day.pressed.connect(_end_day)
-	side_box.add_child(run_day)
-
 	_hint_label = Label.new()
 	_hint_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_hint_label.offset_left = 12
-	_hint_label.offset_right = -312
+	_hint_label.offset_left = 12 + CONTROL_PANEL_WIDTH + 10
+	_hint_label.offset_right = -12
 	_hint_label.offset_top = -40
 	_hint_label.offset_bottom = -12
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -1082,7 +1157,10 @@ func _build_ui() -> void:
 
 	_toast = Label.new()
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	_toast.position = Vector2(-220, 12)
+	# Centered over the play area, which the left control panel eats into --
+	# so the toast shifts right by half that panel's footprint to stay clear
+	# of it and of the day clock in the opposite corner.
+	_toast.position = Vector2(-220 + (12 + CONTROL_PANEL_WIDTH) * 0.5, 12)
 	_toast.size = Vector2(440, 42)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -1103,7 +1181,8 @@ func _build_ui() -> void:
 	_tip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_tip_panel.add_child(_tip_label)
 
-	_build_map_controls(root)
+	_build_control_panel(root)
+	_build_day_clock(root)
 
 	_report_overlay = ColorRect.new()
 	_report_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1139,39 +1218,126 @@ func _build_ui() -> void:
 	_report_text.fit_content = true
 	_report_text.custom_minimum_size = Vector2(420, 0)
 	report_scroll.add_child(_report_text)
-	var continue_button := Button.new()
-	continue_button.text = "Continue to next day"
-	continue_button.custom_minimum_size.y = 40
-	continue_button.pressed.connect(_close_report)
-	report_box.add_child(continue_button)
+	_report_continue = Button.new()
+	_report_continue.text = "Continue to next day"
+	_report_continue.custom_minimum_size.y = 40
+	_report_continue.pressed.connect(_close_report)
+	report_box.add_child(_report_continue)
 
-## ---------- map controls (zoom/pan, top-left) ----------
+## ---------- control panel (everything, left edge) ----------
+##
+## One panel carries the whole HUD: run stats, every build tool, the map
+## zoom/pan controls, and the legend. It replaces the older split between a
+## top-left map-controls panel and a 300px right-hand sidebar -- two panels
+## ate both edges of the screen, and every build action meant crossing from
+## one to the other, with the most-used tools duplicated on both to soften
+## that. Only the day clock (§10.8) lives outside it, in the opposite corner.
+##
+## The panel is deliberately narrow, so tool buttons are short labels with the
+## price attached; the full explanation of the selected tool lands in the
+## bottom hint bar (TOOL_HINTS) and in each button's tooltip. The legend is
+## collapsed by default -- it's reference material, not a control -- and the
+## whole column scrolls, so nothing is unreachable on a short window.
 
-func _build_map_controls(root: Control) -> void:
+const CONTROL_PANEL_WIDTH := 232.0
+const CONTROL_PANEL_BOTTOM_MARGIN := 60.0 # clears the bottom hint bar
+const CONTROLLER_BUTTON_SIZE := Vector2(36, 36)
+const CONTROLLER_FONT_SIZE := 18
+
+var _panel_scroll: ScrollContainer
+var _legend_box: VBoxContainer
+var _legend_button: Button
+
+func _build_control_panel(root: Control) -> void:
 	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	panel.offset_left = 12
 	panel.offset_top = 12
-	panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.9))
+	panel.offset_right = 12 + CONTROL_PANEL_WIDTH
+	panel.offset_bottom = -CONTROL_PANEL_BOTTOM_MARGIN
+	panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.92))
 	root.add_child(panel)
+	_panel_scroll = ScrollContainer.new()
+	_panel_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(_panel_scroll)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 6)
-	panel.add_child(box)
-	_add_section_title(box, "MAP")
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 4)
+	_panel_scroll.add_child(box)
 
+	_build_status_section(box)
+	box.add_child(HSeparator.new())
+	_build_tools_section(box)
+	box.add_child(HSeparator.new())
+	_build_map_section(box)
+	box.add_child(HSeparator.new())
+	_build_legend_section(box)
+
+## Day, treasury, and the efficiency chase (LOOP-01/LOOP-06) in four numbers.
+func _build_status_section(box: VBoxContainer) -> void:
+	var treasury_row := HBoxContainer.new()
+	box.add_child(treasury_row)
+	_day_label = Label.new()
+	_day_label.add_theme_font_size_override("font_size", 14)
+	_day_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_day_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	treasury_row.add_child(_day_label)
+	_funds_label = Label.new()
+	_funds_label.add_theme_font_size_override("font_size", 20)
+	_funds_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	treasury_row.add_child(_funds_label)
+
+	var stats_row := HBoxContainer.new()
+	stats_row.add_theme_constant_override("separation", 4)
+	box.add_child(stats_row)
+	_best_grade_label = _add_stat_column(stats_row, "Grade", "Best grade so far")
+	_best_score_label = _add_stat_column(stats_row, "Best", "Best day score")
+	_avg_score_label = _add_stat_column(stats_row, "7-day", "Average score over the last 7 days")
+
+func _build_tools_section(box: VBoxContainer) -> void:
+	_add_section_title(box, "ROUTES")
+	var route_grid := _add_tool_grid(box)
+	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.BRIDGE_COST)])
+	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade Route -- Dirt to Paved (§%d), Paved to Main (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost)])
+
+	_add_section_title(box, "STORAGE")
+	var storage_grid := _add_tool_grid(box)
+	for tool in ["normal", "cool", "freeze"]:
+		var st = GameBalance.STORAGE_TYPES[STORAGE_TOOLS[tool]]
+		var label: String = st.name.replace(" Storage", "")
+		_add_tool_button(storage_grid, "%s  §%d" % [label, roundi(st.build)], tool, "%s -- §%d to build, §%d/day upkeep, protects the next %d tiles at %d%% decay." % [st.name, roundi(st.build), roundi(st.upkeep), st.protection, roundi(st.mult * 100)])
+
+	_add_section_title(box, "HUBS & CLEARING")
+	var hub_grid := _add_tool_grid(box)
+	_add_tool_button(hub_grid, "Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild", "Build a Small Hub on any existing route tile for §%d. Each connected road network supports %d hubs." % [roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), GameBalance.HUB_CAP_PER_NETWORK])
+	_add_tool_button(hub_grid, "Hub+  §%d" % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), "hubRegional", "Upgrade an existing Small Hub to Regional for §%d." % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST))
+
+	_add_tool_button(hub_grid, "Bulldoze", "remove", "Remove a built tile, along with every connection touching it. No refund.")
+
+func _build_map_section(box: VBoxContainer) -> void:
+	_add_section_title(box, "MAP")
 	var zoom_row := HBoxContainer.new()
 	zoom_row.add_theme_constant_override("separation", 4)
 	box.add_child(zoom_row)
 	var zoom_label := Label.new()
 	zoom_label.text = "Zoom"
 	zoom_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	zoom_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	zoom_row.add_child(zoom_label)
 	_add_hold_button(zoom_row, "−", func() -> void: _zoom_dir = 1.0, func() -> void: _zoom_dir = 0.0)
 	_add_hold_button(zoom_row, "+", func() -> void: _zoom_dir = -1.0, func() -> void: _zoom_dir = 0.0)
 
+	var pan_row := HBoxContainer.new()
+	pan_row.add_theme_constant_override("separation", 4)
+	box.add_child(pan_row)
+	var pan_label := Label.new()
+	pan_label.text = "Pan"
+	pan_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pan_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	pan_row.add_child(pan_label)
 	var pan_grid := GridContainer.new()
 	pan_grid.columns = 3
-	box.add_child(pan_grid)
+	pan_row.add_child(pan_grid)
 	pan_grid.add_child(_pan_spacer())
 	_add_pan_button(pan_grid, "^", Vector2(0, 1))
 	pan_grid.add_child(_pan_spacer())
@@ -1188,53 +1354,185 @@ func _build_map_controls(root: Control) -> void:
 	var bubbles_label := Label.new()
 	bubbles_label.text = "Bubbles"
 	bubbles_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bubbles_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bubbles_row.add_child(bubbles_label)
 	_bubbles_button = Button.new()
 	_bubbles_button.toggle_mode = true
 	_bubbles_button.button_pressed = true
 	_bubbles_button.text = "On"
-	_bubbles_button.custom_minimum_size = Vector2(52, 36)
+	_bubbles_button.custom_minimum_size = Vector2(48, 32)
 	_bubbles_button.toggled.connect(_on_bubbles_toggled)
 	bubbles_row.add_child(_bubbles_button)
 
-	# Shortcuts for the most-used build tools, so drawing, erasing, and now
-	# hub-building don't require reaching over to the right-hand sidebar.
-	# These register alongside the sidebar's own Draw Route / Bulldoze / Build
-	# Small Hub buttons (see _add_tool_button), and _set_tool keeps every copy
-	# of a tool in sync.
-	box.add_child(HSeparator.new())
-	_add_section_title(box, "BUILD")
-	var build_row := HBoxContainer.new()
-	build_row.add_theme_constant_override("separation", 4)
-	box.add_child(build_row)
-	_add_controller_tool_button(build_row, "Route", "route")
-	_add_controller_tool_button(build_row, "Erase", "remove")
-	_add_controller_tool_button(build_row, "Hub", "hubBuild")
+## Reference material, so it starts collapsed and the panel stays short.
+func _build_legend_section(box: VBoxContainer) -> void:
+	_legend_button = Button.new()
+	_legend_button.text = "Legend  ▾"
+	_legend_button.toggle_mode = true
+	_legend_button.custom_minimum_size.y = 30
+	_legend_button.add_theme_font_size_override("font_size", 12)
+	_legend_button.toggled.connect(_on_legend_toggled)
+	box.add_child(_legend_button)
 
-const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
-const CONTROLLER_FONT_SIZE := 24
+	_legend_box = VBoxContainer.new()
+	_legend_box.add_theme_constant_override("separation", 2)
+	_legend_box.visible = false
+	box.add_child(_legend_box)
+	_add_legend_row(_legend_box, MarkerColors.SOURCE_COLOR, "Food source")
+	_add_legend_row(_legend_box, MarkerColors.SETTLEMENT_COLOR, "Settlement")
+	_add_legend_row(_legend_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
+	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
+	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
+	_add_legend_row(_legend_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build on any route tile)")
+	_add_legend_row(_legend_box, Color("4FA8A0"), "Fork available -- Hub tool")
+	_add_legend_row(_legend_box, Color("8B6B9C"), "Junction over the hub cap")
+	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
+	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
+	_add_legend_row(_legend_box, BRIDGE_COLOR, "River / bridge")
+
+func _on_legend_toggled(pressed: bool) -> void:
+	_legend_box.visible = pressed
+	_legend_button.text = "Legend  ▴" if pressed else "Legend  ▾"
+	if pressed:
+		# The legend sits at the bottom of a panel that's taller than the
+		# window once it's open, so scroll down to what the click just
+		# revealed instead of making the player hunt for it. Two frames of
+		# delay: one for the container to re-sort at its new height, one more
+		# for the scrollbar's range to catch up -- setting the offset any
+		# earlier just clamps it against the old, shorter range.
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_panel_scroll.scroll_vertical = roundi(_panel_scroll.get_v_scroll_bar().max_value)
 
 func _pan_spacer() -> Control:
 	var spacer := Control.new()
-	spacer.custom_minimum_size = CONTROLLER_BUTTON_SIZE
+	spacer.custom_minimum_size = CONTROLLER_BUTTON_SIZE * 0.5
 	return spacer
 
 func _add_pan_button(parent: Container, text: String, dir: Vector2) -> void:
 	_add_hold_button(parent, text, func() -> void: _pan_dir += dir, func() -> void: _pan_dir -= dir)
 
-## A compact toggle button on the top-left controller panel that selects a
-## build tool, mirroring the right-hand sidebar's tool button for the same
-## tool (both register in _tool_buttons, so _set_tool keeps them in sync).
-func _add_controller_tool_button(parent: Container, text: String, tool: String) -> void:
-	var button := Button.new()
-	button.text = text
-	button.toggle_mode = true
-	button.custom_minimum_size = Vector2(52, 40)
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	button.add_theme_font_size_override("font_size", 14)
-	button.pressed.connect(_set_tool.bind(tool))
-	parent.add_child(button)
-	_tool_buttons.get_or_add(tool, []).append(button)
+## Two-column row of build tools. Every tool button lives in one of these, so
+## the eight tools take five rows instead of eight full-width bars.
+func _add_tool_grid(parent: VBoxContainer) -> GridContainer:
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	parent.add_child(grid)
+	return grid
+
+## ---------- day clock (top-right) ----------
+
+## The countdown to the next automatic day run, plus its transport controls
+## (pause, speed, auto/manual) and the review button for the last report.
+## Anchored to and grown leftward from the top-right corner, diagonally
+## opposite the control panel so the two never crowd each other. The
+## end-of-day summary card stacks directly beneath it.
+const CLOCK_PANEL_WIDTH := 214.0
+const CLOCK_PANEL_MARGIN := 12.0
+
+func _build_day_clock(root: Control) -> void:
+	var column := VBoxContainer.new()
+	column.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	column.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	column.grow_vertical = Control.GROW_DIRECTION_END
+	column.offset_left = -CLOCK_PANEL_MARGIN
+	column.offset_right = -CLOCK_PANEL_MARGIN
+	column.offset_top = 12
+	column.offset_bottom = 12
+	column.custom_minimum_size.x = CLOCK_PANEL_WIDTH
+	column.add_theme_constant_override("separation", 8)
+	root.add_child(column)
+
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _panel_style(Color("203039"), 0.92))
+	column.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	panel.add_child(box)
+
+	var head := HBoxContainer.new()
+	box.add_child(head)
+	_clock_day_label = Label.new()
+	_clock_day_label.text = "Day 1"
+	_clock_day_label.add_theme_font_size_override("font_size", 15)
+	_clock_day_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_clock_day_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(_clock_day_label)
+	_clock_time_label = Label.new()
+	_clock_time_label.text = "1:00"
+	_clock_time_label.add_theme_font_size_override("font_size", 30)
+	_clock_time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	head.add_child(_clock_time_label)
+
+	_clock_bar = ProgressBar.new()
+	_clock_bar.max_value = 100.0
+	_clock_bar.value = 100.0
+	_clock_bar.show_percentage = false
+	_clock_bar.custom_minimum_size.y = 8
+	box.add_child(_clock_bar)
+
+	_clock_mode_label = Label.new()
+	_clock_mode_label.add_theme_font_size_override("font_size", 11)
+	_clock_mode_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	box.add_child(_clock_mode_label)
+
+	var controls := HBoxContainer.new()
+	controls.add_theme_constant_override("separation", 4)
+	box.add_child(controls)
+	_pause_button = Button.new()
+	_pause_button.text = "Pause ||"
+	_pause_button.custom_minimum_size.y = 34
+	_pause_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pause_button.add_theme_font_size_override("font_size", 13)
+	_pause_button.pressed.connect(_toggle_pause)
+	controls.add_child(_pause_button)
+	_speed_button = Button.new()
+	_speed_button.text = GameBalance.DAY_SPEED_LABELS[0]
+	_speed_button.custom_minimum_size = Vector2(46, 34)
+	_speed_button.add_theme_font_size_override("font_size", 13)
+	_speed_button.pressed.connect(_cycle_speed)
+	controls.add_child(_speed_button)
+
+	var modes := HBoxContainer.new()
+	modes.add_theme_constant_override("separation", 4)
+	box.add_child(modes)
+	_auto_button = Button.new()
+	_auto_button.text = "Auto"
+	_auto_button.toggle_mode = true
+	_auto_button.button_pressed = _state.auto_run
+	_auto_button.custom_minimum_size.y = 32
+	_auto_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auto_button.add_theme_font_size_override("font_size", 13)
+	_auto_button.toggled.connect(_toggle_auto_run)
+	modes.add_child(_auto_button)
+	_report_button = Button.new()
+	_report_button.text = "Report"
+	_report_button.custom_minimum_size.y = 32
+	_report_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_report_button.add_theme_font_size_override("font_size", 13)
+	_report_button.pressed.connect(_review_report)
+	modes.add_child(_report_button)
+
+	var run_now := Button.new()
+	run_now.text = "Run Day Now ▸"
+	run_now.custom_minimum_size.y = 34
+	run_now.add_theme_font_size_override("font_size", 13)
+	run_now.pressed.connect(_run_day)
+	box.add_child(run_now)
+
+	_summary_panel = PanelContainer.new()
+	_summary_panel.add_theme_stylebox_override("panel", _panel_style(Color("19312c"), 0.94))
+	_summary_panel.visible = false
+	column.add_child(_summary_panel)
+	_summary_label = RichTextLabel.new()
+	_summary_label.bbcode_enabled = true
+	_summary_label.fit_content = true
+	_summary_label.custom_minimum_size = Vector2(CLOCK_PANEL_WIDTH - 24, 0)
+	_summary_label.add_theme_font_size_override("normal_font_size", 12)
+	_summary_label.add_theme_font_size_override("bold_font_size", 12)
+	_summary_panel.add_child(_summary_label)
 
 func _add_hold_button(parent: Container, text: String, on_press: Callable, on_release: Callable) -> Button:
 	var button := Button.new()
@@ -1252,23 +1550,37 @@ func _add_section_title(parent: VBoxContainer, text: String) -> void:
 	label.add_theme_font_size_override("font_size", 12)
 	parent.add_child(label)
 
-func _add_stat_row(parent: VBoxContainer, label_text: String) -> Label:
-	var row := HBoxContainer.new()
-	parent.add_child(row)
+## One captioned number in the status strip. Returns the value label, which
+## _update_ui writes into.
+func _add_stat_column(parent: HBoxContainer, caption: String, tooltip: String) -> Label:
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.tooltip_text = tooltip
+	column.mouse_filter = Control.MOUSE_FILTER_PASS
+	parent.add_child(column)
 	var label := Label.new()
-	label.text = label_text
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(label)
+	label.text = caption
+	label.add_theme_font_size_override("font_size", 10)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(label)
 	var value := Label.new()
 	value.text = "—"
-	row.add_child(value)
+	value.add_theme_font_size_override("font_size", 15)
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(value)
 	return value
 
-func _add_tool_button(parent: VBoxContainer, text: String, tool: String) -> void:
+## A build-tool toggle. The short label keeps the panel narrow; the full
+## explanation lives in the tooltip and, once selected, in the hint bar.
+func _add_tool_button(parent: Container, text: String, tool: String, tooltip := "") -> void:
 	var button := Button.new()
 	button.text = text
+	button.tooltip_text = tooltip
 	button.toggle_mode = true
-	button.custom_minimum_size.y = 36
+	button.custom_minimum_size.y = 34
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.add_theme_font_size_override("font_size", 13)
 	button.pressed.connect(_set_tool.bind(tool))
 	parent.add_child(button)
 	_tool_buttons.get_or_add(tool, []).append(button)
