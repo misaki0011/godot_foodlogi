@@ -1,38 +1,39 @@
 extends Node3D
 
 ## Fresh Routes -- 3D isometric port of fresh-routes-mvp.html. The world is
-## a tile grid (see GameState.grid / SimulationEngine): clicking places one
-## tile at a time per the active tool, hubs auto-form at 3-way junctions,
-## and hovering (desktop) or tapping (mobile, no dialog) any tile or node
-## shows a live info tooltip. A top-left panel provides touch zoom/pan
-## controls for exploring the map on mobile. See SPEC.md v0.3.
+## a tile grid (see GameState.grid / SimulationEngine). Routes are drag-only
+## (v0.5): press-and-hold on a source node, a built hub, or an unfinished
+## (not-yet-established) route tile, drag over empty ground until the path
+## reaches a hub, a settlement, or another unfinished route tile, then
+## release to build and explicitly connect new tiles -- physical adjacency
+## alone never implies a connection (see GameState.connections), a drag that
+## doesn't reach a valid end point is rejected, and a drag can never cross or
+## reuse an already-built tile along the way, so every committed drag is a
+## genuinely complete, freestanding route. An already-established (live,
+## delivering) route tile can only ever be reached through its own hub or
+## settlement, never picked up again mid-network. Other tools (storage, hub,
+## upgrade, bulldoze) remain a single tap on an existing route tile.
+## A Small Hub can be built on any existing route tile with the Build Hub
+## tool, capped at GameBalance.HUB_CAP_PER_NETWORK per connected road network
+## (v0.5 revision -- see SPEC.md §4.4). Hovering (desktop) or tapping (mobile,
+## no dialog) any tile or node shows a live info tooltip. A top-left panel
+## provides touch zoom/pan controls for exploring the map on mobile.
 
 const REGION_MAP_PATH := "res://data/maps/region_1_map.tres"
 const STORAGE_SCENE := preload("res://scenes/markers/storage_marker.tscn")
 const HUB_SCENE := preload("res://scenes/markers/hub_marker.tscn")
 const FOOD_BUBBLE_SCENE := preload("res://scenes/markers/food_bubble_marker.tscn")
 
+## One symmetric design per route level -- each mesh reads identically under
+## any rotation (see generate_blocks.py's build_dirt_road_block/
+## build_paved_road_block/build_main_road_block), so the same scene is used
+## regardless of a tile's shape (straight or corner) or facing. There is no
+## separate corner mesh and no rotation to apply (v0.5 item 23).
 const ROUTE_LEVEL_SCENES := {
 	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt.glb"),
 	"paved": preload("res://assets/Blocks/glTF/Block_Road_Paved.glb"),
 	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
 }
-## Corner (L-shape) variants. Paved has none -- its existing block is 4
-## symmetric corner stones that already read fine unrotated for any shape
-## (see generate_blocks.py). Falls back to ROUTE_LEVEL_SCENES when absent.
-const ROUTE_CORNER_SCENES := {
-	"dirt": preload("res://assets/Blocks/glTF/Block_Road_Dirt_Corner.glb"),
-	"main": preload("res://assets/Blocks/glTF/Block_Road_Main_Corner.glb"),
-}
-## Y-axis yaw for each facing. Straight blocks' tread already runs N-S at 0
-## rotation (see generate_blocks.py), so "ud" needs none and "lr" needs a
-## quarter turn. Corner blocks are authored connecting N+E ("ne") at 0
-## rotation. A positive rotation_degrees.y is counter-clockwise as seen by
-## this top-down camera (world +Z is south, so +Y points toward the viewer),
-## so each quarter turn advances N+E counter-clockwise: 90 -> N+W ("nw"),
-## 180 -> S+W ("sw"), 270 -> S+E ("se"). (Earlier "se"/"nw" were swapped,
-## which rendered a down-right corner as an up-left one and vice versa.)
-const ROUTE_FACING_YAW := {"ud": 0.0, "lr": 90.0, "ne": 0.0, "nw": 90.0, "sw": 180.0, "se": 270.0}
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
@@ -46,12 +47,13 @@ const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Tap an empty tile adjacent to a node or existing route to place one, or tap a built tile to flip its shape. Press and hold, then drag, to preview a whole path -- release to build it (nothing is built if the path isn't valid).",
+	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"freeze": "Click an existing route tile to build Freeze Storage there (good for seafood -- some foods dislike freezing).",
-	"hubRegional": "Click an existing Small Hub (formed at a 3-way junction) to upgrade it to Regional for §200.",
+	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
+	"hubRegional": "Click an existing Small Hub to upgrade it to Regional for §200.",
 	"remove": "Click a built tile to bulldoze it (no refund).",
 }
 
@@ -88,34 +90,50 @@ var _map_bounds_max: Vector2
 var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
-## ---------- route draw: tap-to-cycle vs. hold-and-drag ----------
-## A press on a non-node cell while the "route" tool is active starts out
-## eligible for hold-to-drag; _process() promotes it to _drag_active once
-## held past HOLD_TO_DRAG_MSEC without releasing. A release before that
-## threshold -- or a release without ever dragging to a second cell -- is a
-## normal tap (dispatched to _handle_click as before). This is why a plain
-## tap's build/cycle action now fires on release rather than on press --
-## until release (or the hold threshold), there's no way to know whether
-## the gesture will turn into a drag.
+## ---------- route draw: drag-to-build-and-connect only ----------
+## v0.5: tile creation is drag-only -- tapping never places a new tile, and
+## never does anything else either (the old tap-to-cycle-shape feature is
+## retired, v0.5 item 21: a route is built by a drag and a release, full
+## stop). Tapping a route tile (or empty ground) with the route tool just
+## explains that a drag is needed.
+## Connectivity is never implied by adjacency (GameState.connections):
+## a press must start ON a source node, a built hub tile, or a route tile
+## that ISN'T part of an established route yet, and the drag must end ON a
+## hub tile, a settlement node, or likewise an unestablished route tile
+## (v0.5 items 18-19, relaxed in item 22) -- an already-established (live,
+## delivering) route tile can only ever be reached through its own hub or
+## settlement, never picked up again mid-network, while unfinished
+## infrastructure that isn't serving any delivery yet can be freely extended
+## from or joined to at any of its own tiles. EVERY CELL IN BETWEEN those two
+## ends must be empty ground (v0.5 item 20): a new route can never cross or
+## reuse an already-built tile or a different node, it only ever runs over
+## fresh grass. The only pre-existing cells a drag ever touches are its first
+## and last.
+## _process() promotes an eligible press to _drag_active once held past
+## HOLD_TO_DRAG_MSEC without releasing. A release before that threshold --
+## or a release without ever dragging to a second cell -- is a plain tap on
+## the anchor itself: for a node that's the usual info tip, for an existing
+## route tile that's just a hint that a drag is needed (see _do_tap_route),
+## never a build.
 ##
-## While dragging, nothing is written to _state.grid: _drag_path just
-## records every cell the pointer has crossed, _recompute_drag_validity()
-## re-derives which of those are real new tiles to build (skipping nodes
-## and already-built cells as harmless pass-through waypoints) and
-## whether the whole path is affordable/connected/under the hub cap, and
-## _update_drag_preview() draws a translucent line so the player can see
-## the path (green) or why it's rejected (red) before committing anything.
-## The actual tiles -- with their final, correct auto-tile shapes, since
-## _render_grid() always recomputes those from the real grid -- are only
-## written to _state.grid on release, and only if the whole path is valid;
-## an invalid path builds nothing at all, matching ROUTE-01's single-tile
-## transactional placement.
+## While dragging, nothing is written to _state.grid or .connections:
+## _drag_path just records every cell the pointer has crossed (path[0] is
+## always the pre-existing anchor), _recompute_drag_validity() re-derives,
+## for every consecutive pair, whether the second cell is a genuinely new
+## tile to build (_drag_new_cells) and records the pair as a connection to
+## make (_drag_new_connections). _update_drag_preview() draws a translucent
+## line so the player can see the path (green) or why it's rejected (red,
+## for an unaffordable path, an interior cell that isn't empty ground, or an
+## end that isn't a hub/settlement) before committing anything. Tiles and
+## connections are only written on release, and only if the whole path is
+## valid.
 var _press_eligible := false
 var _press_cell := Vector2i(-1, -1)
 var _press_start_msec := 0
 var _drag_active := false
 var _drag_path: Array[Vector2i] = []
 var _drag_new_cells: Array[Vector2i] = []
+var _drag_new_connections: Array[Array] = [] # [[Vector2i, Vector2i], ...]
 var _drag_valid := true
 var _drag_invalid_reason := ""
 var _drag_preview_visuals: Node3D
@@ -125,9 +143,21 @@ const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
 
 ## Overlay marking established (source->settlement) routes -- a bright, mostly
 ## opaque gold line floating just above the road surface (see
-## _render_established_routes).
+## _render_established_routes), with a green arrow at the source end (pointing
+## the way delivery actually flows) and a red bar at the settlement end.
 const ESTABLISHED_ROUTE_COLOR := Color(1.0, 0.83, 0.29, 0.9)
+const ESTABLISHED_START_COLOR := Color("5C8A5C") # matches the "done/fulfilled" green used elsewhere (e.g. settlement tips)
+const ESTABLISHED_END_COLOR := Color("C4573A") # matches MarkerColors.SETTLEMENT_COLOR
 const ESTABLISHED_ROUTE_Y := 1.55
+## Rotation (degrees) that points a +Y-pointing cone toward each cardinal
+## grid direction, given world +X = grid east and world +Z = grid south
+## (matching how world Z increases with grid Y -- see map_to_local usage).
+const ARROW_ROTATION_BY_DIR := {
+	Vector2i(1, 0): Vector3(0, 0, -90),  # east
+	Vector2i(-1, 0): Vector3(0, 0, 90),  # west
+	Vector2i(0, 1): Vector3(90, 0, 0),   # south
+	Vector2i(0, -1): Vector3(-90, 0, 0), # north
+}
 
 func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
@@ -197,18 +227,31 @@ func _start_press(screen_position: Vector2) -> void:
 	_press_cell = cell
 	_press_start_msec = Time.get_ticks_msec()
 	_drag_active = false
-	# Only a route-tool press on a real, buildable (non-node) cell can turn
-	# into a drag -- other tools and node taps behave exactly as a normal
-	# click on release, same as before hold-to-drag existed.
-	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and _node_at(cell) == null
+	# A route drag can start FROM a source node, a built hub tile, or a plain
+	# route tile that ISN'T part of an established route (v0.5 item 22) --
+	# never from empty ground, a settlement, or a route tile that's already
+	# live (established_route_cells) -- so an already-delivering route can
+	# only ever be extended through its own hub/settlement, while unfinished
+	# infrastructure that isn't serving any delivery yet can be picked up and
+	# continued from any of its own tiles. The drag can still cross and link
+	# to any existing tile/node along the way; only the starting anchor is
+	# restricted. Other tools behave exactly as a normal click on release.
+	var node := _node_at(cell)
+	var cell_data = _state.grid.get(cell)
+	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (
+		(node != null and node.node_type == GameEnums.NodeType.SOURCE) or
+		(cell_data != null and cell_data.kind == "hub") or
+		(cell_data != null and cell_data.kind == "route" and not _established_route_cells().has(cell))
+	)
 
 func _end_press(screen_position: Vector2) -> void:
 	if _drag_active:
 		_drag_active = false
 		_press_eligible = false
 		# A hold-then-release without ever dragging to a second cell is a
-		# plain tap on the pressed cell (build, or cycle its shape) --
-		# holding still shouldn't behave differently from tapping.
+		# plain tap on the anchor (info tip for a node, a hint for an existing
+		# route tile) -- holding still shouldn't behave differently from
+		# tapping.
 		if _drag_path.size() > 1:
 			_commit_drag()
 		else:
@@ -255,63 +298,100 @@ func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 		result.append(current)
 	return result
 
-## Re-derives, from scratch, which cells in _drag_path are real new tiles to
-## build (_drag_new_cells) and whether the whole path is valid: every new
-## cell must connect to the existing network or an earlier tile already
-## queued in this same drag, and the total cost must fit the current
-## treasury. Node cells and cells already built are harmless pass-through
-## waypoints, not failures. The hub cap never blocks a placement -- hubs
-## auto-form (or stay capped) only after the route is built, when it's a
-## completed-route fork (see SimulationEngine.check_auto_hubs). Runs against a
-## scratch grid copy -- _state.grid is never touched here.
+## Re-derives, from scratch, which consecutive pairs in _drag_path are new
+## connections to make (_drag_new_connections) and which of their second
+## cells are genuinely new tiles to build (_drag_new_cells), plus whether the
+## whole path is affordable and properly bounded. path[0] is always a
+## pre-existing anchor (see _start_press) and the last cell must likewise be
+## pre-existing -- a hub, a settlement, or an unestablished route tile (see
+## the end-point check below) -- every cell STRICTLY BETWEEN those two ends
+## must be empty ground (v0.5 item 20): a new route can never cross or reuse
+## an already-built tile, it only ever runs over fresh grass from its start
+## anchor to its end anchor. This is what "every new route sits on a grass
+## area" means -- two routes can only ever share infrastructure at an END,
+## never a tile in the middle, so there's no way for a new drag to silently
+## piggyback on infrastructure that already exists. An established (live,
+## delivering) route tile is never a valid end, only its own hub/settlement
+## is (v0.5 item 22). Runs against a scratch grid copy -- _state.grid/
+## .connections are never touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
 	_drag_new_cells.clear()
-	var temp_grid: Dictionary = _state.grid.duplicate()
+	_drag_new_connections.clear()
+	var newly_built: Dictionary = {} # cells this same drag has already queued
 	var total_cost := 0.0
-	for cell in _drag_path:
-		if _node_at(cell) or temp_grid.has(cell):
+	var last_index := _drag_path.size() - 1
+	for i in range(1, _drag_path.size()):
+		var prev: Vector2i = _drag_path[i - 1]
+		var cell: Vector2i = _drag_path[i]
+		if prev == cell:
 			continue
-		var adjacent := false
-		for n in _neighbor_cells(cell):
-			if temp_grid.has(n) or _nodes_by_pos.has(n):
-				adjacent = true
-				break
-		if not adjacent:
-			_drag_valid = false
-			_drag_invalid_reason = "That path isn't connected -- try dragging more slowly."
-			break
+		_drag_new_connections.append([prev, cell])
+		if newly_built.has(cell):
+			continue
+		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell)
+		if pre_existing:
+			if i != last_index and _drag_invalid_reason == "":
+				_drag_valid = false
+				_drag_invalid_reason = "A new route can't cross or reuse an existing tile or node -- it can only run over empty ground between its two ends."
+			continue
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
-		temp_grid[cell] = {"kind": "route", "level": "dirt"}
+		newly_built[cell] = true
 		_drag_new_cells.append(cell)
-	if _drag_valid and total_cost > _state.balance:
+	if not _drag_valid:
+		return
+	if total_cost > _state.balance:
 		_drag_valid = false
 		_drag_invalid_reason = "Not enough treasury for the whole path (§%d needed)." % roundi(total_cost)
+		return
+	# A drag must end at a hub, a settlement, or a plain route tile that ISN'T
+	# part of an established route yet (v0.5 items 19/22) -- this guarantees a
+	# completed drag either reaches a genuine delivery destination, or joins
+	# onto unfinished infrastructure that isn't serving any delivery yet.
+	# An already-established route tile can only ever be reached through its
+	# own hub or settlement, never picked up again mid-network.
+	var end_cell: Vector2i = _drag_path[-1]
+	var end_node := _node_at(end_cell)
+	var end_cell_data = _state.grid.get(end_cell)
+	var ends_at_hub: bool = end_cell_data != null and end_cell_data.kind == "hub"
+	var ends_at_settlement: bool = end_node != null and end_node.node_type == GameEnums.NodeType.SETTLEMENT
+	var ends_at_unestablished_route: bool = end_cell_data != null and end_cell_data.kind == "route" and not _established_route_cells().has(end_cell)
+	if not (ends_at_hub or ends_at_settlement or ends_at_unestablished_route):
+		_drag_valid = false
+		_drag_invalid_reason = "A route must end at a hub, a settlement, or an unfinished route tile."
 
-## Writes every queued new tile from a valid drag path to _state.grid in one
+## Writes every queued new tile and connection from a valid drag path in one
 ## batch, then runs the usual post-build pass once for the whole gesture
 ## (hub formation, re-render -- which recomputes each tile's shape from its
-## final real adjacency, so the path renders with correct shapes exactly as
-## if each tile had been tapped individually). An invalid path, or one with
-## nothing new to build, places nothing at all.
+## final real connections, so the path renders with correct shapes exactly as
+## if each tile had been dragged individually). An invalid path, or one with
+## nothing new to build or connect, does nothing at all.
 func _commit_drag() -> void:
 	if not _drag_valid:
 		_show_toast(_drag_invalid_reason if _drag_invalid_reason != "" else "That path is invalid -- nothing built.", true)
 		return
-	if _drag_new_cells.is_empty():
-		_show_toast("Nothing new to build along that path.", true)
+	if _drag_new_cells.is_empty() and _drag_new_connections.is_empty():
+		_show_toast("Nothing new to build or connect along that path.", true)
 		return
 	for cell in _drag_new_cells:
 		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
 		_state.grid[cell] = {"kind": "route", "level": "dirt"}
-	_show_toast("Route drawn: %d tile%s." % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	for pair in _drag_new_connections:
+		_state.add_connection(pair[0], pair[1])
+	var parts: Array[String] = []
+	if not _drag_new_cells.is_empty():
+		parts.append("%d new tile%s" % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	if not _drag_new_connections.is_empty():
+		parts.append("%d connection%s" % [_drag_new_connections.size(), "" if _drag_new_connections.size() == 1 else "s"])
+	_show_toast("Built %s." % " and ".join(parts))
 	_after_action()
 
 func _clear_drag_preview() -> void:
 	_clear_children(_drag_preview_visuals)
 	_drag_path.clear()
 	_drag_new_cells.clear()
+	_drag_new_connections.clear()
 
 ## Translucent green (valid) or red (invalid) boxes on every crossed cell,
 ## connected by thin bars between orthogonal neighbors, so the path reads
@@ -367,16 +447,35 @@ func _add_established_marker(pos: Vector3) -> void:
 	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
 	_grid_visuals.add_child(mesh_instance)
 
-## A thin gold bar joining two adjacent established points (tile-tile or
+## A thin bar joining two adjacent established points (tile-tile or
 ## tile-node); `a` and `b` are one grid step apart, so it's axis-aligned.
-func _add_established_segment(a: Vector3, b: Vector3) -> void:
+## Gold by default; the settlement end of a route uses ESTABLISHED_END_COLOR
+## instead (see _render_established_routes).
+func _add_established_segment(a: Vector3, b: Vector3, color: Color = ESTABLISHED_ROUTE_COLOR) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	var diff := b - a
 	mesh.size = Vector3(absf(diff.x) + 0.18, 0.08, absf(diff.z) + 0.18) if absf(diff.x) > absf(diff.z) else Vector3(0.18, 0.08, absf(diff.z) + 0.18)
 	mesh_instance.mesh = mesh
 	mesh_instance.position = (a + b) * 0.5
-	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_ROUTE_COLOR)
+	mesh_instance.material_override = _drag_preview_material(color)
+	_grid_visuals.add_child(mesh_instance)
+
+## A green cone arrow marking where an established route begins at a source,
+## pointing in the direction delivery actually flows (source -> first tile).
+## Positioned at the midpoint of the source<->tile link, same spot a plain
+## established_segment bar would sit, so it reads as replacing that bar with
+## a directional marker rather than adding a separate decoration.
+func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.0
+	mesh.bottom_radius = 0.22
+	mesh.height = 0.5
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.rotation_degrees = ARROW_ROTATION_BY_DIR.get(flow_dir, Vector3.ZERO)
+	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_START_COLOR)
 	_grid_visuals.add_child(mesh_instance)
 
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
@@ -391,39 +490,28 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	_tip_panel.visible = false
 	match _tool:
 		"route":
-			_do_build_route(cell)
+			_do_tap_route(cell)
 		"upgrade":
 			_do_upgrade_route(cell)
 		"normal", "cool", "freeze":
 			_do_build_storage(cell)
+		"hubBuild":
+			_do_build_hub(cell)
 		"hubRegional":
 			_do_upgrade_hub(cell)
 		"remove":
 			_do_bulldoze(cell)
 	_after_action()
 
-const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (North-East)", "se": "corner (South-East)", "sw": "corner (South-West)", "nw": "corner (North-West)"}
-
-func _do_build_route(cell: Vector2i) -> void:
-	if _state.grid.has(cell):
-		var cell_data = _state.grid[cell]
-		if cell_data.kind == "route" and SimulationEngine.is_shape_ambiguous(cell, _state, _nodes_by_pos):
-			var facing: String = SimulationEngine.cycle_shape_facing(cell, _state, _nodes_by_pos)
-			cell_data.facing = facing
-			_show_toast("Flipped to %s." % FACING_LABELS.get(facing, facing))
-			return
-		_show_toast("Already built here.", true)
+## A plain tap (no drag) with the route tool never does anything -- a route
+## is built by a drag and a release, full stop (v0.5 item 21 retires the old
+## tap-to-cycle-shape feature). Tapping just explains that a drag is needed,
+## whether the cell is empty ground or an already-built tile.
+func _do_tap_route(cell: Vector2i) -> void:
+	if not _state.grid.has(cell):
+		_show_toast("Press and hold on a source, a built hub, or an unfinished route tile, then drag here to build and connect a new one.", true)
 		return
-	if not _adjacent_to_network(cell):
-		_show_toast("Route must connect to a node or existing route.", true)
-		return
-	var cost := SimulationEngine.route_build_cost(cell, _map_data)
-	if _state.balance < cost:
-		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
-		return
-	_state.balance -= cost
-	_state.grid[cell] = {"kind": "route", "level": "dirt"}
-	_show_toast("Route built for §%d." % roundi(cost))
+	_show_toast("Already built here. Press and hold on a source, a built hub, or an unfinished route tile, then drag to build or link a new route.", true)
 
 func _do_upgrade_route(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
@@ -456,6 +544,28 @@ func _do_build_storage(cell: Vector2i) -> void:
 	_state.grid[cell] = {"kind": "storage", "stype": stype}
 	_show_toast("%s built for §%d." % [st.name, roundi(st.build)])
 
+## Any built route tile can become a Small Hub -- the player draws a route
+## first, then picks the Build Hub tool and clicks the tile they want to
+## convert (v0.5 revision: no more "must be a completed-route fork" gate).
+## The per-network hub cap (GameBalance.HUB_CAP_PER_NETWORK) still applies,
+## checked live against the tile's connected road network rather than a
+## precomputed per-cell flag.
+func _do_build_hub(cell: Vector2i) -> void:
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route":
+		_show_toast("Select a route tile to build a hub.", true)
+		return
+	if SimulationEngine.network_at_hub_cap(_state, cell):
+		_show_toast("This road already has %d hub%s -- the cap is reached." % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"], true)
+		return
+	var cost: float = GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+	if _state.balance < cost:
+		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
+		return
+	_state.balance -= cost
+	_state.grid[cell] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
+	_show_toast("Small Hub built for §%d." % roundi(cost))
+
 func _do_upgrade_hub(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
 	if cell_data == null or cell_data.kind != "hub" or cell_data.htype != GameEnums.HubType.SMALL:
@@ -474,13 +584,10 @@ func _do_bulldoze(cell: Vector2i) -> void:
 		_show_toast("Nothing to remove here.", true)
 		return
 	_state.grid.erase(cell)
+	_state.remove_connections(cell)
 	_show_toast("Tile cleared.")
 
 func _after_action() -> void:
-	var messages := SimulationEngine.check_auto_hubs(_state, _nodes_by_pos)
-	for m in messages:
-		var sep := m.find(":")
-		_show_toast(m.substr(sep + 1), not m.begins_with("ok:"))
 	_render_grid()
 	_update_ui()
 
@@ -516,10 +623,10 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 		if cell_data.kind == "route":
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
 			text = "[b]%s Route[/b]\nCapacity: %d/day\nUpkeep ×%.1f" % [lvl.label, roundi(lvl.cap), lvl.upkeep_mult]
-			if cell_data.get("needs_hub", false):
-				text += "\n[color=orange]⚠ 3-way junction -- needs a §150 hub, funds too low[/color]"
-			elif cell_data.get("hub_capped", false):
-				text += "\n[color=orange]⚠ 3-way junction -- this road already has %d hubs[/color]" % GameBalance.HUB_CAP_PER_NETWORK
+			if SimulationEngine.network_at_hub_cap(_state, cell):
+				text += "\n[color=orange]⚠ This road already has %d hub%s -- the cap is reached[/color]" % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"]
+			else:
+				text += "\n[color=#4FA8A0]⚙ Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
 		elif cell_data.kind == "storage":
 			var st = GameBalance.STORAGE_TYPES[cell_data.stype]
 			text = "[b]%s[/b]\nUpkeep: §%d/day\nProtects next %d tiles at %d%% decay" % [st.name, roundi(st.upkeep), st.protection, roundi(st.mult * 100)]
@@ -618,12 +725,7 @@ func _render_grid() -> void:
 			if _map_data.is_river(pos.x, pos.y):
 				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
 			else:
-				var shape := SimulationEngine.route_shape(pos, _state, _nodes_by_pos)
-				_add_route_block(world_pos, cell.level, shape.family, shape.facing)
-			if cell.get("needs_hub", false):
-				_add_warning_ring(world_pos, Color("C4573A"))
-			elif cell.get("hub_capped", false):
-				_add_warning_ring(world_pos, Color("8B6B9C"))
+				_add_route_block(world_pos, cell.level)
 		elif cell.kind == "storage":
 			var marker: NodeMarker = STORAGE_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
@@ -641,12 +743,15 @@ func _render_grid() -> void:
 	if _bubbles_visible:
 		_render_supply_bubbles()
 
-## Continuously overlays a bright line along every tile that lies on a
+## Continuously overlays a bright gold line along every tile that lies on a
 ## complete source->settlement path (an "established route"), so the player
-## can see at a glance which roads actually link a source to a customer.
-## Dead-end stubs -- roads that branch off but reach no settlement (or no
-## source) -- are pruned out and left unmarked. Rebuilt every _render_grid,
-## so it stays live as the network is edited or simulated.
+## can see at a glance which roads actually link a source to a customer --
+## capped with a green arrow at the source end (pointing the way delivery
+## flows) and a red bar at the settlement end, so start and finish read at a
+## glance too. Dead-end stubs -- roads that branch off but reach no
+## settlement (or no source) -- are pruned out and left unmarked. Rebuilt
+## every _render_grid, so it stays live as the network is edited or
+## simulated.
 func _render_established_routes() -> void:
 	var established := _established_route_cells()
 	if established.is_empty():
@@ -654,11 +759,15 @@ func _render_established_routes() -> void:
 	# Draw a dot on each established tile and a bar to each established
 	# orthogonal neighbor (tile or node), so the marks read as one connected
 	# line running through the road and into the source/settlement it links.
+	# The node ends are distinguished: a green arrow at the source (pointing
+	# the way delivery flows) and a red bar at the settlement.
 	for cell in established:
 		var here: Vector3 = _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
 		_add_established_marker(here)
 		for d in DIRECTIONS:
 			var n: Vector2i = cell + d
+			if not _state.has_connection(cell, n):
+				continue
 			var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
 			if established.has(n):
 				# Tile<->tile: draw one bar per undirected pair (east/south only),
@@ -667,11 +776,17 @@ func _render_established_routes() -> void:
 					_add_established_segment(here, there)
 			elif _nodes_by_pos.has(n):
 				# Tile->node: a source/settlement isn't an established tile and
-				# never iterates to draw its own half, so draw the bar into it
-				# from ANY direction -- this is what makes the line actually
+				# never iterates to draw its own half, so draw the marker from
+				# ANY direction -- this is what makes the overlay actually
 				# start from the source (and reach the settlement) instead of
 				# stopping at the node-adjacent tile.
-				_add_established_segment(here, there)
+				var node: NodeData = _nodes_by_pos[n]
+				if node.node_type == GameEnums.NodeType.SOURCE:
+					# `d` points from the tile to the source; delivery flows
+					# the opposite way, from the source into the tile.
+					_add_established_start_arrow((here + there) * 0.5, -d)
+				else:
+					_add_established_segment(here, there, ESTABLISHED_END_COLOR)
 
 ## The set (Vector2i -> true) of built tiles on some complete source->
 ## settlement path -- see SimulationEngine.established_route_cells for the
@@ -766,10 +881,11 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		bubble.setup(foods[food_id], delivered, requested, bubble_status, freshness_pct)
 		index += 1
 
-func _add_route_block(pos: Vector3, level: String, family := "straight", facing := "ud") -> void:
-	var scene: PackedScene = ROUTE_CORNER_SCENES.get(level) if family == "corner" else null
-	if scene == null:
-		scene = ROUTE_LEVEL_SCENES.get(level)
+## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
+## so a route tile always uses the same unrotated scene regardless of its
+## shape or facing -- there's no corner variant and nothing to rotate.
+func _add_route_block(pos: Vector3, level: String) -> void:
+	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
 	if scene == null:
 		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
 		return
@@ -778,8 +894,6 @@ func _add_route_block(pos: Vector3, level: String, family := "straight", facing 
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
 	# No scale needed: the block's footprint is authored at the real 2x2
 	# world-space cell size already (see generate_blocks.py).
-	if family != "junction":
-		block.rotation_degrees.y = ROUTE_FACING_YAW.get(facing, 0.0)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -789,21 +903,6 @@ func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	mesh_instance.position = pos + Vector3(0, height * 0.5, 0)
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
-	mesh_instance.material_override = material
-	_grid_visuals.add_child(mesh_instance)
-
-func _add_warning_ring(pos: Vector3, color: Color) -> void:
-	var mesh_instance := MeshInstance3D.new()
-	var mesh := TorusMesh.new()
-	mesh.inner_radius = 0.35
-	mesh.outer_radius = 0.5
-	mesh_instance.mesh = mesh
-	mesh_instance.position = pos + Vector3(0, 0.3, 0)
-	mesh_instance.rotation_degrees = Vector3(90, 0, 0)
-	var material := StandardMaterial3D.new()
-	color.a = 0.85
-	material.albedo_color = color
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mesh_instance.material_override = material
 	_grid_visuals.add_child(mesh_instance)
 
@@ -821,21 +920,7 @@ func _add_congestion_marker(pos: Vector3, over: bool) -> void:
 
 ## ---------- grid/graph helpers ----------
 
-func _adjacent_to_network(cell: Vector2i) -> bool:
-	for n in _neighbor_cells(cell):
-		if _state.grid.has(n) or _nodes_by_pos.has(n):
-			return true
-	return false
-
 const DIRECTIONS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-
-func _neighbor_cells(cell: Vector2i) -> Array[Vector2i]:
-	var result: Array[Vector2i] = []
-	for d in DIRECTIONS:
-		var n := cell + d
-		if _cell_in_bounds(n):
-			result.append(n)
-	return result
 
 func _screen_to_cell(screen_position: Vector2) -> Vector2i:
 	var origin := _camera.project_ray_origin(screen_position)
@@ -956,9 +1041,10 @@ func _build_ui() -> void:
 	_add_section_title(side_box, "BUILD -- HUBS")
 	var hub_note := Label.new()
 	hub_note.autowrap_mode = TextServer.AUTOWRAP_WORD
-	hub_note.text = "Hubs form automatically at 3-way forks (auto-charged, §150) -- each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
+	hub_note.text = "Use Build Hub to place a Small Hub on any existing route tile. Each connected road network can only support %d hubs." % GameBalance.HUB_CAP_PER_NETWORK
 	hub_note.add_theme_font_size_override("font_size", 11)
 	side_box.add_child(hub_note)
+	_add_tool_button(side_box, "Build Small Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild")
 	_add_tool_button(side_box, "Upgrade to Regional Hub  §%d" % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), "hubRegional")
 	_add_section_title(side_box, "BUILD -- OTHER")
 	_add_tool_button(side_box, "Bulldoze  (remove a tile)", "remove")
@@ -970,8 +1056,8 @@ func _build_ui() -> void:
 	_add_legend_row(side_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
 	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
 	_add_legend_row(side_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
-	_add_legend_row(side_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (auto-forms at forks)")
-	_add_legend_row(side_box, Color("C4573A"), "Junction needs a hub (low funds)")
+	_add_legend_row(side_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build manually at flagged forks)")
+	_add_legend_row(side_box, Color("4FA8A0"), "Fork available -- Build Hub tool")
 	_add_legend_row(side_box, Color("8B6B9C"), "Junction over the hub cap")
 	_add_legend_row(side_box, Color("D98E4A"), "! Tile near capacity (90%+, last run)")
 	_add_legend_row(side_box, Color("C4573A"), "! Tile over capacity (last run)")
@@ -1111,10 +1197,11 @@ func _build_map_controls(root: Control) -> void:
 	_bubbles_button.toggled.connect(_on_bubbles_toggled)
 	bubbles_row.add_child(_bubbles_button)
 
-	# Shortcuts for the two most-used build tools, so drawing and erasing
-	# routes don't require reaching over to the right-hand sidebar. These
-	# register alongside the sidebar's own Draw Route / Bulldoze buttons (see
-	# _add_tool_button), and _set_tool keeps every copy of a tool in sync.
+	# Shortcuts for the most-used build tools, so drawing, erasing, and now
+	# hub-building don't require reaching over to the right-hand sidebar.
+	# These register alongside the sidebar's own Draw Route / Bulldoze / Build
+	# Small Hub buttons (see _add_tool_button), and _set_tool keeps every copy
+	# of a tool in sync.
 	box.add_child(HSeparator.new())
 	_add_section_title(box, "BUILD")
 	var build_row := HBoxContainer.new()
@@ -1122,6 +1209,7 @@ func _build_map_controls(root: Control) -> void:
 	box.add_child(build_row)
 	_add_controller_tool_button(build_row, "Route", "route")
 	_add_controller_tool_button(build_row, "Erase", "remove")
+	_add_controller_tool_button(build_row, "Hub", "hubBuild")
 
 const CONTROLLER_BUTTON_SIZE := Vector2(52, 52)
 const CONTROLLER_FONT_SIZE := 24
