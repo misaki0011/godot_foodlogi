@@ -45,9 +45,8 @@ const ZOOM_MAX := 60.0
 const ZOOM_SPEED := 24.0 # camera.size units/sec while a zoom button is held
 const PAN_SPEED := 16.0 # world units/sec at the default zoom level, scales with zoom
 const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map edge
-const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
-	"route": "Tap an empty tile adjacent to a node or existing route to place one, or tap a built tile to flip its shape. Press and hold, then drag, to preview a whole path -- release to build it (nothing is built if the path isn't valid).",
+	"route": "Press a tile next to a node or existing route and drag to trace a path -- release to build the whole thing (nothing is built if the path isn't valid). Tapping never builds; tap a built tile to flip its shape.",
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
@@ -107,31 +106,33 @@ var _map_bounds_max: Vector2
 var _pan_dir := Vector2.ZERO
 var _zoom_dir := 0.0
 
-## ---------- route draw: tap-to-cycle vs. hold-and-drag ----------
-## A press on a non-node cell while the "route" tool is active starts out
-## eligible for hold-to-drag; _process() promotes it to _drag_active once
-## held past HOLD_TO_DRAG_MSEC without releasing. A release before that
-## threshold -- or a release without ever dragging to a second cell -- is a
-## normal tap (dispatched to _handle_click as before). This is why a plain
-## tap's build/cycle action now fires on release rather than on press --
-## until release (or the hold threshold), there's no way to know whether
-## the gesture will turn into a drag.
+## ---------- route draw: drag only (revised in v0.5) ----------
+## Routes are drawn by dragging, and only by dragging. A press on any
+## non-node cell while the "route" tool is active starts the drag
+## immediately -- there is no hold threshold to clear first (there used to
+## be a 350ms one, which mobile browsers happily ate as a long-press gesture,
+## so on a phone the drag frequently never started at all) -- and a green
+## start marker appears under the finger on that first press, before any
+## movement, so the gesture is visibly live from the outset.
+##
+## A press that releases without ever reaching a second cell is a plain tap,
+## and a tap NEVER builds: on a built tile it flips the tile's shape, and on
+## empty ground it does nothing but re-state the drag hint. Single-tap
+## placement (the pre-v0.5 behaviour) is gone -- one gesture, one meaning.
 ##
 ## While dragging, nothing is written to _state.grid: _drag_path just
 ## records every cell the pointer has crossed, _recompute_drag_validity()
 ## re-derives which of those are real new tiles to build (skipping nodes
 ## and already-built cells as harmless pass-through waypoints) and
 ## whether the whole path is affordable/connected/under the hub cap, and
-## _update_drag_preview() draws a translucent line so the player can see
-## the path (green) or why it's rejected (red) before committing anything.
-## The actual tiles -- with their final, correct auto-tile shapes, since
-## _render_grid() always recomputes those from the real grid -- are only
-## written to _state.grid on release, and only if the whole path is valid;
-## an invalid path builds nothing at all, matching ROUTE-01's single-tile
+## _update_drag_preview() draws a translucent line so the player can see the
+## path being traced (red) or that it's rejected (gray) before committing
+## anything. The actual tiles -- with their final, correct auto-tile shapes,
+## since _render_grid() always recomputes those from the real grid -- are
+## only written to _state.grid on release, and only if the whole path is
+## valid; an invalid path builds nothing at all, keeping ROUTE-01's
 ## transactional placement.
-var _press_eligible := false
 var _press_cell := Vector2i(-1, -1)
-var _press_start_msec := 0
 var _drag_active := false
 var _drag_path: Array[Vector2i] = []
 var _drag_new_cells: Array[Vector2i] = []
@@ -139,8 +140,12 @@ var _drag_valid := true
 var _drag_invalid_reason := ""
 var _drag_preview_visuals: Node3D
 
-const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
-const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
+## The traced line is red while routing, and goes flat gray when the path
+## can't be built. The start of the gesture is marked green, so "where this
+## route begins" never reads as part of the line itself.
+const DRAG_PREVIEW_VALID_COLOR := Color(0.87, 0.26, 0.22, 0.7)
+const DRAG_PREVIEW_INVALID_COLOR := Color(0.55, 0.58, 0.62, 0.55)
+const DRAG_PREVIEW_START_COLOR := Color(0.33, 0.85, 0.45, 0.9)
 
 ## Overlay marking established (source->settlement) routes -- a bright, mostly
 ## opaque gold line floating just above the road surface (see
@@ -193,12 +198,6 @@ func _process(delta: float) -> void:
 		new_pos.x = clampf(new_pos.x, _map_bounds_min.x - PAN_MAP_MARGIN, _map_bounds_max.x + PAN_MAP_MARGIN)
 		new_pos.z = clampf(new_pos.z, _map_bounds_min.y - PAN_MAP_MARGIN, _map_bounds_max.y + PAN_MAP_MARGIN)
 		_camera.position = new_pos
-	if _press_eligible and not _drag_active and Time.get_ticks_msec() - _press_start_msec >= HOLD_TO_DRAG_MSEC:
-		_drag_active = true
-		_tip_panel.visible = false
-		_drag_path = [_press_cell]
-		_recompute_drag_validity()
-		_update_drag_preview()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _report_overlay.visible:
@@ -214,33 +213,36 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion:
 		if _drag_active:
 			_extend_drag_path(_screen_to_cell(event.position))
-		elif not _press_eligible:
+		else:
 			_update_tip(_screen_to_cell(event.position), event.position)
 
+## A route-tool press on a real, buildable (non-node) cell starts drawing
+## immediately -- the start marker is up before the pointer has moved at all.
+## Every other press (another tool, or a tap on a source/settlement) waits for
+## the release and is dispatched as an ordinary click.
 func _start_press(screen_position: Vector2) -> void:
 	var cell := _screen_to_cell(screen_position)
 	_press_cell = cell
-	_press_start_msec = Time.get_ticks_msec()
-	_drag_active = false
-	# Only a route-tool press on a real, buildable (non-node) cell can turn
-	# into a drag -- other tools and node taps behave exactly as a normal
-	# click on release, same as before hold-to-drag existed.
-	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and _node_at(cell) == null
+	_drag_active = _tool == "route" and _cell_in_bounds(cell) and _node_at(cell) == null
+	if not _drag_active:
+		return
+	_tip_panel.visible = false
+	_drag_path = [cell]
+	_recompute_drag_validity()
+	_update_drag_preview()
 
 func _end_press(screen_position: Vector2) -> void:
 	if _drag_active:
 		_drag_active = false
-		_press_eligible = false
-		# A hold-then-release without ever dragging to a second cell is a
-		# plain tap on the pressed cell (build, or cycle its shape) --
-		# holding still shouldn't behave differently from tapping.
+		# A release that never reached a second cell is a tap, and taps don't
+		# build -- _handle_click only flips a built tile's shape or re-states
+		# the drag hint.
 		if _drag_path.size() > 1:
 			_commit_drag()
 		else:
 			_handle_click(_press_cell)
 		_clear_drag_preview()
 		return
-	_press_eligible = false
 	_handle_click(_screen_to_cell(screen_position), screen_position)
 
 ## Grows the in-progress drag path with a newly-entered cell (duplicates of
@@ -338,12 +340,15 @@ func _clear_drag_preview() -> void:
 	_drag_path.clear()
 	_drag_new_cells.clear()
 
-## Translucent green (valid) or red (invalid) boxes on every crossed cell,
-## connected by thin bars between orthogonal neighbors, so the path reads
-## as a continuous line rather than disconnected dots. Purely visual --
-## _state.grid isn't touched until _commit_drag().
+## Translucent boxes on every crossed cell -- red while the path is being
+## traced, gray once it can't be built -- connected by thin bars between
+## orthogonal neighbors so the path reads as a continuous line rather than
+## disconnected dots, plus a green arrow marking where the drag started.
+## Purely visual -- _state.grid isn't touched until _commit_drag().
 func _update_drag_preview() -> void:
 	_clear_children(_drag_preview_visuals)
+	if _drag_path.is_empty():
+		return
 	var color := DRAG_PREVIEW_VALID_COLOR if _drag_valid else DRAG_PREVIEW_INVALID_COLOR
 	var world_positions: Array[Vector3] = []
 	for cell in _drag_path:
@@ -352,11 +357,30 @@ func _update_drag_preview() -> void:
 		_add_drag_marker(world_positions[i], color)
 		if i > 0:
 			_add_drag_segment(world_positions[i - 1], world_positions[i], color)
+	_add_drag_start_marker(world_positions[0])
+
+## The green arrowhead over the cell the drag started on -- the first thing
+## drawn on press, so the player can see the gesture took before they've moved
+## far enough to trace anything. A 4-sided cone (top radius 0) flipped to
+## point down at its tile.
+func _add_drag_start_marker(pos: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.0
+	mesh.bottom_radius = 0.75
+	mesh.height = 1.1
+	mesh.radial_segments = 4
+	mesh.rings = 1
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos + Vector3(0, 0.85, 0)
+	mesh_instance.rotation_degrees = Vector3(180.0, 45.0, 0.0)
+	mesh_instance.material_override = _drag_preview_material(DRAG_PREVIEW_START_COLOR)
+	_drag_preview_visuals.add_child(mesh_instance)
 
 func _add_drag_marker(pos: Vector3, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
-	mesh.size = Vector3(0.5, 0.14, 0.5)
+	mesh.size = Vector3(0.62, 0.16, 0.62)
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos
 	mesh_instance.material_override = _drag_preview_material(color)
@@ -368,7 +392,7 @@ func _add_drag_segment(a: Vector3, b: Vector3, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	var diff := b - a
-	mesh.size = Vector3(absf(diff.x) + 0.3, 0.1, absf(diff.z) + 0.3) if absf(diff.x) > absf(diff.z) else Vector3(0.3, 0.1, absf(diff.z) + 0.3)
+	mesh.size = Vector3(absf(diff.x) + 0.42, 0.12, absf(diff.z) + 0.42) if absf(diff.x) > absf(diff.z) else Vector3(0.42, 0.12, absf(diff.z) + 0.42)
 	mesh_instance.mesh = mesh
 	mesh_instance.position = (a + b) * 0.5
 	mesh_instance.material_override = _drag_preview_material(color)
@@ -429,6 +453,9 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 
 const FACING_LABELS := {"lr": "Left-Right", "ud": "Up-Down", "ne": "corner (North-East)", "se": "corner (South-East)", "sw": "corner (South-West)", "nw": "corner (North-West)"}
 
+## The route tool's *tap* action. Since v0.5 a tap never places anything --
+## routes are drawn by dragging (see _start_press) -- so this only flips a
+## built tile's shape, or points the player at the drag gesture.
 func _do_build_route(cell: Vector2i) -> void:
 	if _state.grid.has(cell):
 		var cell_data = _state.grid[cell]
@@ -439,16 +466,7 @@ func _do_build_route(cell: Vector2i) -> void:
 			return
 		_show_toast("Already built here.", true)
 		return
-	if not _adjacent_to_network(cell):
-		_show_toast("Route must connect to a node or existing route.", true)
-		return
-	var cost := SimulationEngine.route_build_cost(cell, _map_data)
-	if _state.balance < cost:
-		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
-		return
-	_state.balance -= cost
-	_state.grid[cell] = {"kind": "route", "level": "dirt"}
-	_show_toast("Route built for §%d." % roundi(cost))
+	_show_toast("Drag to draw a route -- a tap doesn't build one.", true)
 
 func _do_upgrade_route(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)

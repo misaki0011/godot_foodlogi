@@ -11,13 +11,14 @@
 
 ## 0. Changelog
 
-### v0.4 → v0.5 — Auto-running day clock
+### v0.4 → v0.5 — Auto-running day clock, one control panel, drag-only routing
 
-The loop stopped for a button press every single day, which broke the build-while-it-runs feel the game is aiming for. These changes supersede conflicting v0.1-v0.4 text on the planning/report phases being player-advanced:
+The loop stopped for a button press every single day, which broke the build-while-it-runs feel the game is aiming for. These changes supersede conflicting v0.1-v0.4 text on the planning/report phases being player-advanced, and on tapping to place a route tile:
 
 1. **The day runs itself on a real-time clock.** A day is now a 60-second countdown shown in the top-right corner rather than a "Run the Day" click. The player keeps building while it drains; at 0:00 the day simulates, the calendar advances, and the next day's clock starts immediately, so planning and simulation are continuous. The clock can be paused, run at 1x/2x/4x, or switched off entirely for the old manual loop, and a day can still be run early. See §3.5, §10.8.
 2. **One left-hand control panel replaces the right sidebar.** The 300px build sidebar on the right edge is retired, and everything it carried -- treasury/day, the efficiency-chase numbers, every build tool, and the legend -- moves into the top-left map-controls panel, which becomes the game's single HUD panel. Two panels ate both edges of the screen and split related controls across them; one panel gives the map back most of that width, with the day clock alone in the opposite corner. Tool buttons are now short and priced (e.g. "Cool §180"), with the full description in the tooltip and the hint bar, and the legend collapses. See §10.7.
-3. **An auto-run day reports without blocking.** Because a modal every 60 seconds would defeat the point, an auto-run day posts a small self-dismissing summary card (day, grade/score, profit, freshness, happiness) under the clock instead of the full-screen report. The full report is still one click away on the Report button, and opening it freezes the clock so reading it never costs build time. The blocking end-of-day report is unchanged in manual mode. See §3.3, §10.8.
+3. **Routes are drawn by dragging only, and a tap never builds.** Pressing a buildable cell now starts the drag immediately -- v0.4's roughly-third-of-a-second hold threshold is removed, because mobile browsers swallow that hold as a long-press gesture and the drag often never started at all on a phone, leaving tap-placement as the only way to build. A green arrow marks where the drag began, drawn on the first press before the pointer has moved, and the traced path renders red (flat gray when it can't be built). Single-tap placement is retired: a tap on empty ground builds nothing, and a tap on a built tile still cycles its shape. See §4.1.
+4. **An auto-run day reports without blocking.** Because a modal every 60 seconds would defeat the point, an auto-run day posts a small self-dismissing summary card (day, grade/score, profit, freshness, happiness) under the clock instead of the full-screen report. The full report is still one click away on the Report button, and opening it freezes the clock so reading it never costs build time. The blocking end-of-day report is unchanged in manual mode. See §3.3, §10.8.
 
 ### v0.3 → v0.4 — Mobile/touch playtest support
 
@@ -277,9 +278,9 @@ Example:
 
 Capacity creates meaningful hub and route upgrade decisions without needing vehicles. In playtesting, capacity needed to be tight enough that a single settlement's combined demand could exceed one dirt tile's throughput — otherwise capacity never became a real constraint on a small map (see Changelog §0.3).
 
-### Transactional route placement (added in v0.3, revised in v0.4)
+### Transactional route placement (added in v0.3, revised in v0.5)
 
-A route-building click is evaluated before it changes the map. The game calculates the tile's cost (route plus any bridge surcharge) and checks it against the topology.
+Every tile of a route-drawing drag is evaluated before it changes the map (a tap builds nothing at all since v0.5 -- see "Drawing a route by dragging" below). The game calculates each tile's cost (route plus any bridge surcharge) and checks it against the topology.
 
 ```text
 required_cost = route_tile_cost + optional_bridge_cost
@@ -329,31 +330,41 @@ its adjacency contribution to hub-formation math.
   either a Small Hub auto-forms (§4.4), or, if the network is at its hub
   cap, the tile stays a plain `hub_capped` tile with today's rendering.
 
-### Drawing a route by press-and-hold-to-drag (added in v0.4, revised in v0.4)
+### Drawing a route by dragging (added in v0.4, revised in v0.5)
 
-Tapping still places one tile at a time, exactly as in §2.1's basic model.
-Pressing and holding a buildable cell for a short moment (roughly a third
-of a second) without releasing switches into drag mode: dragging the
-pointer traces a candidate path across further cells, drawn live as a
-translucent line so the player can see it before committing to anything.
+**Routes are drawn by dragging, and only by dragging.** Pressing any
+buildable (non-node) cell with the route tool starts a drag immediately --
+there is no hold threshold to clear first. The v0.4 model required holding
+still for roughly a third of a second before the drag would start, which
+mobile browsers routinely swallowed as a long-press gesture: on a phone the
+drag frequently never started at all, leaving single-tap placement as the
+only way to build. Removing the threshold removes that failure mode, and
+makes one gesture mean one thing.
+
+A **green arrow marks the cell the drag started on**, drawn on the first
+press before the pointer has moved at all, so the gesture is visibly live
+from the outset. Dragging then traces a candidate path across further
+cells, drawn live as a **red** line.
 
 **Nothing is written to the map while dragging.** The whole traced path is
 validated as a unit -- every new tile in it must connect (to the existing
 network or to an earlier tile already queued in the same path), and the
 total cost must fit the current treasury (the hub cap never blocks a
-placement -- see §4.4; already-built tiles and nodes the path happens to cross are
-harmless waypoints, not failures). The preview line renders green while
-the path is valid and red the moment it isn't, explaining why in a toast
-if the player releases while it's red. **Only a fully valid path is built,
-and only on release** -- an invalid path places nothing at all, matching
-§4.1's existing transactional single-tile placement. On a valid release,
-every queued tile is written at once and the hub-formation pass runs a
-single time for the whole path, the same as it would after any tap; each
-tile then renders with the shape that matches its final real connections,
-exactly as if it had been placed one tap at a time. A press that releases
-before the hold threshold, or one that never actually drags to a second
-cell, is an ordinary tap (place one tile, or cycle a tappable tile's
-shape), unchanged.
+placement -- see §4.4; already-built tiles and nodes the path happens to
+cross are harmless waypoints, not failures). The traced line goes flat gray
+the moment the path can't be built, explaining why in a toast if the player
+releases while it's gray. **Only a fully valid path is built, and only on
+release** -- an invalid path places nothing at all, matching §4.1's
+transactional placement. On a valid release, every queued tile is written at
+once and the hub-formation pass runs a single time for the whole path; each
+tile then renders with the shape that matches its final real connections.
+
+**A tap never builds** (revised in v0.5). A press that releases without ever
+reaching a second cell is a tap: on a built tile it cycles that tile's shape
+(§4.1's directional shape rule), and on empty ground it does nothing but
+re-state the drag hint. Single-tap placement, the basic model described in
+§2.1 and used through v0.4, is retired -- it made the drag gesture redundant
+and let a stray tap spend money.
 
 ### Established-route overlay (added in v0.4)
 

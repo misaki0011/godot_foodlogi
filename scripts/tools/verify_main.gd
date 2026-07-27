@@ -45,15 +45,33 @@ func _report() -> void:
 	assert(_main.call("_screen_to_cell", farm_screen) == farm.grid_position)
 	assert(_main.call("_screen_to_cell", village_screen) == village_a.grid_position)
 
-	# Route tool: a single click places exactly one tile, adjacent to a node.
+	# Route tool: a tap never builds (v0.5) -- routes are drag-only.
 	_main.call("_set_tool", "route")
 	var state: GameState = _main.get("_state")
 	var starting_balance: float = state.balance
 	var build_cell: Vector2i = farm.grid_position + Vector2i(1, 0)
-	_main.call("_handle_click", build_cell)
-	assert(state.grid.size() == 1, "A single click must place exactly one route tile")
-	assert(state.grid[build_cell].kind == "route")
-	assert(is_equal_approx(state.balance, starting_balance - GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted")
+	var second_cell: Vector2i = build_cell + Vector2i(1, 0)
+	_main.call("_start_press", _cell_screen(camera, terrain, build_cell))
+	assert(_main.get("_drag_active"), "Pressing a buildable cell must start the drag immediately, with no hold delay")
+	assert(_main.get("_drag_preview_visuals").get_child_count() > 0, "The start marker must be up on the first press, before any movement")
+	_main.call("_end_press", _cell_screen(camera, terrain, build_cell))
+	assert(state.grid.is_empty(), "A tap must never place a route tile")
+	assert(is_equal_approx(state.balance, starting_balance), "A tap must not charge anything")
+
+	# ...but a press-drag-release over two cells builds both.
+	_main.call("_start_press", _cell_screen(camera, terrain, build_cell))
+	_main.call("_extend_drag_path", second_cell)
+	_main.call("_end_press", _cell_screen(camera, terrain, second_cell))
+	assert(state.grid.size() == 2, "A drag must build every new tile it traced")
+	assert(state.grid[build_cell].kind == "route" and state.grid[second_cell].kind == "route")
+	assert(is_equal_approx(state.balance, starting_balance - GameBalance.ROUTE_BUILD_COST * 2.0), "Each dragged tile must be charged")
+	assert(_main.get("_drag_preview_visuals").get_child_count() == 0, "Releasing must clear the drag preview")
+
+	# Clear the second tile again so the storage/bulldoze checks below run
+	# against the same single-tile map they always did.
+	_main.call("_set_tool", "remove")
+	_main.call("_handle_click", second_cell)
+	assert(state.grid.size() == 1)
 
 	# Storage tool: only buildable on an existing route tile.
 	_main.call("_set_tool", "cool")
@@ -150,6 +168,11 @@ func _check_day_clock(state: GameState) -> void:
 	_main.call("_close_report")
 	assert(state.day == day_before, "Reviewing a past report must not advance the day")
 	print("Day clock (LOOP-07) checks passed.")
+
+## Screen position of a grid cell's centre, for driving real press/drag
+## gestures through Main's input entry points.
+func _cell_screen(camera: Camera3D, terrain: GridMap, cell: Vector2i) -> Vector2:
+	return camera.unproject_position(terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3.UP)
 
 func _node_by_id(map_data: MapData, node_id: String) -> NodeData:
 	for node in map_data.node_placements:
