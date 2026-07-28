@@ -12,13 +12,14 @@ extends Control
 ## because colour is already carrying two other meanings on this map (the
 ## food's identity, and a settlement's delivery status):
 ##
-##   SOURCE            a sign on a post: near-square corners, thin dark
-##                     border, a straight stem down to the crate, and an
-##                     outgoing-supply arrow. No progress bar -- the bar
-##                     belongs to settlements alone.
-##   SETTLEMENT        a speech balloon: big corner radius, triangular
-##                     tail, a status-coloured border, and a delivered/
-##                     requested progress bar along the bottom.
+##   SOURCE            a dark slate sign on a post: white text,
+##                     near-square corners, a stem and foot down to the
+##                     crate, and an outgoing-supply arrow. No progress
+##                     bar -- the bar belongs to settlements alone.
+##   SETTLEMENT        a cream speech balloon: dark text, big corner
+##                     radius, triangular tail, a status-coloured border,
+##                     and a delivered/requested progress bar along the
+##                     bottom.
 ##   SETTLEMENT_CLEAR  the collapsed summary drawn in place of a whole
 ##                     stack of green settlement bubbles.
 ##
@@ -34,7 +35,19 @@ const BUBBLE_COLOR := Color(0.97, 0.94, 0.87, 0.97)
 const BORDER_COLOR := Color(0.15, 0.12, 0.08, 0.65)
 const TEXT_COLOR := Color(0.14, 0.11, 0.08)
 const SUBTEXT_COLOR := Color(0.34, 0.29, 0.24)
-const GLYPH_INK := Color(0.36, 0.30, 0.22)
+
+## Sources invert the settlement palette outright: a dark slate sign with
+## white text against the settlements' cream balloon with dark text. That
+## reads as two different things far sooner than the silhouette does, and
+## it costs no colour meaning, since grey is the one hue on this map that
+## is neither a food nor a status. The food dot ends up the brightest
+## thing on the sign, which is what should be identifying the source
+## anyway (all source markers share one colour -- see main.gd's
+## _source_food_color).
+const SOURCE_BUBBLE_COLOR := Color(0.20, 0.22, 0.25, 0.96)
+const SOURCE_BORDER_COLOR := Color(0.80, 0.82, 0.85, 0.5)
+const SOURCE_TEXT_COLOR := Color(0.97, 0.96, 0.94)
+const SOURCE_GLYPH_INK := Color(0.70, 0.74, 0.78)
 
 ## Vertical room reserved below the bubble body for a settlement's tail /
 ## a source's stem. The tail and the post are what read first at map
@@ -60,12 +73,17 @@ const SOURCE_BORDER_WIDTH := 2
 const SETTLEMENT_BORDER_WIDTH := 3
 const CLEAR_BORDER_WIDTH := 2
 
-## A source that has given up its whole daily produce mutes to this
-## palette instead of the normal food-coloured one.
-const MUTED_BUBBLE_COLOR := Color(0.82, 0.82, 0.79, 0.9)
-const MUTED_ICON_COLOR := Color(0.58, 0.58, 0.55)
-const MUTED_TEXT_COLOR := Color(0.42, 0.42, 0.4)
-const MUTED_BORDER_COLOR := Color(0.35, 0.35, 0.33, 0.6)
+## A source that has given up its whole daily produce fades in place: a
+## lighter, flatter slate with dim ink and a grey dot. Dropping contrast
+## rather than switching palette keeps it obviously the same kind of
+## object -- it must still read as a source, only a spent one.
+## Kept clearly darker than the map's grass: a mid-grey at the terrain's
+## own luminance loses its edges into the ground and stops reading as a
+## sign at all. The fade comes from the ink, not from lightening the body.
+const MUTED_BUBBLE_COLOR := Color(0.28, 0.29, 0.31, 0.88)
+const MUTED_BORDER_COLOR := Color(0.62, 0.63, 0.65, 0.4)
+const MUTED_TEXT_COLOR := Color(0.62, 0.63, 0.64)
+const MUTED_ICON_COLOR := Color(0.46, 0.47, 0.49)
 
 ## Status accents. These are fully saturated -- they are only ever used
 ## for borders, tails, bars and glyphs, never as a background under text.
@@ -161,10 +179,10 @@ func _draw() -> void:
 
 func _draw_source() -> void:
 	var muted := _status == FoodBubbleMarker.Status.MUTED
-	var fill := MUTED_BUBBLE_COLOR if muted else BUBBLE_COLOR
-	var ink := MUTED_TEXT_COLOR if muted else TEXT_COLOR
+	var fill := MUTED_BUBBLE_COLOR if muted else SOURCE_BUBBLE_COLOR
+	var ink := MUTED_TEXT_COLOR if muted else SOURCE_TEXT_COLOR
 	var icon := MUTED_ICON_COLOR if muted else _icon_color
-	var border := MUTED_BORDER_COLOR if muted else BORDER_COLOR
+	var border := MUTED_BORDER_COLOR if muted else SOURCE_BORDER_COLOR
 
 	var rect := _body_rect()
 	var radius := int(rect.size.y * SOURCE_CORNER_RATIO)
@@ -193,7 +211,7 @@ func _draw_source() -> void:
 
 	var glyph_r := rect.size.y * 0.155
 	var glyph_center := Vector2(rect.end.x - 16.0 - glyph_r, cy)
-	_draw_out_arrow(glyph_center, glyph_r, MUTED_ICON_COLOR if muted else GLYPH_INK)
+	_draw_out_arrow(glyph_center, glyph_r, MUTED_ICON_COLOR if muted else SOURCE_GLYPH_INK)
 
 	var text_x := icon_center.x + icon_r + 12.0
 	var text_w := glyph_center.x - glyph_r - 12.0 - text_x
