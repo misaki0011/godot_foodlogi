@@ -260,6 +260,10 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	for i in range(1, road.size()):
 		state.add_connection(road[i - 1], road[i])
 	var bridge: Vector2i = road[2]
+	# Two tiles are paid up past Dirt, so the bulldoze checks below can prove a
+	# cleared structure hands its road back at the level it actually was.
+	state.grid[bridge].level = "paved"
+	state.grid[road[3]].level = "main"
 
 	_main.call("_set_tool", "bridgeBuild")
 	# A dead end isn't a straight run: there's no "across" to span.
@@ -332,15 +336,17 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	assert(is_equal_approx(state.balance, balance_at_cap), "A bridge refused by the cap must not charge the player")
 
 	# Bulldozing a bridge takes the STRUCTURE away, not the road it was built
-	# on: the tile survives as plain dirt route, still carrying the road that
-	# ran underneath, while the route that crossed over is cut. Merging the two
-	# instead would silently join the networks the crossing was keeping apart.
+	# on: the tile survives as a route tile AT ITS OWN LEVEL, still carrying the
+	# road that ran underneath, while the route that crossed over is cut.
+	# Merging the two instead would silently join the networks the crossing was
+	# keeping apart, and resetting to dirt would bin paving nobody asked to lose.
 	_main.call("_set_tool", "remove")
 	var balance_before_clear: float = state.balance
 	_main.call("_handle_click", bridge)
 	assert(state.grid.has(bridge), "Bulldozing a bridge must leave the road it was built on behind")
 	assert(not SimulationEngine.is_bridge(state, bridge), "Bulldozing a bridge must remove the deck")
-	assert(state.grid[bridge].kind == "route" and state.grid[bridge].level == "dirt", "A bulldozed bridge must revert to a dirt route tile")
+	assert(state.grid[bridge].kind == "route", "A bulldozed bridge must leave a route tile")
+	assert(state.grid[bridge].level == "paved", "A bulldozed bridge must hand its road back at the level it was, not reset it to dirt")
 	assert(state.has_connection(bridge, road[1]) and state.has_connection(bridge, road[3]), "The road under a bulldozed bridge must stay connected")
 	assert(not state.has_connection(bridge, Vector2i(16, 11)) and not state.has_connection(bridge, Vector2i(18, 11)),
 		"Bulldozing a bridge must cut the route that crossed over it, not merge it into the road below")
@@ -349,14 +355,18 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 		"The two roads must stay separate networks after the bridge between them is cleared")
 	assert(is_equal_approx(state.balance, balance_before_clear), "Bulldoze must not refund")
 
-	# Same rule for a hub: the structure goes, the road stays as dirt.
+	# Same rule for a hub: the structure goes, the road stays at its own level.
+	# A hub cell replaces the route cell outright, so the level has to survive
+	# on the hub cell itself for this to be possible at all.
 	_main.call("_set_tool", "hubBuild")
 	_main.call("_handle_click", road[3])
 	assert(state.grid[road[3]].kind == "hub", "The hub checks need a hub on the road first")
+	assert(state.grid[road[3]].get("level", "") == "main", "A hub must remember the level of the road it was built on")
 	_main.call("_set_tool", "remove")
 	_main.call("_handle_click", road[3])
 	assert(state.grid.has(road[3]), "Bulldozing a hub must leave the road it was built on behind")
-	assert(state.grid[road[3]].kind == "route" and state.grid[road[3]].level == "dirt", "A bulldozed hub must revert to a dirt route tile")
+	assert(state.grid[road[3]].kind == "route", "A bulldozed hub must leave a route tile")
+	assert(state.grid[road[3]].level == "main", "A bulldozed hub must hand its road back at the level it was, not reset it to dirt")
 	assert(state.has_connection(road[3], road[2]) and state.has_connection(road[3], road[4]), "The road under a bulldozed hub must stay connected")
 	assert(not SimulationEngine.network_at_hub_cap(state, road[3]), "Bulldozing a hub must free its slot in the per-network cap")
 
