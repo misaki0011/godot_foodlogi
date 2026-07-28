@@ -362,6 +362,7 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	_main.call("_handle_click", road[3])
 	assert(state.grid[road[3]].kind == "hub", "The hub checks need a hub on the road first")
 	assert(state.grid[road[3]].get("level", "") == "main", "A hub must remember the level of the road it was built on")
+	_check_hub_renders_on_its_road(terrain, road[3])
 	_main.call("_set_tool", "remove")
 	_main.call("_handle_click", road[3])
 	assert(state.grid.has(road[3]), "Bulldozing a hub must leave the road it was built on behind")
@@ -377,6 +378,30 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 			state.remove_connections(cell)
 	_main.call("_set_tool", "route")
 	print("Bridge tool (ROUTE-17) checks passed.")
+
+## A hub renders as a BUILDING ON a road, not instead of one: the road block it
+## was built on is drawn underneath and the marker stands on top of it, rather
+## than the marker replacing the road and leaving a gap in the network.
+func _check_hub_renders_on_its_road(terrain: GridMap, cell: Vector2i) -> void:
+	var grid_visuals: Node3D = _main.get_node("GridVisuals")
+	var world_pos: Vector3 = terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.0, 0)
+	var marker: Node3D = null
+	var road: Node3D = null
+	for child in grid_visuals.get_children():
+		if absf(child.position.x - world_pos.x) > 0.01 or absf(child.position.z - world_pos.z) > 0.01:
+			continue
+		if child is NodeMarker:
+			marker = child
+		else:
+			road = child
+	assert(road != null, "A hub tile must still draw the road it was built on")
+	assert(marker != null, "A hub tile must draw its hub marker")
+	# Every road piece is drawn centred on its own height, so the block's offset
+	# above the tile gives back the height the marker has to clear. Marker scenes
+	# are authored with their origin at their base (hub_marker.tscn).
+	var road_height := 2.0 * (road.position.y - world_pos.y)
+	assert(road_height > 0.0, "The road block under a hub must have real height")
+	assert(is_equal_approx(marker.position.y, world_pos.y + road_height), "The hub marker must stand on top of its road block, not sink into it")
 
 ## ROUTE-15: bulldoze and upgrade also work as a drag, applying to every tile
 ## the sweep crosses. Drives real press/drag/release gestures over two

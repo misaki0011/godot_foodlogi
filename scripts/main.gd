@@ -39,6 +39,9 @@ const ROUTE_LEVEL_SCENES := {
 	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
 }
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
+## Height of the flat slab drawn instead of a road block where a route tile
+## crosses the river column (TERR-05's automatic water crossing).
+const RIVER_CROSSING_HEIGHT := 0.16
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
 const RIVER_BRIDGE_COLOR := Color("8FB9D8")
@@ -1209,10 +1212,7 @@ func _render_grid() -> void:
 		var cell = _state.grid[pos]
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
 		if cell.kind == "route":
-			if _map_data.is_river(pos.x, pos.y):
-				_add_tile_box(world_pos, RIVER_BRIDGE_COLOR, 0.16)
-			else:
-				_add_route_block(world_pos, cell.level)
+			_add_road_surface(world_pos, pos, cell.level)
 			# A bridge tile keeps its ordinary road block -- the road underneath
 			# stays fully visible -- and gains a deck floating across it.
 			if cell.has("bridge_axis"):
@@ -1223,9 +1223,16 @@ func _render_grid() -> void:
 			marker.position = world_pos
 			marker.apply_tint(MarkerColors.storage_color(cell.stype))
 		elif cell.kind == "hub":
+			# A hub is a BUILDING ON a route tile, not a replacement for one:
+			# the road it was built on is drawn underneath and the hub stands on
+			# top of it, so the road reads as continuous through the junction and
+			# its Dirt/Paved/Main level stays visible. That's also what makes
+			# bulldozing a hub back to that same road look like what it is
+			# (_clear_cell), rather than a tile appearing out of nowhere.
+			var surface := _add_road_surface(world_pos, pos, cell.get("level", "dirt"))
 			var marker: NodeMarker = HUB_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
-			marker.position = world_pos
+			marker.position = world_pos + Vector3(0, surface, 0)
 			marker.apply_tint(MarkerColors.hub_color(cell.htype))
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
@@ -1512,6 +1519,18 @@ func _source_food_color(source_id: String) -> Color:
 		mixed.b += color.b
 	var count := float(node.produces.size())
 	return Color(mixed.r / count, mixed.g / count, mixed.b / count, 1.0)
+
+## Draws a tile's road surface -- the ordinary level block, or the flat slab
+## that stands in for it where the tile crosses the river -- and returns its
+## height, so anything standing ON the tile (a hub) can be lifted clear instead
+## of sinking into it. Marker scenes are authored with their origin at their
+## base (see hub_marker.tscn), so the height is exactly the lift needed.
+func _add_road_surface(world_pos: Vector3, pos: Vector2i, level: String) -> float:
+	if _map_data.is_river(pos.x, pos.y):
+		_add_tile_box(world_pos, RIVER_BRIDGE_COLOR, RIVER_CROSSING_HEIGHT)
+		return RIVER_CROSSING_HEIGHT
+	_add_route_block(world_pos, level)
+	return ROUTE_LEVEL_HEIGHTS.get(level, 0.22)
 
 ## The raised deck of a bridge tile: a slab spanning the full cell along the
 ## deck's own axis (so it meets the road on either side rather than stopping
