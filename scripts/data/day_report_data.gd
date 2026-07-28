@@ -4,7 +4,14 @@ extends RefCounted
 ## Mirrors the report object returned by fresh-routes-mvp.html's runDay().
 
 var day: int
+## Total paid out, bonuses included.
 var income := 0.0
+## The freshness bonus portion of `income` -- what the green settlement
+## bubbles earned over and above an ordinary full delivery.
+var bonus_income := 0.0
+## What the red bubbles cost: income that short deliveries would have
+## earned had the whole order arrived. Not part of `income`.
+var withheld_income := 0.0
 var route_upkeep := 0.0
 var storage_upkeep := 0.0
 var hub_upkeep := 0.0

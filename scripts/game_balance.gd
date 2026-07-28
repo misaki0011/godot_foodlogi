@@ -52,6 +52,14 @@ static func food_types() -> Dictionary:
 		"seafood": _food("seafood", "Seafood", 10.0, 6.0, Color("5B8FA8")),
 	}
 
+## A food line pays nothing at all unless the settlement's whole requested
+## amount arrived (see SimulationEngine.run_day): a half-filled order is
+## not a half sale, it is a settlement that went without. On top of that,
+## a line that arrived at the settlement's own bonus_freshness or better
+## pays this much again as a bonus -- the difference between the amber and
+## green speech bubbles on the map.
+const FRESHNESS_BONUS_RATE := 0.25
+
 static func freshness_multiplier(freshness: float) -> float:
 	if freshness >= 90.0:
 		return 1.25
