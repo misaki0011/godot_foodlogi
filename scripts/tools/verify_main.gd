@@ -190,17 +190,25 @@ func _report() -> void:
 
 	_check_bridge_tool(state, camera, terrain)
 
-	# Storage tool: only buildable on an existing route tile.
+	# Storage tool: only buildable on an existing route tile, and it remembers
+	# the road it covered so it can be drawn over it and hand it back.
 	_main.call("_set_tool", "cool")
 	_main.call("_handle_click", mid_cell)
 	assert(state.grid[mid_cell].kind == "storage")
 	assert(state.grid[mid_cell].stype == GameEnums.StorageType.COOL)
+	assert(state.grid[mid_cell].get("level", "") == "dirt", "Storage must remember the level of the road it was built on")
+	_check_structure_renders_on_its_road(terrain, mid_cell)
 
-	# Bulldoze: removes the tile with no refund.
+	# Bulldoze takes the BUILDING off first, leaving the road it stood on -- a
+	# storage tile follows the same rule as a hub or a bridge. Clearing the road
+	# itself is a second click. Neither refunds.
 	_main.call("_set_tool", "remove")
 	var balance_before_bulldoze: float = state.balance
 	_main.call("_handle_click", mid_cell)
-	assert(not state.grid.has(mid_cell))
+	assert(state.grid.has(mid_cell), "Bulldozing storage must leave the road it was built on behind")
+	assert(state.grid[mid_cell].kind == "route" and state.grid[mid_cell].level == "dirt", "A bulldozed storage tile must hand its road back at the level it was")
+	_main.call("_handle_click", mid_cell)
+	assert(not state.grid.has(mid_cell), "A second bulldoze must clear the bare road tile")
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
 
 	# Tapping a settlement (any tool) shows its info tip, not a dialog, and
@@ -362,7 +370,7 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	_main.call("_handle_click", road[3])
 	assert(state.grid[road[3]].kind == "hub", "The hub checks need a hub on the road first")
 	assert(state.grid[road[3]].get("level", "") == "main", "A hub must remember the level of the road it was built on")
-	_check_hub_renders_on_its_road(terrain, road[3])
+	_check_structure_renders_on_its_road(terrain, road[3])
 	_main.call("_set_tool", "remove")
 	_main.call("_handle_click", road[3])
 	assert(state.grid.has(road[3]), "Bulldozing a hub must leave the road it was built on behind")
@@ -379,10 +387,10 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	_main.call("_set_tool", "route")
 	print("Bridge tool (ROUTE-17) checks passed.")
 
-## A hub renders as a BUILDING ON a road, not instead of one: the road block it
-## was built on is drawn underneath and the marker stands on top of it, rather
-## than the marker replacing the road and leaving a gap in the network.
-func _check_hub_renders_on_its_road(terrain: GridMap, cell: Vector2i) -> void:
+## A hub or storage building renders ON a road, not instead of one: the road
+## block it was built on is drawn underneath and the marker stands on top of it,
+## rather than the marker replacing the road and leaving a gap in the network.
+func _check_structure_renders_on_its_road(terrain: GridMap, cell: Vector2i) -> void:
 	var grid_visuals: Node3D = _main.get_node("GridVisuals")
 	var world_pos: Vector3 = terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.0, 0)
 	var marker: Node3D = null
@@ -392,16 +400,19 @@ func _check_hub_renders_on_its_road(terrain: GridMap, cell: Vector2i) -> void:
 			continue
 		if child is NodeMarker:
 			marker = child
-		else:
+		# GridVisuals also carries the established-route overlay, which floats
+		# well above the tile at the same x/z -- the road block is whatever sits
+		# lowest, right on the tile surface.
+		elif road == null or child.position.y < road.position.y:
 			road = child
-	assert(road != null, "A hub tile must still draw the road it was built on")
-	assert(marker != null, "A hub tile must draw its hub marker")
+	assert(road != null, "A built-on tile must still draw the road underneath it")
+	assert(marker != null, "A built-on tile must draw its building marker")
 	# Every road piece is drawn centred on its own height, so the block's offset
 	# above the tile gives back the height the marker has to clear. Marker scenes
 	# are authored with their origin at their base (hub_marker.tscn).
 	var road_height := 2.0 * (road.position.y - world_pos.y)
-	assert(road_height > 0.0, "The road block under a hub must have real height")
-	assert(is_equal_approx(marker.position.y, world_pos.y + road_height), "The hub marker must stand on top of its road block, not sink into it")
+	assert(road_height > 0.0, "The road block under a building must have real height")
+	assert(is_equal_approx(marker.position.y, world_pos.y + road_height), "A building marker must stand on top of its road block, not sink into it")
 
 ## ROUTE-15: bulldoze and upgrade also work as a drag, applying to every tile
 ## the sweep crosses. Drives real press/drag/release gestures over two
