@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_order_schedule_is_sound()
 	_test_orders_open_one_at_a_time()
 	_test_dormant_settlements_are_not_scored()
+	_test_demand_and_freshness_are_stable()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -341,6 +342,46 @@ func _test_dormant_settlements_are_not_scored() -> void:
 	assert(report.settlements_taking_orders == 1, "Only settlements with an open order may be scored, got %d" % report.settlements_taking_orders)
 	assert(report.settlement_scores.size() == 1, "Dormant settlements must not appear in the per-settlement scores")
 	print("Day 1 scores %d of %d settlements." % [report.settlements_taking_orders, report.settlements_total])
+
+## An unchanged network must produce an unchanged day. Demand no longer
+## wobbles and freshness never did, so this is the whole simulation's
+## determinism in one assertion: if a number on the map moves, the player
+## moved it.
+func _test_demand_and_freshness_are_stable() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var village_a := _node(map, "villageA")
+	var first := {}
+	var runs: Array[Dictionary] = []
+	for _run in range(3):
+		var state := GameState.new()
+		OrderBook.initialize(state, map)
+		var farm := _node(map, "farm")
+		var route_path: Array[Vector2i] = [Vector2i(4, 4), Vector2i(4, 3), Vector2i(5, 3)]
+		for cell in route_path:
+			state.grid[cell] = {"kind": "route", "level": "dirt"}
+		state.add_connection(farm.grid_position, route_path[0])
+		_connect_chain(state, route_path)
+		state.add_connection(route_path[-1], village_a.grid_position)
+		var report := SimulationEngine.run_day(state, map.node_placements)
+		var line: Dictionary = state.last_settlement_status[village_a.node_id].grain
+		runs.append({
+			"requested": line.requested,
+			"delivered": line.delivered,
+			"fresh": line.fresh_sum / line.delivered,
+			"income": report.income,
+		})
+
+	first = runs[0]
+	# The order is for the settlement's stated amount, not a wobbled one.
+	assert(is_equal_approx(first.requested, village_a.demand.grain),
+		"A settlement must ask for exactly its stated demand, got %.1f of %.1f" % [first.requested, village_a.demand.grain])
+	for run in runs:
+		for key in first:
+			assert(is_equal_approx(run[key], first[key]),
+				"The same network must give the same '%s' every run: %.4f vs %.4f" % [key, run[key], first[key]])
+	print("Stable day: Village A asks %.0f grain, gets %.0f at %.1f%% fresh, every run." % [
+		first.requested, first.delivered, first.fresh,
+	])
 
 func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:
 	for i in range(1, cells.size()):

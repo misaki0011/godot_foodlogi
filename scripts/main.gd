@@ -1486,10 +1486,12 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 ## anything under it before it ever counts as delivered, so a bubble can
 ## never see an average below that line and a rule testing for one would
 ## be dead.
-## A settlement whose every demanded food is GREEN has nothing the player
-## can act on, so its whole stack collapses to one "All fresh" bubble --
-## keeping the map's attention on the settlements still in trouble, and
-## taking the 3-food settlements' clutter out of their neighbours' way.
+## Every open order keeps its own bubble whatever its status. A settled
+## settlement used to collapse its whole stack into one "All fresh" summary,
+## which hid the very numbers the player had just worked to earn -- and with
+## orders opening one at a time (DEV-01) the stacks it was decluttering are
+## rare now anyway. Green bubbles already recede on their own: they wash
+## lighter and outline thinner than amber and red (bubble_canvas.gd).
 func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
 	var status = _state.last_settlement_status.get(n.node_id, {})
 	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
@@ -1499,7 +1501,6 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
 
 	var entries: Array = []
-	var all_green := true
 	# Only the orders that have actually opened (DEV-01). A settlement whose
 	# first order is still days away draws nothing at all -- the pin alone.
 	# It is not showing a grey "later" placeholder either: five of those from
@@ -1526,8 +1527,6 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		else:
 			bubble_status = FoodBubbleMarker.Status.AMBER
 
-		if bubble_status != FoodBubbleMarker.Status.GREEN:
-			all_green = false
 		entries.append({
 			"kind": "order",
 			"food_id": food_id,
@@ -1536,12 +1535,6 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			"status": bubble_status,
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 		})
-
-	# The all-green collapse folds only the open orders; a pending plaque is
-	# not something that can be "all fresh", so it is appended afterwards and
-	# survives the collapse.
-	if all_green and not entries.is_empty():
-		entries = [{"kind": "clear"}]
 
 	var preview := OrderBook.preview_order(_state, _map_data)
 	if not preview.is_empty() and preview.get("node_id", "") == n.node_id:
@@ -1562,8 +1555,6 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			0,
 		)
 		match e.kind:
-			"clear":
-				bubble.setup_all_clear()
 			"pending":
 				bubble.setup_pending(foods[e.food_id], e.expected_day)
 			_:

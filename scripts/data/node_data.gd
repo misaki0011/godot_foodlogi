@@ -13,7 +13,9 @@ extends Resource
 @export var kind: String = ""
 ## Source-only: food_id -> daily supply.
 @export var produces: Dictionary = {}
-## Settlement-only: food_id -> daily demand (before wobble).
+## Settlement-only: food_id -> daily demand, asked for in full every day.
+## This is the settlement's EVENTUAL appetite -- only the lines whose orders
+## have opened are actually demanded (see OrderBook).
 @export var demand: Dictionary = {}
 ## Settlement-only: reject deliveries below this freshness.
 @export var min_freshness: float = 0.0

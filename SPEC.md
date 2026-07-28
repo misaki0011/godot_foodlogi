@@ -64,6 +64,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 36. **Demand opens one order at a time, instead of the whole region wanting food on day 1.** Every settlement demanded everything from the first day: twelve red bubbles on the opening screen (item 30 already had to rule out pulsing them, because on day one every settlement was red), and a happiness score averaged over five settlements the player could not possibly have connected yet — so the grade measured the calendar, not the network. A settlement's `demand` is now its *eventual* appetite, and `MapData.order_schedule` lists those lines in the order the region learns them; only the lines that have opened are simulated, scored or drawn. Nothing on the map appears or disappears — all five settlements and all five sources stand there from day 1, so the whole region is visible to plan against. What develops is the demand, and the road network the player draws to meet it. Deliberately **not** modelled as settlements growing: a village visibly becoming a city reads as a city-builder, and the thing that should grow in a logistics game is the network. The fiction is that a settlement starts *placing orders*, which is also why an order needs a reason to arrive — it opens only once the player is on top of the ones they already have (every settlement taking orders held 70% happiness for 2 consecutive days), with the schedule's `earliest_day` as a floor rather than a timer, at most one new order per rollover, and the streak spent on each one earned. A settlement with no open order draws no bubble at all; the one next in line gets a quiet countdown plaque two days out, so the player can lay the road before the order lands and its first day is green. A grey "later" plaque over all five settlements from day 1 would just be the same wall in another colour. See §6, §4.8, §10.1.
 
+37. **The same network now gives the same day, and a settled settlement keeps its numbers.** Two changes with one goal: every figure on the map means something the player did. First, settlement demand no longer wobbles ±15-25% per simulated day (item 4's rule, ported from the HTML). That wobble was the only randomness in the whole simulation, and it made every number a moving target — a bubble read 18/20 one day and 23/23 the next off the same untouched road, so an improvement the player had just made was indistinguishable from noise, and the day report's grade drifted on its own. Freshness was already deterministic (`simulate_freshness` reads only the path), so with the wobble gone the guarantee is total: an unchanged network delivers an unchanged result, at an unchanged grade. Note what this costs — §18's endless-chase argument used to lean on the wobble to stop a "solved" network from staying solved; that pull now has to come from the region opening up (§6), which is what the order schedule already does. Second, the collapsed **"All fresh"** summary bubble is gone: a settlement whose every open order is green now keeps one bubble per food like any other. Collapsing hid exactly the numbers the player had worked to earn, and it was decluttering stacks that item 36 already made rare — a settlement usually has one or two open orders now, not three. Green still recedes on its own, washing lighter and outlining thinner than amber and red. See §10.1, §12, §18.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1630,7 +1632,7 @@ One region with:
 - Freshness decay
 - Storage preservation
 - Hub discount
-- Settlement demand, with ±15–20% daily wobble
+- Settlement demand, fixed per food (the ±15–20% daily wobble was removed in v0.6 item 37)
 - Congestion markers and invalid-placement feedback on the map (see §10.5)
 - Hub last-delivery split tooltip on hover
 - Per-settlement delivery popup on hover and fulfillment checklist on click
@@ -1654,7 +1656,14 @@ This was replaced with an **endless efficiency-score chase**. Each day produces 
 - Best-ever grade and score
 - Rolling 7-day average score
 
-There is no finish line. The daily demand wobble (§0.4) means a network that scored well once isn't guaranteed to score well again, so there is always a "can I make this cleaner" pull, which is a closer match to §18's Core Fun Test than a checklist that, once cleared, has nothing left to optimize.
+There is no finish line. What keeps the chase live is the region opening up
+(§6): every new order changes the problem the network has to solve, so a
+layout that scored well over three orders is not guaranteed to over six, and
+there is always a "can I make this cleaner" pull. That is a closer match to
+§18's Core Fun Test than a checklist that, once cleared, has nothing left to
+optimize. Note this used to lean on the daily demand wobble instead, which
+v0.6 item 37 removed: re-scoring a *static* network now returns exactly the
+same grade, so the pull has to come from new orders rather than from noise.
 
 ### MVP implementation values
 
@@ -1669,7 +1678,8 @@ blocked as intermediate path vertices.
 Source supply per day is Farm (80 grain), Garden (90 vegetables), Bakery (80
 bread), Dairy (75 milk), and Harbor (55 seafood). Food value/decay per tile is
 Grain (3/0.5), Bread (5/1.5), Vegetables (6/2.5), Milk (8/4), and Seafood
-(10/6). Settlement demand for each food wobbles ±15–20% per day.
+(10/6). Settlement demand for each food is fixed -- a settlement asks for the
+same amount every day (v0.6 item 37).
 
 Route construction costs 8 per tile before terrain modifiers. Dirt route upkeep
 is 2 per tile/day before terrain, route-level, and hub modifiers. Route

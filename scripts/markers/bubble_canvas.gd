@@ -19,8 +19,6 @@ extends Control
 ##   SETTLEMENT        a cream speech balloon: dark text, big corner
 ##                     radius, triangular tail, a status-coloured border,
 ##                     and a freshness bar along the bottom.
-##   SETTLEMENT_CLEAR  the collapsed summary drawn in place of a whole
-##                     stack of green settlement bubbles.
 ##   SETTLEMENT_PENDING
 ##                     the countdown for an order that has not opened yet
 ##                     (DEV-01): the same balloon drawn quiet, saying which
@@ -74,7 +72,11 @@ const SETTLEMENT_CORNER_RATIO := 0.34
 ## outline; sources are reference information and stay quiet.
 const SOURCE_BORDER_WIDTH := 2
 const SETTLEMENT_BORDER_WIDTH := 3
-const CLEAR_BORDER_WIDTH := 2
+## A settled (green) settlement outlines thinner than one still asking for
+## something, so a map full of solved towns recedes and the problems catch
+## the eye. This is the whole of green's de-emphasis now that the collapsed
+## "All fresh" summary is gone.
+const GREEN_BORDER_WIDTH := 2
 
 ## A source that has given up its whole daily produce fades in place: a
 ## lighter, flatter slate with dim ink and a grey dot. Dropping contrast
@@ -192,12 +194,6 @@ func set_settlement(icon_color: Color, amount_text: String, status: FoodBubbleMa
 	_threshold = threshold
 	queue_redraw()
 
-func set_all_clear(text: String) -> void:
-	_kind = FoodBubbleMarker.Kind.SETTLEMENT_CLEAR
-	_amount_text = text
-	_status = FoodBubbleMarker.Status.GREEN
-	queue_redraw()
-
 ## `text` names the food that is coming, `subtext` when it is expected --
 ## the projected day slides while the player is behind (see
 ## OrderBook.projected_day), so this is a forecast, not a promise.
@@ -213,8 +209,6 @@ func _draw() -> void:
 	match _kind:
 		FoodBubbleMarker.Kind.SETTLEMENT:
 			_draw_settlement()
-		FoodBubbleMarker.Kind.SETTLEMENT_CLEAR:
-			_draw_settlement_clear()
 		FoodBubbleMarker.Kind.SETTLEMENT_PENDING:
 			_draw_settlement_pending()
 		_:
@@ -273,7 +267,7 @@ func _draw_settlement() -> void:
 
 	var wash := GREEN_WASH_ALPHA if green else STATUS_WASH_ALPHA
 	var fill := BUBBLE_COLOR.lerp(Color(accent.r, accent.g, accent.b, BUBBLE_COLOR.a), wash)
-	var border_width := CLEAR_BORDER_WIDTH if green else SETTLEMENT_BORDER_WIDTH
+	var border_width := GREEN_BORDER_WIDTH if green else SETTLEMENT_BORDER_WIDTH
 
 	_draw_tail(rect, accent)
 	_draw_body(rect, radius, fill, accent, border_width)
@@ -300,24 +294,6 @@ func _draw_settlement() -> void:
 		_draw_fitted(_amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.42), TEXT_COLOR)
 
 	_draw_freshness_bar(rect, accent)
-
-func _draw_settlement_clear() -> void:
-	var accent := GREEN_COLOR
-	var rect := _body_rect()
-	var radius := int(rect.size.y * SETTLEMENT_CORNER_RATIO)
-	var fill := BUBBLE_COLOR.lerp(Color(accent.r, accent.g, accent.b, BUBBLE_COLOR.a), GREEN_WASH_ALPHA)
-
-	_draw_tail(rect, accent)
-	_draw_body(rect, radius, fill, accent, CLEAR_BORDER_WIDTH)
-
-	var cy := rect.position.y + rect.size.y * 0.5
-	var glyph_r := rect.size.y * 0.22
-	var glyph_center := Vector2(rect.position.x + 16.0 + glyph_r, cy)
-	_draw_check(glyph_center, glyph_r, accent)
-
-	var text_x := glyph_center.x + glyph_r + 12.0
-	var text_w := rect.end.x - 16.0 - text_x
-	_draw_fitted(_amount_text, text_x, text_w, cy, int(rect.size.y * 0.34), SUBTEXT_COLOR)
 
 func _draw_settlement_pending() -> void:
 	var rect := _body_rect()

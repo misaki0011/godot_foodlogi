@@ -360,7 +360,7 @@ static func hub_split_summary(state: GameState, pos: Vector2i) -> Dictionary:
 		total += f.delivered
 	return {"by_source": by_source, "total": total}
 
-## Runs one full day: demand generation + wobble, demand-pull source
+## Runs one full day: demand generation, demand-pull source
 ## assignment (best predicted freshness first, upkeep as an implicit
 ## tie-break via Dijkstra), capacity limits, freshness, storage
 ## preservation, hub discounts/upkeep, income/spoilage, satisfaction, and
@@ -421,8 +421,16 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		var food_status := {}
 		settlement_food_status[settlement.node_id] = food_status
 		for food_id in demand:
-			var wobble := 0.85 + randf() * 0.4
-			var need: float = maxf(1.0, roundf(demand[food_id] * wobble))
+			# A settlement asks for the same amount every day. The daily
+			# ±15-25% wobble this used to apply was the only randomness in the
+			# whole simulation, and it made every number on the map a moving
+			# target: a bubble read 18/20 one day and 23/23 the next off the
+			# same unchanged road, so the player could not tell an improvement
+			# they had made from noise. Freshness was already deterministic
+			# (simulate_freshness reads only the path), so with this the whole
+			# day is: the same network delivers the same result, and a number
+			# that moves means something the player did moved it.
+			var need: float = maxf(1.0, roundf(demand[food_id]))
 			requested += need
 			requested_total += need
 			food_status[food_id] = {"requested": need, "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0}
