@@ -62,6 +62,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 35. **Storage gets the same treatment as a hub: drawn on its road, and handed back to it.** Storage was the last structure still replacing the route tile it was built on -- the road vanished under the building, the Dirt/Paved/Main level it covered was forgotten outright, and bulldozing it took the road away with it. A storage cell now records the level it covers at build time, draws that road underneath itself, and hands it back on a bulldoze, exactly as items 33/34 did for hubs. With this, every structure in the game follows one rule -- a building sits **on** a road, and removing the building reveals the road -- so there is no longer a special case to remember. See §4.1, §4.3.
 
+36. **Demand opens one order at a time, instead of the whole region wanting food on day 1.** Every settlement demanded everything from the first day: twelve red bubbles on the opening screen (item 30 already had to rule out pulsing them, because on day one every settlement was red), and a happiness score averaged over five settlements the player could not possibly have connected yet — so the grade measured the calendar, not the network. A settlement's `demand` is now its *eventual* appetite, and `MapData.order_schedule` lists those lines in the order the region learns them; only the lines that have opened are simulated, scored or drawn. Nothing on the map appears or disappears — all five settlements and all five sources stand there from day 1, so the whole region is visible to plan against. What develops is the demand, and the road network the player draws to meet it. Deliberately **not** modelled as settlements growing: a village visibly becoming a city reads as a city-builder, and the thing that should grow in a logistics game is the network. The fiction is that a settlement starts *placing orders*, which is also why an order needs a reason to arrive — it opens only once the player is on top of the ones they already have (every settlement taking orders held 70% happiness for 2 consecutive days), with the schedule's `earliest_day` as a floor rather than a timer, at most one new order per rollover, and the streak spent on each one earned. A settlement with no open order draws no bubble at all; the one next in line gets a quiet countdown plaque two days out, so the player can lay the road before the order lands and its first day is green. A grey "later" plaque over all five settlements from day 1 would just be the same wall in another colour. See §6, §4.8, §10.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1080,6 +1082,78 @@ satisfaction = demand_fulfillment_score
 ## 6. Progression Structure
 
 The game should introduce systems gradually.
+
+### Gradual demand: orders open one at a time (added in v0.6 item 36)
+
+The chapter list below is the full-game shape. On the single MVP region the
+same intent is delivered by the **order schedule**, which paces one map
+instead of six levels.
+
+**The model.** A settlement's `NodeData.demand` is what it will *eventually*
+want. `MapData.order_schedule` lists those demand lines in the order the
+region should learn them, earliest first; `OrderBook` decides which have
+opened. An unopened line is not simulated, not scored and not drawn — it
+costs nothing and asks for nothing.
+
+**Nothing on the map ever appears or disappears.** All five settlements and
+all five sources stand there from day 1, so the player can see the whole
+region and plan long routes against it. A settlement is never founded,
+upgraded or resized: it simply starts placing orders. Settlements *growing*
+was considered and rejected — a village visibly becoming a city reads as a
+city-builder, and in a logistics game the thing that should visibly develop
+is the network the player drew.
+
+**Two gates, and the second one matters more.** An order opens when both
+hold:
+
+- the day has reached its `earliest_day` in the schedule, and
+- every settlement currently taking orders has held `READY_SAT` (70%)
+  happiness for `READY_STREAK` (2) consecutive days.
+
+A day gate alone is wrong in both directions: it drops a new order on a
+player who is already drowning, and it makes a player who has solved the map
+wait out the calendar. `earliest_day` is therefore a floor on the pacing, not
+a timer. At most one order opens per day rollover, and earning one *spends*
+the streak — otherwise a good run would open the whole region in a week, one
+order per day, which is the day-1 wall again.
+
+**Orders are announced before they land.** An order that arrives unannounced
+is red on its first day, which is the exact problem this replaces. The
+settlement next in line carries a quiet countdown plaque from two days out
+(`PREVIEW_DAYS`), naming the food and the day it is on track to arrive, so
+the player can lay the road first. The date is a forecast, not a promise: it
+slides while the player is behind and settles as they recover.
+
+Only that one settlement gets a plaque. A grey "later" plaque over all five
+from day 1 would be the same wall of bubbles in a quieter colour; a
+settlement with nothing open shows nothing at all.
+
+**Scoring follows.** `avg_happiness` averages only the settlements taking
+orders — scoring one nobody is allowed to deliver to yet would make the grade
+a measure of the calendar. The report prints the denominator ("82% (2 of 5
+settlements taking orders)") so a steady network doesn't look like it swung
+whenever the region opens up.
+
+**Region 1's schedule.** Sources gate the foods and settlements gate the
+demand, paired so each beat is one new thing:
+
+| Not before | Order | Introduces |
+| --- | --- | --- |
+| 1 | Village A · grain | one road, Farm → customer |
+| 3 | Village A · bread | a second source onto the same trunk |
+| 5 | Village B · grain | one source, two customers: hubs start paying |
+| 7 | Village B · vegetables | decay pressure, Normal Storage |
+| 9, 10 | Village C · bread, vegetables | across the river |
+| 12, 14, 15 | Town D · milk, bread, vegetables | Cool Chain, a fussier 85% bonus line |
+| 17, 19, 20 | City E · seafood, milk, vegetables | long haul at a 55% minimum |
+
+Because earning an order spends the streak, the fastest possible cadence is
+one order every two days. Under perfect play the floors bind for the first
+five beats and the readiness gate binds from there on, opening the whole
+region by about day 23 — the later floors are deliberately set below that
+line, so the back half of the region is paced by how the player is doing
+rather than by the calendar. Widen the floors only to slow a *good* player
+down; to slow a struggling one, the readiness gate is already doing it.
 
 ### Chapter 1: Fresh Beginnings
 

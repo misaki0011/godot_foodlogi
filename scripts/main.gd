@@ -242,6 +242,9 @@ func _ready() -> void:
 	for node in _map_data.node_placements:
 		_nodes_by_pos[node.grid_position] = node
 		_nodes_by_id[node.node_id] = node
+	# Seeds the demand lines the map opens with (DEV-01). Must run before the
+	# first _render_grid, since it decides which bubbles exist at all.
+	OrderBook.initialize(_state, _map_data)
 	_terrain.render(_map_data)
 	_node_spawner.spawn(_map_data, _terrain)
 	_grid_visuals = Node3D.new()
@@ -975,10 +978,14 @@ func _apply_day_cycle() -> void:
 func _run_day() -> void:
 	var report := SimulationEngine.run_day(_state, _map_data.node_placements)
 	_last_report = report
+	# Folded in before the calendar moves: the streak is about the day that
+	# was just simulated, and it is what decides whether the rollover below
+	# is allowed to open the next order (DEV-01).
+	OrderBook.record_day(_state, report)
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
 	if _state.auto_run:
-		_state.day += 1
+		_advance_day()
 		_show_day_summary(report)
 	else:
 		_report_advances_day = true
@@ -986,11 +993,40 @@ func _run_day() -> void:
 	_render_grid()
 	_update_ui()
 
+## Rolls the calendar over, and with it the order book: a rollover is the
+## only moment a settlement's next demand line can open. Both paths through
+## the report -- the auto-run summary card and the manual report's "Continue
+## to next day" -- come through here, so the schedule advances identically in
+## either mode.
+func _advance_day() -> void:
+	_state.day += 1
+	for order in OrderBook.open_due_orders(_state, _map_data):
+		_announce_order(order)
+
+## A new order is the game's one scheduled beat, so it gets the toast to
+## itself. The player was not ambushed by it: the countdown plaque over that
+## settlement (see _render_settlement_bubbles) has been up for a couple of
+## days, which is the whole point of announcing orders ahead.
+func _announce_order(order: Dictionary) -> void:
+	var settlement: NodeData = _nodes_by_id.get(order.get("node_id", ""))
+	var food: FoodData = GameBalance.food_types().get(order.get("food_id", ""))
+	if settlement == null or food == null:
+		return
+	_show_toast("New order — %s wants %s, %d/day." % [
+		settlement.display_name,
+		food.display_name,
+		roundi(settlement.demand.get(order.food_id, 0.0)),
+	])
+
 func _close_report() -> void:
 	_report_overlay.visible = false
 	if _report_advances_day:
 		_report_advances_day = false
-		_state.day += 1
+		_advance_day()
+		# The rollover may have opened an order, which changes the bubbles;
+		# the auto-run path re-renders in _run_day, this one has to do it
+		# itself.
+		_render_grid()
 	_update_ui()
 
 ## Reopens the last simulated day's full report for review. The day has
@@ -1153,17 +1189,34 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 ## ---------- settlement tip ----------
 
 func _settlement_tip_text(n: NodeData) -> String:
+	# The tip works from the open orders, not the settlement's eventual
+	# appetite (DEV-01) -- promising a food it will not buy for another ten
+	# days would send the player building a road that earns nothing. What is
+	# still to come is listed separately, as the plan it is.
+	var demand := OrderBook.active_demand(_state, n)
 	var parts := []
+	for food_id in demand:
+		parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(demand[food_id])])
+	var text := "[b]%s[/b] -- %s\n" % [n.display_name, n.kind]
+	if parts.is_empty():
+		text += "[i]Not ordering yet -- this settlement starts buying later.[/i]\n"
+	else:
+		text += "Orders: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
+
+	var later := []
 	for food_id in n.demand:
-		parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(n.demand[food_id])])
-	var text := "[b]%s[/b] -- %s\nWants: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [n.display_name, n.kind, ", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
+		if not demand.has(food_id):
+			later.append(GameBalance.food_types()[food_id].display_name)
+	if not later.is_empty():
+		text += "[color=#8A8375]Still to come: %s[/color]\n" % ", ".join(later)
+
 	var status = _state.last_settlement_status.get(n.node_id)
-	if status == null:
+	if status == null or demand.is_empty():
 		text += "\n[i]No deliveries yet -- run a day to see what's getting through.[/i]"
 		return text
 	text += "\n[b]Last delivery:[/b]\n"
-	for food_id in n.demand:
-		var s = status.get(food_id, {"requested": n.demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
+	for food_id in demand:
+		var s = status.get(food_id, {"requested": demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
 		var done: bool = s.delivered >= s.requested - 0.5
 		var partial: bool = not done and s.delivered > 0.0
 		var icon := "✓" if done else ("◐" if partial else "✗")
@@ -1200,7 +1253,13 @@ func _show_report(r: DayReportData) -> void:
 	text += "Waste (unmet + rejected demand): %d%%\n" % roundi(r.waste_pct)
 	if r.capacity_blocked > 0.0:
 		text += "[color=#C4573A]⚠ Blocked by route capacity: %d food[/color]\n" % roundi(r.capacity_blocked)
-	text += "Settlement happiness: %d%%\n" % roundi(r.avg_happiness)
+	# The denominator is printed because it moves: happiness averages only
+	# the settlements actually taking orders (DEV-01), so without it a
+	# perfectly steady network would look like it had swung whenever the
+	# region opened up a new one.
+	text += "Settlement happiness: %d%% (%d of %d settlements taking orders)\n" % [
+		roundi(r.avg_happiness), r.settlements_taking_orders, r.settlements_total,
+	]
 	var grade_color: String = GRADE_COLORS.get(r.grade, Color.WHITE).to_html(false)
 	text += "Network efficiency grade: [b][color=#%s]%s[/color][/b] (score %d/100)\n\n" % [grade_color, r.grade, roundi(r.grade_score)]
 	text += "[b]Per-settlement[/b]\n"
@@ -1441,8 +1500,15 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 
 	var entries: Array = []
 	var all_green := true
-	for food_id in n.demand:
-		var requested: float = n.demand[food_id]
+	# Only the orders that have actually opened (DEV-01). A settlement whose
+	# first order is still days away draws nothing at all -- the pin alone.
+	# It is not showing a grey "later" placeholder either: five of those from
+	# day 1 would be the same wall of bubbles this feature exists to remove,
+	# in a quieter colour. Only the settlement next in line gets a plaque,
+	# and only once it is nearly due (OrderBook.preview_order).
+	var demand := OrderBook.active_demand(_state, n)
+	for food_id in demand:
+		var requested: float = demand[food_id]
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
 		var s = status.get(food_id)
@@ -1463,6 +1529,7 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		if bubble_status != FoodBubbleMarker.Status.GREEN:
 			all_green = false
 		entries.append({
+			"kind": "order",
 			"food_id": food_id,
 			"delivered": delivered,
 			"requested": requested,
@@ -1470,32 +1537,54 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 		})
 
-	if entries.is_empty():
-		return
+	# The all-green collapse folds only the open orders; a pending plaque is
+	# not something that can be "all fresh", so it is appended afterwards and
+	# survives the collapse.
+	if all_green and not entries.is_empty():
+		entries = [{"kind": "clear"}]
 
-	if all_green:
-		var summary: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-		_grid_visuals.add_child(summary)
-		summary.position = base_pos
-		summary.setup_all_clear()
-		return
+	var preview := OrderBook.preview_order(_state, _map_data)
+	if not preview.is_empty() and preview.get("node_id", "") == n.node_id:
+		entries.append({
+			"kind": "pending",
+			"food_id": preview.get("food_id", ""),
+			"expected_day": OrderBook.projected_day(_state, preview),
+		})
 
 	for index in entries.size():
 		var e: Dictionary = entries[index]
 		var row: int = index / 2
-		var col: int = index % 2
-		var col_offset: float = (col - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(col_offset, row * FoodBubbleMarker.STACK_SPACING, 0)
-		bubble.setup_settlement(
-			foods[e.food_id],
-			e.delivered,
-			e.requested,
-			e.status,
-			e.freshness_pct,
-			n.bonus_freshness,
+		bubble.position = base_pos + Vector3(
+			_bubble_column_offset(index, entries.size()),
+			row * FoodBubbleMarker.STACK_SPACING,
+			0,
 		)
+		match e.kind:
+			"clear":
+				bubble.setup_all_clear()
+			"pending":
+				bubble.setup_pending(foods[e.food_id], e.expected_day)
+			_:
+				bubble.setup_settlement(
+					foods[e.food_id],
+					e.delivered,
+					e.requested,
+					e.status,
+					e.freshness_pct,
+					n.bonus_freshness,
+				)
+
+## Where a bubble sits across the 2-column stack. A row holding a single
+## bubble centres it over the settlement instead of leaving it hanging in the
+## left column: with orders opening one at a time (DEV-01), a settlement
+## showing exactly one bubble is now the common case rather than an edge one.
+func _bubble_column_offset(index: int, count: int) -> float:
+	var row_start: int = (index / 2) * 2
+	if count - row_start == 1:
+		return 0.0
+	return ((index % 2) - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
 ## so a route tile always uses the same unrotated scene regardless of its

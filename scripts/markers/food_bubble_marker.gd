@@ -30,6 +30,11 @@ const BASE_PIXEL_SIZE := 0.01
 ## offset with it, keeping the bubble anchored the same way.
 const SOURCE_SCALE := 0.85
 
+## An order that hasn't opened yet renders smaller again -- it is a heads-up
+## sitting next to bubbles that are asking for food today, and it has to lose
+## that comparison at a glance.
+const PENDING_SCALE := 0.8
+
 ## Main.tscn's Camera3D is pitched -60 deg (rotation.x = -1.047198) and
 ## looks straight down that axis with no yaw/roll, so its "right" vector
 ## is exactly world +X (unrotated) but its "up" vector is
@@ -52,7 +57,9 @@ const COLUMN_SPACING := WORLD_WIDTH + 0.1
 ## Which silhouette bubble_canvas.gd draws. SETTLEMENT_CLEAR is the single
 ## summary bubble that replaces a settlement's whole stack once every food
 ## it demands is green.
-enum Kind { SOURCE, SETTLEMENT, SETTLEMENT_CLEAR }
+## SETTLEMENT_PENDING is the countdown for an order that has not opened yet
+## (DEV-01, see OrderBook).
+enum Kind { SOURCE, SETTLEMENT, SETTLEMENT_CLEAR, SETTLEMENT_PENDING }
 
 ## DEFAULT is a source's plain food-on-beige look; MUTED grays a source
 ## out once it has given away its whole daily produce. RED/AMBER/GREEN are
@@ -89,6 +96,14 @@ func setup_settlement(food: FoodData, delivered: float, requested: float, status
 func setup_all_clear() -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE
 	_canvas.set_all_clear("All fresh")
+	_bake()
+
+## The countdown for an order that has not opened yet: which food is coming,
+## and the day it is currently on track to arrive (OrderBook.projected_day --
+## a forecast that slides if the player falls behind, not a fixed date).
+func setup_pending(food: FoodData, expected_day: int) -> void:
+	_sprite.pixel_size = BASE_PIXEL_SIZE * PENDING_SCALE
+	_canvas.set_pending(food.color, food.display_name, "Day %d" % expected_day)
 	_bake()
 
 func _ratio_text(current: float, max_amount: float) -> String:

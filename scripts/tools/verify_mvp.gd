@@ -15,6 +15,9 @@ func _initialize() -> void:
 	_test_bridge_keeps_crossing_routes_separate()
 	_test_bridge_cap_per_network()
 	_test_bridge_deck_costs_extra_freshness()
+	_test_order_schedule_is_sound()
+	_test_orders_open_one_at_a_time()
+	_test_dormant_settlements_are_not_scored()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -55,6 +58,9 @@ func _test_daily_simulation() -> void:
 	state.add_connection(farm.grid_position, route_path[0])
 	_connect_chain(state, route_path)
 	state.add_connection(route_path[-1], village_a.grid_position)
+	# Grain at Village A is the map's opening order (DEV-01), so this is the
+	# one delivery available on day 1 -- which is the point of the schedule.
+	OrderBook.initialize(state, map)
 	var report := SimulationEngine.run_day(state, map.node_placements)
 	var grain_status: Dictionary = state.last_settlement_status[village_a.node_id].grain
 	print("Village A grain: %.1f / %.1f delivered" % [grain_status.delivered, grain_status.requested])
@@ -265,6 +271,77 @@ func _test_bridge_deck_costs_extra_freshness() -> void:
 ## Connects each consecutive pair in `cells` -- mirrors what a real drag
 ## gesture would link, since state.grid[cell] = ... no longer implies
 ## connectivity on its own (v0.5).
+## ---------- gradual demand (DEV-01) ----------
+
+func _test_order_schedule_is_sound() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var problems := map.validate()
+	for problem in problems:
+		push_error("region_1_map: %s" % problem)
+	assert(problems.is_empty(), "region_1_map's order schedule must be internally consistent")
+
+	# Every demand line in the region has to open eventually, and the map has
+	# to open with exactly one -- a second opening bubble on day 1 is the
+	# wall this feature removes, in miniature.
+	var state := GameState.new()
+	OrderBook.initialize(state, map)
+	var open_on_day_one := 0
+	for node in map.node_placements:
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			open_on_day_one += OrderBook.active_demand(state, node).size()
+	assert(open_on_day_one == 1, "The map must open with a single order, got %d" % open_on_day_one)
+	print("Order schedule: %d lines, %d open on day 1." % [map.order_schedule.size(), open_on_day_one])
+
+func _test_orders_open_one_at_a_time() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var state := GameState.new()
+	OrderBook.initialize(state, map)
+
+	# A player who is behind gets no new orders, however long they wait: the
+	# schedule's day floor is a floor, not a timer.
+	state.day = 40
+	state.ready_streak = 0
+	assert(OrderBook.open_due_orders(state, map).is_empty(), "A short streak must hold the schedule back")
+
+	# Meeting the streak opens exactly one line, and spends the streak, so
+	# the next one is another READY_STREAK good days away.
+	state.ready_streak = OrderBook.READY_STREAK
+	var opened := OrderBook.open_due_orders(state, map)
+	assert(opened.size() == 1, "At most one order may open per rollover, got %d" % opened.size())
+	assert(state.ready_streak == 0, "Earning an order must spend the readiness streak")
+	assert(OrderBook.open_due_orders(state, map).is_empty(), "The next order must wait for a fresh streak")
+
+	# The countdown plaque only appears once the next order is nearly due,
+	# so distant settlements stay bare rather than carrying a grey label.
+	var far := GameState.new()
+	OrderBook.initialize(far, map)
+	far.day = 1
+	far.ready_streak = 0
+	var preview := OrderBook.preview_order(far, map)
+	assert(not preview.is_empty(), "The next order should be previewed once it is within PREVIEW_DAYS")
+	assert(OrderBook.projected_day(far, preview) - far.day <= OrderBook.PREVIEW_DAYS, "A previewed order must be within the preview window")
+
+	# A bad day resets the streak, which pushes the forecast further out --
+	# the plaque is a forecast, not a promise.
+	var report := DayReportData.new()
+	report.settlement_scores = [{"sat": OrderBook.READY_SAT - 1.0}]
+	far.ready_streak = OrderBook.READY_STREAK
+	OrderBook.record_day(far, report)
+	assert(far.ready_streak == 0, "A settlement below READY_SAT must reset the streak")
+
+func _test_dormant_settlements_are_not_scored() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var state := GameState.new()
+	OrderBook.initialize(state, map)
+	var report := SimulationEngine.run_day(state, map.node_placements)
+	# Four of the five settlements are not taking orders on day 1. Scoring
+	# them would make happiness a measure of the calendar rather than of the
+	# network the player built.
+	assert(report.settlements_total == 5, "Every settlement stays on the map from day 1")
+	assert(report.settlements_taking_orders == 1, "Only settlements with an open order may be scored, got %d" % report.settlements_taking_orders)
+	assert(report.settlement_scores.size() == 1, "Dormant settlements must not appear in the per-settlement scores")
+	print("Day 1 scores %d of %d settlements." % [report.settlements_taking_orders, report.settlements_total])
+
 func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:
 	for i in range(1, cells.size()):
 		state.add_connection(cells[i - 1], cells[i])

@@ -21,6 +21,13 @@ var profit := 0.0
 var avg_freshness_overall := 0.0
 var waste_pct := 0.0
 var avg_happiness := 0.0
+## How many settlements had at least one open order today, out of how many
+## exist on the map (DEV-01). `avg_happiness` averages over the former only
+## -- a settlement nobody is allowed to deliver to yet must not be scored as
+## an unhappy one -- so the report prints the denominator rather than leaving
+## a percentage that quietly changes meaning as the region opens up.
+var settlements_taking_orders := 0
+var settlements_total := 0
 var grade := "D"
 var grade_score := 0.0
 ## Array of {settlement:NodeData, fulfill_rate, avg_fresh, waste_rate, sat}

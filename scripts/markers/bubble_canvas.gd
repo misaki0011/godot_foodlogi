@@ -21,6 +21,10 @@ extends Control
 ##                     and a freshness bar along the bottom.
 ##   SETTLEMENT_CLEAR  the collapsed summary drawn in place of a whole
 ##                     stack of green settlement bubbles.
+##   SETTLEMENT_PENDING
+##                     the countdown for an order that has not opened yet
+##                     (DEV-01): the same balloon drawn quiet, saying which
+##                     food is coming and roughly when.
 ##
 ## A settlement's status is deliberately kept off the bubble *body*: a
 ## saturated tint behind the text both fights the food-coloured icon dot
@@ -84,6 +88,21 @@ const MUTED_BORDER_COLOR := Color(0.62, 0.63, 0.65, 0.4)
 const MUTED_TEXT_COLOR := Color(0.62, 0.63, 0.64)
 const MUTED_ICON_COLOR := Color(0.46, 0.47, 0.49)
 
+## An order that has not opened yet (OrderBook.preview_order). It keeps the
+## settlement's balloon silhouette -- it is that settlement speaking -- but
+## gives up everything that marks a task: no status colour, no freshness
+## bar, no glyph, a washed-out body, and a smaller sprite
+## (FoodBubbleMarker.PENDING_SCALE). It is a heads-up that lets the player
+## lay the road before the order lands, and it must never compete with the
+## bubbles that are actually asking for something today.
+const PENDING_BUBBLE_COLOR := Color(0.97, 0.94, 0.87, 0.72)
+const PENDING_BORDER_COLOR := Color(0.36, 0.33, 0.29, 0.55)
+const PENDING_TEXT_COLOR := Color(0.30, 0.27, 0.23)
+const PENDING_BORDER_WIDTH := 2
+## The food dot is dimmed rather than greyed: which food is coming is the
+## one thing the player can act on ahead of time, so it stays identifiable.
+const PENDING_ICON_ALPHA := 0.65
+
 ## Status accents. These are fully saturated -- they are only ever used
 ## for borders, tails, bars and glyphs, never as a background under text.
 ## They also differ in *lightness*, not just hue, so they stay separable
@@ -144,6 +163,8 @@ var _freshness_pct: int = -1
 ## Settlement only: this settlement's bonus_freshness, as the 0..1 point
 ## on the bar where the tick goes.
 var _threshold: float = 0.0
+## Pending only: the second line under the food name, e.g. "Day 5".
+var _subtext: String = ""
 
 static func status_color(status: FoodBubbleMarker.Status) -> Color:
 	match status:
@@ -177,12 +198,25 @@ func set_all_clear(text: String) -> void:
 	_status = FoodBubbleMarker.Status.GREEN
 	queue_redraw()
 
+## `text` names the food that is coming, `subtext` when it is expected --
+## the projected day slides while the player is behind (see
+## OrderBook.projected_day), so this is a forecast, not a promise.
+func set_pending(icon_color: Color, text: String, subtext: String) -> void:
+	_kind = FoodBubbleMarker.Kind.SETTLEMENT_PENDING
+	_icon_color = icon_color
+	_amount_text = text
+	_subtext = subtext
+	_status = FoodBubbleMarker.Status.DEFAULT
+	queue_redraw()
+
 func _draw() -> void:
 	match _kind:
 		FoodBubbleMarker.Kind.SETTLEMENT:
 			_draw_settlement()
 		FoodBubbleMarker.Kind.SETTLEMENT_CLEAR:
 			_draw_settlement_clear()
+		FoodBubbleMarker.Kind.SETTLEMENT_PENDING:
+			_draw_settlement_pending()
 		_:
 			_draw_source()
 
@@ -284,6 +318,28 @@ func _draw_settlement_clear() -> void:
 	var text_x := glyph_center.x + glyph_r + 12.0
 	var text_w := rect.end.x - 16.0 - text_x
 	_draw_fitted(_amount_text, text_x, text_w, cy, int(rect.size.y * 0.34), SUBTEXT_COLOR)
+
+func _draw_settlement_pending() -> void:
+	var rect := _body_rect()
+	var radius := int(rect.size.y * SETTLEMENT_CORNER_RATIO)
+
+	# Tail in the border's own grey rather than a status colour: there is no
+	# status to report yet, and a coloured tail is the first thing that reads
+	# as "act on me" at map distance.
+	_draw_tail(rect, PENDING_BORDER_COLOR)
+	_draw_body(rect, radius, PENDING_BUBBLE_COLOR, PENDING_BORDER_COLOR, PENDING_BORDER_WIDTH)
+
+	var cy := rect.position.y + rect.size.y * 0.5
+	var icon_r := rect.size.y * 0.22
+	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, cy)
+	draw_circle(icon_center, icon_r, Color(_icon_color, PENDING_ICON_ALPHA))
+	draw_arc(icon_center, icon_r, 0, TAU, 32, PENDING_BORDER_COLOR, 2.0, true)
+
+	# No status glyph, so the text runs the full remaining width.
+	var text_x := icon_center.x + icon_r + 12.0
+	var text_w := rect.end.x - 14.0 - text_x
+	_draw_fitted(_amount_text, text_x, text_w, cy - 12.0, int(rect.size.y * 0.30), PENDING_TEXT_COLOR)
+	_draw_fitted(_subtext, text_x, text_w, cy + 20.0, int(rect.size.y * 0.22), SUBTEXT_COLOR)
 
 # --- shared pieces ----------------------------------------------------
 

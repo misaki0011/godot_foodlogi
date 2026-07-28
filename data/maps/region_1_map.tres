@@ -124,4 +124,53 @@ bonus_freshness = 90.0
 script = ExtResource("2_p2e7a")
 grid_size = Vector2i(21, 14)
 river_col = 10
+order_schedule = Array[Dictionary]([{
+"earliest_day": 1,
+"food_id": "grain",
+"node_id": "villageA"
+}, {
+"earliest_day": 3,
+"food_id": "bread",
+"node_id": "villageA"
+}, {
+"earliest_day": 5,
+"food_id": "grain",
+"node_id": "villageB"
+}, {
+"earliest_day": 7,
+"food_id": "vegetables",
+"node_id": "villageB"
+}, {
+"earliest_day": 9,
+"food_id": "bread",
+"node_id": "villageC"
+}, {
+"earliest_day": 10,
+"food_id": "vegetables",
+"node_id": "villageC"
+}, {
+"earliest_day": 12,
+"food_id": "milk",
+"node_id": "townD"
+}, {
+"earliest_day": 14,
+"food_id": "bread",
+"node_id": "townD"
+}, {
+"earliest_day": 15,
+"food_id": "vegetables",
+"node_id": "townD"
+}, {
+"earliest_day": 17,
+"food_id": "seafood",
+"node_id": "cityE"
+}, {
+"earliest_day": 19,
+"food_id": "milk",
+"node_id": "cityE"
+}, {
+"earliest_day": 20,
+"food_id": "vegetables",
+"node_id": "cityE"
+}])
 node_placements = Array[ExtResource("1_ycuoh")]([SubResource("Resource_vxexi"), SubResource("Resource_xovoy"), SubResource("Resource_d5ptm"), SubResource("Resource_aljhd"), SubResource("Resource_lq88y"), SubResource("Resource_pp5np"), SubResource("Resource_i5j61"), SubResource("Resource_1oktl"), SubResource("Resource_kwn02"), SubResource("Resource_q7vhy")])

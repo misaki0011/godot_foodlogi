@@ -401,6 +401,18 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	var settlement_scores: Array[Dictionary] = []
 
 	for settlement in settlements:
+		# Only the demand lines whose orders have opened are simulated
+		# (DEV-01). A settlement whose first order is still days out stands
+		# on the map wanting nothing: it is not short-delivered, it costs no
+		# withheld income, and -- critically -- it is not scored, since
+		# averaging a settlement the player is not yet allowed to serve into
+		# happiness would make the grade a measure of the calendar rather
+		# than of the network. See OrderBook.
+		var demand := OrderBook.active_demand(state, settlement)
+		if demand.is_empty():
+			settlement_food_status[settlement.node_id] = {}
+			continue
+
 		var fulfilled := 0.0
 		var requested := 0.0
 		var fresh_sum := 0.0
@@ -408,9 +420,9 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		var rejected := 0.0
 		var food_status := {}
 		settlement_food_status[settlement.node_id] = food_status
-		for food_id in settlement.demand:
+		for food_id in demand:
 			var wobble := 0.85 + randf() * 0.4
-			var need: float = maxf(1.0, roundf(settlement.demand[food_id] * wobble))
+			var need: float = maxf(1.0, roundf(demand[food_id] * wobble))
 			requested += need
 			requested_total += need
 			food_status[food_id] = {"requested": need, "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0}
@@ -580,6 +592,8 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	report.avg_freshness_overall = avg_freshness_overall
 	report.waste_pct = waste_pct
 	report.avg_happiness = avg_happiness
+	report.settlements_taking_orders = settlement_scores.size()
+	report.settlements_total = settlements.size()
 	report.grade = grade
 	report.grade_score = grade_score
 	report.settlement_scores = settlement_scores
