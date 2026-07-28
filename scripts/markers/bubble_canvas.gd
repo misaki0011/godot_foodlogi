@@ -338,8 +338,11 @@ func _draw_settlement_pending() -> void:
 	# No status glyph, so the text runs the full remaining width.
 	var text_x := icon_center.x + icon_r + 12.0
 	var text_w := rect.end.x - 14.0 - text_x
+	# The day is the actionable half -- it is what tells the player how long
+	# they have to get a road there -- so it is sized as a near-peer of the
+	# food name rather than as a caption under it.
 	_draw_fitted(_amount_text, text_x, text_w, cy - 12.0, int(rect.size.y * 0.30), PENDING_TEXT_COLOR)
-	_draw_fitted(_subtext, text_x, text_w, cy + 20.0, int(rect.size.y * 0.22), SUBTEXT_COLOR)
+	_draw_fitted(_subtext, text_x, text_w, cy + 20.0, int(rect.size.y * 0.26), PENDING_TEXT_COLOR)
 
 # --- shared pieces ----------------------------------------------------
 
