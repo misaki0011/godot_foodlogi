@@ -388,7 +388,12 @@ func _check_day_cycle(state: GameState) -> void:
 
 	# Shadows are actually on in the scene, or none of the above is visible.
 	var sun: DirectionalLight3D = _main.get_node("DirectionalLight3D")
-	assert(sun.shadow_enabled, "The sun must cast shadows")
+	# Shadows are off on web by design (a browser drops the WebGL context if
+	# the GPU budget is overrun), so what's asserted is that the scene follows
+	# that decision -- and, since these checks run on desktop, that desktop
+	# does get them.
+	assert(DayCycle.shadows_available(), "These checks run on desktop, where shadows must be available")
+	assert(sun.shadow_enabled == DayCycle.shadows_available(), "The sun must cast shadows exactly where the build can afford them")
 	# The range has to reach past the deepest view the camera can pull back to
 	# (ZOOM_MAX of 60 over a ~60-degree tilt is roughly 69 units of ground), or
 	# shadows visibly cut off partway across a zoomed-out map. It is otherwise

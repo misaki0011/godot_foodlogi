@@ -88,6 +88,24 @@ static func clock_text(phase: float) -> String:
 		display_hour = 12
 	return "%d:%02d %s" % [display_hour, minute, suffix]
 
+## Whether this build can afford shadows at all.
+##
+## Everywhere except the web: false there, and not as a quality preference.
+## A browser hands the page a much smaller GPU budget than a native build --
+## on a phone, dramatically smaller -- and going over it doesn't degrade
+## gracefully, the browser destroys the WebGL context outright and the game
+## dies with "WebGL context lost, please reload the page". Shadows are the
+## single largest allocation the scene asks for, so the web build goes
+## without them; every other part of the sun cycle (angle, light colour and
+## energy, sky and ambient tint) still runs, so a web day still visibly
+## moves from dawn to night. Desktop keeps full-quality shadows.
+##
+## If a web build ever loses its context again, the next-largest lever is
+## MSAA -- `rendering/anti_aliasing/quality/msaa_3d` is 4x, which is a
+## multisampled framebuffer's worth of memory and bandwidth.
+static func shadows_available() -> bool:
+	return not OS.has_feature("web")
+
 ## Pushes one sampled moment onto the scene's sun and environment.
 static func apply(phase: float, sun: DirectionalLight3D, environment: Environment) -> void:
 	var moment := sample(phase)

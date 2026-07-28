@@ -231,6 +231,8 @@ func _ready() -> void:
 	var max_corner: Vector3 = _terrain.map_to_local(Vector3i(_map_data.grid_size.x - 1, 0, _map_data.grid_size.y - 1))
 	_map_bounds_min = Vector2(min_corner.x, min_corner.z)
 	_map_bounds_max = Vector2(max_corner.x, max_corner.z)
+	# Shadows are a desktop-only luxury -- see DayCycle.shadows_available().
+	_sun.shadow_enabled = DayCycle.shadows_available()
 	_apply_day_cycle()
 	_build_ui()
 	_set_tool("route")
