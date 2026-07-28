@@ -974,6 +974,12 @@ func _show_report(r: DayReportData) -> void:
 	_report_continue.text = "Continue to next day" if _report_advances_day else "Close"
 	var text := ""
 	text += "Income: §%d\n" % roundi(r.income)
+	# Both lines only appear when they have something to say, so a clean
+	# day's report stays as short as it was before the delivery rule.
+	if r.bonus_income > 0.0:
+		text += "[color=#3FA34D]  ...including freshness bonus: +§%d[/color]\n" % roundi(r.bonus_income)
+	if r.withheld_income > 0.0:
+		text += "[color=#D64545]  Lost to incomplete orders: §%d[/color]\n" % roundi(r.withheld_income)
 	text += "Route upkeep: −§%d\n" % roundi(r.route_upkeep)
 	text += "Storage upkeep: −§%d\n" % roundi(r.storage_upkeep)
 	text += "Hub upkeep: −§%d\n" % roundi(r.hub_upkeep)

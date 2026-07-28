@@ -122,6 +122,13 @@ const BAR_TRACK_COLOR := Color(0.15, 0.12, 0.08, 0.16)
 const BAR_TICK_COLOR := Color(0.15, 0.12, 0.08, 0.55)
 const BAR_TICK_WIDTH := 3.0
 
+## The bar only takes the status colour once the full requested amount has
+## arrived. Short of that the delivery earns nothing whatever its
+## freshness was, so colouring a long bar red -- or worse, green -- would
+## dress up a line that is not paying. Grey says "measured, but it does
+## not count yet".
+const BAR_INERT_COLOR := Color(0.15, 0.12, 0.08, 0.32)
+
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
 const MIN_FONT_SIZE := 14
@@ -331,7 +338,7 @@ func _draw_freshness_bar(rect: Rect2, accent: Color) -> void:
 		# Never draw a fill narrower than it is tall -- a rounded box
 		# thinner than its own corner radius renders as a smear.
 		var fill_box := StyleBoxFlat.new()
-		fill_box.bg_color = accent
+		fill_box.bg_color = BAR_INERT_COLOR if _status == FoodBubbleMarker.Status.RED else accent
 		fill_box.set_corner_radius_all(radius)
 		draw_style_box(fill_box, Rect2(track.position, Vector2(maxf(track.size.x * filled, BAR_HEIGHT), BAR_HEIGHT)))
 
