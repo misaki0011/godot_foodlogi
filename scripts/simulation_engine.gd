@@ -183,7 +183,6 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 	var fresh := 100.0
 	var protection_left := 0
 	var protection_mult := 1.0
-	var used_freeze := false
 	for i in range(1, path.size()):
 		var cell = state.grid.get(path[i])
 		var mult := 1.0
@@ -196,11 +195,7 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 			var st = GameBalance.STORAGE_TYPES[cell.stype]
 			protection_left = st.protection
 			protection_mult = st.mult
-			if cell.stype == GameEnums.StorageType.FREEZE:
-				used_freeze = true
 		fresh -= decay
-	if used_freeze and food.freeze_penalty > 0.0:
-		fresh -= food.freeze_penalty
 	return clampf(fresh, 0.0, 100.0)
 
 static func tile_capacity(state: GameState, pos: Vector2i) -> float:

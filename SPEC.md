@@ -46,6 +46,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 27. **The established-route overlay is coloured per source, food by food.** The overlay was one gold line regardless of what travelled it, so telling the grain route from the milk route meant tracing it back by eye. Each source now gets its own lane in the colour of the food it produces, and where several sources' deliveries share a road their lanes run side by side down it -- a colour joins the road where its source does, and peels off exactly where their paths part. Route TILES keep their ordinary built colour (Dirt/Paved/Main brown); only the overlay carries source colour. All source *markers* share one colour (§16), so the food colour is what actually distinguishes one source from another, and it is the colour language the speech bubbles already use. The legend lists the mapping, built from the region's own sources. See §4.1.
 
+28. **Freeze Storage and the Regional Hub upgrade are retired.** Both are removed from the build, not merely hidden: `GameEnums.StorageType` is down to NORMAL/COOL, `GameEnums.HubType` to SMALL, their entries in `GameBalance.STORAGE_TYPES`/`HUB_TYPES` and `HUB_REGIONAL_UPGRADE_COST` are deleted, `Main._do_upgrade_hub` and both tool buttons are gone, and with no freezer left to trigger it the freeze-penalty rule goes too -- `FoodData.freeze_penalty` and the penalty branch in `SimulationEngine.simulate_freshness` are deleted along with it. Storage is now Normal and Cool; a hub is always a Small Hub. The full-game material in §6, §8 and §11 still describes both (Freezer Plants, Frozen Food, Chapter 5's freeze chain, Regional Networks); treat those as post-MVP scope superseded by this item, not as descriptions of the current build. See §4.3, §4.4.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -485,11 +487,12 @@ Settlement result: Normal payment
 
 # 4.3 Storage System
 
-Storage buildings preserve food freshness. There are three storage types:
+Storage buildings preserve food freshness. There are two storage types:
 
 1. Normal Storage
 2. Cool Storage
-3. Freeze Storage
+
+(A third, Freeze Storage, was retired in v0.4 item 28 -- see §4.3.3.)
 
 The storage types should not simply be weak, medium, and strong. Each should have a role.
 
@@ -559,52 +562,13 @@ Medium-cost storage for fresh and chilled foods.
 
 ---
 
-## 4.3.3 Freeze Storage
+## 4.3.3 Freeze Storage (RETIRED in v0.4 item 28)
 
-Expensive storage for long-distance preservation and highly perishable foods.
+**Freeze Storage no longer exists in the build.** It was an expensive third storage tier (400 to build, 80/day upkeep, 70 capacity, 14-tile protection distance, 0.10x loss multiplier) aimed at seafood and long-distance chains, paired with a "freeze-sensitive food" rule that docked quality from foods that dislike freezing (Bread -4, Vegetables -8, Milk -10) so it couldn't be the answer to everything.
 
-### Best for
+Both are gone: the storage type, its balance entry, the `freeze_penalty` food field, and the penalty branch in the freshness simulation. Storage is Normal and Cool only. Seafood, which this tier existed to serve, now relies on Cool Storage and short routes like everything else -- worth watching in playtests, since it is the fastest-decaying food in the set.
 
-- Meat
-- Seafood
-- Ice cream
-- Frozen meals
-- Emergency stock
-- Long-distance supply chains
-
-### Effects
-
-- Pauses freshness loss while food is stored.
-- Gives very strong protection after food leaves.
-- High upkeep.
-- Lower capacity.
-- Some foods suffer a quality penalty when frozen.
-
-### Suggested values
-
-| Stat | Value |
-|---|---:|
-| Build cost | 400 |
-| Daily upkeep | 80 |
-| Capacity | 70 food |
-| Protection distance | 14 tiles |
-| Freshness loss multiplier during protection | 0.10x |
-
-### Freeze-sensitive food rule
-
-Some foods dislike freezing.
-
-| Food | Freeze result |
-|---|---|
-| Seafood | Good |
-| Meat | Good |
-| Ice cream | Required |
-| Bread | Minor quality penalty |
-| Fresh vegetables | Texture penalty |
-| Salad | Cannot freeze |
-| Milk | Quality penalty |
-
-This prevents Freeze Storage from being the best answer for everything.
+Kept here rather than deleted so the numbers are recoverable if the tier is ever revived.
 
 ---
 
@@ -679,7 +643,7 @@ This preserves the topology decision: keep networks physically separate to recei
 | Regional Hub | 350 | 60 | 8 links | 25% | 600 food/day |
 | Central Hub | 800 | 140 | 14 links | 35% | 1,400 food/day |
 
-In the MVP, a hub always forms as a Small Hub. Regional Hub is reached by manually upgrading an existing Small Hub and paying the cost difference. Central Hub is out of MVP scope.
+**Only the Small Hub exists in the build.** Every hub is a Small Hub, built manually on any route tile. The Regional Hub upgrade was retired in v0.4 item 28 -- its tool, its 200 upgrade cost, and the REGIONAL enum value are all removed -- and Central Hub was never in MVP scope. The rows above are kept for the numbers, should either tier be revived.
 
 ### Hub last-delivery hover view (added in v0.3)
 
@@ -1354,7 +1318,7 @@ Overall status
 Top to bottom:
 
 - **Status:** current day and treasury on one row; grade, best score, and 7-day average score as three captioned numbers beneath it (LOOP-01/LOOP-06).
-- **Build tools:** every tool as a short, priced toggle in two columns -- Route §8 / Upgrade, then Normal §80 / Cool §180 / Freeze §400, then Hub §150 / Hub+ §200 / Bulldoze. The panel is narrow, so a button carries only its name and price; the full explanation is in its tooltip and, once selected, in the bottom hint bar. Each tool now exists exactly once, so there is no shortcut copy to keep in sync.
+- **Build tools:** every tool as a short, priced toggle in two columns -- Route §8 / Upgrade, then Normal §80 / Cool §180, then Hub §150 / Bulldoze. The panel is narrow, so a button carries only its name and price; the full explanation is in its tooltip and, once selected, in the bottom hint bar. Each tool now exists exactly once, so there is no shortcut copy to keep in sync.
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
@@ -1453,8 +1417,7 @@ One region with:
 - Route (Dirt / Paved / Main)
 - Normal Storage
 - Cool Storage
-- Freeze Storage
-- Hub — built manually on any existing route tile, always as a Small Hub (see §4.4). Regional Hub is a manual upgrade path from an existing Small Hub, not a placeable building in its own right.
+- Hub — built manually on any existing route tile, always as a Small Hub (see §4.4). Freeze Storage and the Regional Hub upgrade were retired in v0.4 item 28.
 
 ### MVP systems
 

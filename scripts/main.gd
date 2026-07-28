@@ -39,7 +39,7 @@ const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
 const BRIDGE_COLOR := Color("8FB9D8")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}
-const STORAGE_TOOLS := {"normal": GameEnums.StorageType.NORMAL, "cool": GameEnums.StorageType.COOL, "freeze": GameEnums.StorageType.FREEZE}
+const STORAGE_TOOLS := {"normal": GameEnums.StorageType.NORMAL, "cool": GameEnums.StorageType.COOL}
 const ZOOM_MIN := 14.0
 const ZOOM_MAX := 60.0
 const ZOOM_SPEED := 24.0 # camera.size units/sec while a zoom button is held
@@ -51,9 +51,7 @@ const TOOL_HINTS := {
 	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost).",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
-	"freeze": "Click an existing route tile to build Freeze Storage there (good for seafood -- some foods dislike freezing).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
-	"hubRegional": "Click an existing Small Hub to upgrade it to Regional for §200.",
 	"remove": "Click a built tile to bulldoze it, or drag across several to clear them all at once (no refund).",
 }
 
@@ -654,12 +652,10 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_tap_route(cell)
 		"upgrade":
 			_do_upgrade_route(cell)
-		"normal", "cool", "freeze":
+		"normal", "cool":
 			_do_build_storage(cell)
 		"hubBuild":
 			_do_build_hub(cell)
-		"hubRegional":
-			_do_upgrade_hub(cell)
 		"remove":
 			_do_bulldoze(cell)
 	_after_action()
@@ -726,19 +722,6 @@ func _do_build_hub(cell: Vector2i) -> void:
 	_state.balance -= cost
 	_state.grid[cell] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
 	_show_toast("Small Hub built for §%d." % roundi(cost))
-
-func _do_upgrade_hub(cell: Vector2i) -> void:
-	var cell_data = _state.grid.get(cell)
-	if cell_data == null or cell_data.kind != "hub" or cell_data.htype != GameEnums.HubType.SMALL:
-		_show_toast("Select an existing Small Hub to upgrade.", true)
-		return
-	var cost := GameBalance.HUB_REGIONAL_UPGRADE_COST
-	if _state.balance < cost:
-		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
-		return
-	_state.balance -= cost
-	cell_data.htype = GameEnums.HubType.REGIONAL
-	_show_toast("Upgraded to Regional Hub for §%d." % roundi(cost))
 
 func _do_bulldoze(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
@@ -1517,7 +1500,7 @@ func _build_tools_section(box: VBoxContainer) -> void:
 
 	_add_section_title(box, "STORAGE")
 	var storage_grid := _add_tool_grid(box)
-	for tool in ["normal", "cool", "freeze"]:
+	for tool in ["normal", "cool"]:
 		var st = GameBalance.STORAGE_TYPES[STORAGE_TOOLS[tool]]
 		var label: String = st.name.replace(" Storage", "")
 		_add_tool_button(storage_grid, "%s  §%d" % [label, roundi(st.build)], tool, "%s -- §%d to build, §%d/day upkeep, protects the next %d tiles at %d%% decay." % [st.name, roundi(st.build), roundi(st.upkeep), st.protection, roundi(st.mult * 100)])
@@ -1525,8 +1508,6 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "HUBS & CLEARING")
 	var hub_grid := _add_tool_grid(box)
 	_add_tool_button(hub_grid, "Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild", "Build a Small Hub on any existing route tile for §%d. Each connected road network supports %d hubs." % [roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), GameBalance.HUB_CAP_PER_NETWORK])
-	_add_tool_button(hub_grid, "Hub+  §%d" % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST), "hubRegional", "Upgrade an existing Small Hub to Regional for §%d." % roundi(GameBalance.HUB_REGIONAL_UPGRADE_COST))
-
 	_add_tool_button(hub_grid, "Bulldoze", "remove", "Remove a built tile, along with every connection touching it. No refund.")
 
 func _build_map_section(box: VBoxContainer) -> void:
@@ -1597,7 +1578,6 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, MarkerColors.SETTLEMENT_COLOR, "Settlement")
 	_add_legend_row(_legend_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
 	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
-	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.FREEZE].color, "Freeze storage")
 	_add_legend_row(_legend_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build on any route tile)")
 	_add_legend_row(_legend_box, Color("4FA8A0"), "Fork available -- Hub tool")
 	_add_legend_row(_legend_box, Color("8B6B9C"), "Junction over the hub cap")
