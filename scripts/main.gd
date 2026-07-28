@@ -1181,12 +1181,14 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 ## in a single tall column risked visually crowding the neighbor's own
 ## bubbles. A 2-column grid caps the stack at 2 rows regardless of how
 ## many foods are demanded.
-## Combined amount+freshness status, "weakest link" rule: RED whenever
-## nothing has arrived yet or what arrived came in below this
-## settlement's own min_freshness (regardless of amount); GREEN only
-## when the full requested amount arrived at bonus_freshness or above;
-## AMBER for every other combination (partial amount, or full amount but
-## sub-bonus freshness).
+## Status reads as one question asked twice: did it all get here, and was
+## it fresh enough? GREEN is the full requested amount at this
+## settlement's own bonus_freshness or above; AMBER is the full amount
+## below that threshold; RED is anything short, down to nothing arriving.
+## min_freshness is deliberately absent: SimulationEngine.run_day rejects
+## anything under it before it ever counts as delivered, so a bubble can
+## never see an average below that line and a rule testing for one would
+## be dead.
 ## A settlement whose every demanded food is GREEN has nothing the player
 ## can act on, so its whole stack collapses to one "All fresh" bubble --
 ## keeping the map's attention on the settlements still in trouble, and
@@ -1213,28 +1215,12 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 				avg_fresh = s.fresh_sum / delivered
 
 		var bubble_status: FoodBubbleMarker.Status
-		# How the delivered freshness alone rates, independent of amount:
-		# this colors the bubble's ring, so a red bubble distinguishes
-		# "nothing arrived" from "what arrived was stale".
-		var freshness_status := FoodBubbleMarker.Status.RED
-		var freshness_pct := -1
-		if delivered <= 0.0:
+		if delivered < requested - 0.01:
 			bubble_status = FoodBubbleMarker.Status.RED
+		elif avg_fresh >= n.bonus_freshness:
+			bubble_status = FoodBubbleMarker.Status.GREEN
 		else:
-			freshness_pct = roundi(avg_fresh)
-			if avg_fresh < n.min_freshness:
-				freshness_status = FoodBubbleMarker.Status.RED
-			elif avg_fresh >= n.bonus_freshness:
-				freshness_status = FoodBubbleMarker.Status.GREEN
-			else:
-				freshness_status = FoodBubbleMarker.Status.AMBER
-
-			if freshness_status == FoodBubbleMarker.Status.RED:
-				bubble_status = FoodBubbleMarker.Status.RED
-			elif delivered >= requested - 0.01 and freshness_status == FoodBubbleMarker.Status.GREEN:
-				bubble_status = FoodBubbleMarker.Status.GREEN
-			else:
-				bubble_status = FoodBubbleMarker.Status.AMBER
+			bubble_status = FoodBubbleMarker.Status.AMBER
 
 		if bubble_status != FoodBubbleMarker.Status.GREEN:
 			all_green = false
@@ -1243,8 +1229,7 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			"delivered": delivered,
 			"requested": requested,
 			"status": bubble_status,
-			"freshness_pct": freshness_pct,
-			"freshness_status": freshness_status,
+			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 		})
 
 	if entries.is_empty():
@@ -1271,7 +1256,7 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			e.requested,
 			e.status,
 			e.freshness_pct,
-			e.freshness_status,
+			n.bonus_freshness,
 		)
 
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),

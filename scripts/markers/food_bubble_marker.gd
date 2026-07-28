@@ -73,16 +73,14 @@ func setup_source(food: FoodData, used: float, produced: float, status: Status =
 	_canvas.set_source(food.color, _ratio_text(used, produced), status)
 	_bake()
 
-## freshness_pct >= 0 draws the freshness ring and percentage; pass -1
+## freshness_pct >= 0 fills the bar and prints the percentage; pass -1
 ## when nothing has arrived yet and an average freshness would be
-## meaningless. freshness_status colors the ring against this
-## settlement's own min/bonus thresholds, so a red bubble says which of
-## the two things went wrong -- an empty bar (nothing came) or a red ring
-## (what came was stale).
-func setup_settlement(food: FoodData, delivered: float, requested: float, status: Status, freshness_pct: int = -1, freshness_status: Status = Status.RED) -> void:
+## meaningless. bonus_freshness_pct places the tick the bar has to clear
+## for this settlement to count as green -- it is per-settlement data, so
+## the same 78% is a miss at a fussy city and a pass at a village.
+func setup_settlement(food: FoodData, delivered: float, requested: float, status: Status, freshness_pct: int = -1, bonus_freshness_pct: float = 0.0) -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE
-	var progress := 0.0 if requested <= 0.0 else delivered / requested
-	_canvas.set_settlement(food.color, _ratio_text(delivered, requested), status, progress, freshness_pct, freshness_status)
+	_canvas.set_settlement(food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
 	_bake()
 
 ## The collapsed stand-in for a settlement whose every demanded food came

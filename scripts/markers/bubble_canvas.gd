@@ -18,8 +18,7 @@ extends Control
 ##                     bar -- the bar belongs to settlements alone.
 ##   SETTLEMENT        a cream speech balloon: dark text, big corner
 ##                     radius, triangular tail, a status-coloured border,
-##                     and a delivered/requested progress bar along the
-##                     bottom.
+##                     and a freshness bar along the bottom.
 ##   SETTLEMENT_CLEAR  the collapsed summary drawn in place of a whole
 ##                     stack of green settlement bubbles.
 ##
@@ -112,15 +111,16 @@ const HALO_ALPHA := 0.22
 const STATUS_GLYPH_RATIO := 0.19
 const STATUS_GLYPH_MARGIN := 13.0
 
-## The freshness ring wrapped around a settlement's food dot.
-const RING_WIDTH := 5.0
-const RING_TRACK_COLOR := Color(0.15, 0.12, 0.08, 0.18)
-
-## Delivered/requested bar along the bottom of a settlement bubble.
+## Freshness bar along the bottom of a settlement bubble, with a tick at
+## the settlement's own bonus threshold -- the line the bar has to cross
+## to turn the bubble green. Without it "78%" means nothing until you
+## remember whether this particular town wanted 80 or 90.
 const BAR_INSET := 22.0
 const BAR_HEIGHT := 9.0
 const BAR_BOTTOM_MARGIN := 18.0
 const BAR_TRACK_COLOR := Color(0.15, 0.12, 0.08, 0.16)
+const BAR_TICK_COLOR := Color(0.15, 0.12, 0.08, 0.55)
+const BAR_TICK_WIDTH := 3.0
 
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
@@ -130,15 +130,13 @@ var _kind: FoodBubbleMarker.Kind = FoodBubbleMarker.Kind.SOURCE
 var _icon_color: Color = Color.WHITE
 var _amount_text: String = "0"
 var _status: FoodBubbleMarker.Status = FoodBubbleMarker.Status.DEFAULT
-## Settlement only: delivered/requested as 0..1 for the progress bar.
-var _progress: float = 0.0
 ## Settlement only: average freshness, or -1 when nothing has arrived and
-## freshness is therefore meaningless.
+## freshness is therefore meaningless. Drives both the bar and the small
+## percentage under the amount.
 var _freshness_pct: int = -1
-## Settlement only: how that freshness rates against this settlement's own
-## min/bonus thresholds, so the ring can say *why* a bubble is red --
-## an empty bar means no supply, a red ring means the supply was stale.
-var _freshness_status: FoodBubbleMarker.Status = FoodBubbleMarker.Status.RED
+## Settlement only: this settlement's bonus_freshness, as the 0..1 point
+## on the bar where the tick goes.
+var _threshold: float = 0.0
 
 static func status_color(status: FoodBubbleMarker.Status) -> Color:
 	match status:
@@ -157,14 +155,13 @@ func set_source(icon_color: Color, amount_text: String, status: FoodBubbleMarker
 	_status = status
 	queue_redraw()
 
-func set_settlement(icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status, progress: float, freshness_pct: int, freshness_status: FoodBubbleMarker.Status) -> void:
+func set_settlement(icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status, freshness_pct: int, threshold: float) -> void:
 	_kind = FoodBubbleMarker.Kind.SETTLEMENT
 	_icon_color = icon_color
 	_amount_text = amount_text
 	_status = status
-	_progress = progress
 	_freshness_pct = freshness_pct
-	_freshness_status = freshness_status
+	_threshold = threshold
 	queue_redraw()
 
 func set_all_clear(text: String) -> void:
@@ -244,20 +241,16 @@ func _draw_settlement() -> void:
 	# what is left above it rather than on the whole body.
 	var row_cy := rect.position.y + (rect.size.y - BAR_BOTTOM_MARGIN - BAR_HEIGHT) * 0.5
 
-	var ring_r := rect.size.y * 0.26
-	var icon_center := Vector2(rect.position.x + 14.0 + ring_r, row_cy)
-	draw_circle(icon_center, ring_r - RING_WIDTH - 2.0, _icon_color)
-	draw_arc(icon_center, ring_r - RING_WIDTH - 2.0, 0, TAU, 32, BORDER_COLOR, 2.0, true)
-	draw_arc(icon_center, ring_r, 0, TAU, 48, RING_TRACK_COLOR, RING_WIDTH, true)
-	if _freshness_pct >= 0:
-		var sweep := TAU * clampf(_freshness_pct / 100.0, 0.0, 1.0)
-		draw_arc(icon_center, ring_r, -PI * 0.5, -PI * 0.5 + sweep, 48, status_color(_freshness_status), RING_WIDTH, true)
+	var icon_r := rect.size.y * 0.26
+	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, row_cy)
+	draw_circle(icon_center, icon_r, _icon_color)
+	draw_arc(icon_center, icon_r, 0, TAU, 32, BORDER_COLOR, 2.0, true)
 
 	var glyph_r := rect.size.y * STATUS_GLYPH_RATIO
 	var glyph_center := Vector2(rect.end.x - STATUS_GLYPH_MARGIN - glyph_r, row_cy)
 	_draw_status_glyph(glyph_center, glyph_r, accent)
 
-	var text_x := icon_center.x + ring_r + 12.0
+	var text_x := icon_center.x + icon_r + 12.0
 	var text_w := glyph_center.x - glyph_r - 10.0 - text_x
 	if _freshness_pct >= 0:
 		_draw_fitted(_amount_text, text_x, text_w, row_cy - 14.0, int(rect.size.y * 0.40), TEXT_COLOR)
@@ -265,7 +258,7 @@ func _draw_settlement() -> void:
 	else:
 		_draw_fitted(_amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.42), TEXT_COLOR)
 
-	_draw_progress_bar(rect, accent)
+	_draw_freshness_bar(rect, accent)
 
 func _draw_settlement_clear() -> void:
 	var accent := GREEN_COLOR
@@ -320,7 +313,7 @@ func _draw_tail(rect: Rect2, accent: Color) -> void:
 		Vector2(cx, rect.end.y + TAIL_HEIGHT - 2.0),
 	]), accent)
 
-func _draw_progress_bar(rect: Rect2, accent: Color) -> void:
+func _draw_freshness_bar(rect: Rect2, accent: Color) -> void:
 	var y := rect.end.y - BAR_BOTTOM_MARGIN
 	var track := Rect2(
 		Vector2(rect.position.x + BAR_INSET, y),
@@ -333,15 +326,21 @@ func _draw_progress_bar(rect: Rect2, accent: Color) -> void:
 	track_box.set_corner_radius_all(radius)
 	draw_style_box(track_box, track)
 
-	var filled := clampf(_progress, 0.0, 1.0)
-	if filled <= 0.0:
-		return
-	# Never draw a fill narrower than it is tall -- a rounded box thinner
-	# than its own corner radius renders as a smear rather than a dot.
-	var fill_box := StyleBoxFlat.new()
-	fill_box.bg_color = accent
-	fill_box.set_corner_radius_all(radius)
-	draw_style_box(fill_box, Rect2(track.position, Vector2(maxf(track.size.x * filled, BAR_HEIGHT), BAR_HEIGHT)))
+	var filled := 0.0 if _freshness_pct < 0 else clampf(_freshness_pct / 100.0, 0.0, 1.0)
+	if filled > 0.0:
+		# Never draw a fill narrower than it is tall -- a rounded box
+		# thinner than its own corner radius renders as a smear.
+		var fill_box := StyleBoxFlat.new()
+		fill_box.bg_color = accent
+		fill_box.set_corner_radius_all(radius)
+		draw_style_box(fill_box, Rect2(track.position, Vector2(maxf(track.size.x * filled, BAR_HEIGHT), BAR_HEIGHT)))
+
+	# Drawn over the fill so it stays readable whichever side of the
+	# threshold the bar has reached.
+	var mark := clampf(_threshold, 0.0, 1.0)
+	if mark > 0.0 and mark < 1.0:
+		var x := track.position.x + track.size.x * mark
+		draw_line(Vector2(x, track.position.y - 1.0), Vector2(x, track.end.y + 1.0), BAR_TICK_COLOR, BAR_TICK_WIDTH)
 
 ## Returns the font size actually used, after shrink-to-fit.
 func _draw_fitted(text: String, x: float, max_width: float, center_y: float, start_size: int, color: Color) -> int:
