@@ -372,6 +372,30 @@ func _check_day_cycle(state: GameState) -> void:
 	assert(midday.pitch < dawn.pitch and midday.pitch < sunset.pitch, "The sun must sit highest at midday and low at dawn/sunset")
 	assert(DayCycle.label(0.40) == "Midday" and DayCycle.label(0.80) == "Sunset" and DayCycle.label(0.0) == "Dawn")
 
+	# Wall clock: a day opens at 5:00 am, midday reads noon, and the clock
+	# wraps back round rather than running past 24h at the rollover.
+	assert(DayCycle.clock_text(0.0) == "5:00 am", "A day must open at 5:00 am, got %s" % DayCycle.clock_text(0.0))
+	assert(DayCycle.clock_text(0.40) == "12:00 pm", "Midday must read 12:00 pm, got %s" % DayCycle.clock_text(0.40))
+	assert(DayCycle.clock_text(0.76) == "6:30 pm", "Sunset must read 6:30 pm, got %s" % DayCycle.clock_text(0.76))
+	assert(DayCycle.clock_text(0.95) == "11:00 pm", "Night must read 11:00 pm, got %s" % DayCycle.clock_text(0.95))
+	assert(DayCycle.clock_text(0.9999).ends_with("am"), "The last moment of a day must have wrapped past midnight")
+	assert(midday.minutes > dawn.minutes and night.minutes > sunset.minutes, "The wall clock must run forward through the day")
+
+	# The sun sweeps a full turn, which is what makes shadows travel, and it
+	# lands on the same orientation it started at (-282 == +78 mod 360).
+	assert(absf(DayCycle.sample(0.9999).yaw - (dawn.yaw - 360.0)) < 1.0, "The sun's sweep must land back where it started, one turn on")
+	assert(midday.shadow > night.shadow, "Shadows must be strongest by day and faintest under moonlight")
+
+	# Shadows are actually on in the scene, or none of the above is visible.
+	var sun: DirectionalLight3D = _main.get_node("DirectionalLight3D")
+	assert(sun.shadow_enabled, "The sun must cast shadows")
+	# The range has to reach past the deepest view the camera can pull back to
+	# (ZOOM_MAX of 60 over a ~60-degree tilt is roughly 69 units of ground), or
+	# shadows visibly cut off partway across a zoomed-out map. It is otherwise
+	# kept as tight as possible: a wider range spreads the same shadow map over
+	# more ground, and the grass tufts start aliasing into a hatch.
+	assert(sun.directional_shadow_max_distance >= 69.0, "The shadow range must cover the map at full zoom-out")
+
 	# Continuity across the rollover: the last moment of a day and the first
 	# moment of the next must be the same light, or the sky visibly snaps.
 	var end_of_day := DayCycle.sample(0.9999)

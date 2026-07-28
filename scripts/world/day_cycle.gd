@@ -16,20 +16,31 @@ class_name DayCycle
 ## directly in the dev checks; Main just feeds it a phase and applies the
 ## result (see apply()).
 
-## Keyframes in phase order. `pitch` is the sun's rotation about X in
-## degrees (shallower = lower in the sky); `light`/`energy` are the
-## directional light's colour and strength; `sky` is the background colour;
-## `ambient`/`ambient_energy` fill the shadowed faces so nothing goes pure
-## black at night.
+## Keyframes in phase order.
+##
+## - `minutes` is the wall-clock time of day, in minutes from midnight, so
+##   the panel can read "6:24 pm". The last keyframe runs past 24h (1740 =
+##   5:00 am the next morning) purely to keep the interpolation monotonic
+##   across the rollover; clock_text() wraps it back into a real time.
+## - `pitch`/`yaw` are the sun's rotation in degrees. Pitch is how high it
+##   sits (shallower = nearer the horizon = longer shadows). Yaw sweeps
+##   through a full turn over the day, which is what makes shadows visibly
+##   travel; the last keyframe is -282, the same orientation as the first
+##   (+78) one turn on, so the sweep never doubles back or snaps.
+## - `light`/`energy` are the directional light's colour and strength, and
+##   `shadow` its opacity -- shadows are crisp at midday, soft at dawn and
+##   dusk, and barely there under moonlight.
+## - `sky` is the background colour; `ambient`/`ambient_energy` fill the
+##   shadowed faces so nothing goes pure black at night.
 const KEYFRAMES: Array[Dictionary] = [
-	{"at": 0.00, "name": "Dawn", "pitch": -12.0, "light": Color("FFB27A"), "energy": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35},
-	{"at": 0.18, "name": "Morning", "pitch": -35.0, "light": Color("FFE0B8"), "energy": 1.00, "sky": Color("8FBBD9"), "ambient": Color("B9CBDD"), "ambient_energy": 0.55},
-	{"at": 0.40, "name": "Midday", "pitch": -70.0, "light": Color("FFFFFF"), "energy": 1.35, "sky": Color("8CC6E8"), "ambient": Color("FFFFFF"), "ambient_energy": 0.60},
-	{"at": 0.60, "name": "Afternoon", "pitch": -45.0, "light": Color("FFEBC4"), "energy": 1.10, "sky": Color("93C4E0"), "ambient": Color("E8EEF5"), "ambient_energy": 0.55},
-	{"at": 0.76, "name": "Sunset", "pitch": -12.0, "light": Color("FF9046"), "energy": 0.80, "sky": Color("E2926B"), "ambient": Color("C08A78"), "ambient_energy": 0.40},
-	{"at": 0.88, "name": "Dusk", "pitch": -6.0, "light": Color("8E7BC4"), "energy": 0.35, "sky": Color("4A4E75"), "ambient": Color("4E5378"), "ambient_energy": 0.28},
-	{"at": 0.95, "name": "Night", "pitch": -50.0, "light": Color("7C93C8"), "energy": 0.18, "sky": Color("1E2440"), "ambient": Color("2A3352"), "ambient_energy": 0.22},
-	{"at": 1.00, "name": "Dawn", "pitch": -12.0, "light": Color("FFB27A"), "energy": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35},
+	{"at": 0.00, "name": "Dawn", "minutes": 300, "pitch": -12.0, "yaw": 78.0, "light": Color("FFB27A"), "energy": 0.55, "shadow": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35},
+	{"at": 0.18, "name": "Morning", "minutes": 480, "pitch": -35.0, "yaw": 50.0, "light": Color("FFE0B8"), "energy": 1.00, "shadow": 0.85, "sky": Color("8FBBD9"), "ambient": Color("B9CBDD"), "ambient_energy": 0.55},
+	{"at": 0.40, "name": "Midday", "minutes": 720, "pitch": -70.0, "yaw": 8.0, "light": Color("FFFFFF"), "energy": 1.35, "shadow": 1.00, "sky": Color("8CC6E8"), "ambient": Color("FFFFFF"), "ambient_energy": 0.60},
+	{"at": 0.60, "name": "Afternoon", "minutes": 900, "pitch": -45.0, "yaw": -30.0, "light": Color("FFEBC4"), "energy": 1.10, "shadow": 0.90, "sky": Color("93C4E0"), "ambient": Color("E8EEF5"), "ambient_energy": 0.55},
+	{"at": 0.76, "name": "Sunset", "minutes": 1110, "pitch": -12.0, "yaw": -70.0, "light": Color("FF9046"), "energy": 0.80, "shadow": 0.70, "sky": Color("E2926B"), "ambient": Color("C08A78"), "ambient_energy": 0.40},
+	{"at": 0.88, "name": "Dusk", "minutes": 1200, "pitch": -8.0, "yaw": -85.0, "light": Color("8E7BC4"), "energy": 0.35, "shadow": 0.35, "sky": Color("4A4E75"), "ambient": Color("4E5378"), "ambient_energy": 0.28},
+	{"at": 0.95, "name": "Night", "minutes": 1380, "pitch": -50.0, "yaw": -160.0, "light": Color("7C93C8"), "energy": 0.18, "shadow": 0.20, "sky": Color("1E2440"), "ambient": Color("2A3352"), "ambient_energy": 0.22},
+	{"at": 1.00, "name": "Dawn", "minutes": 1740, "pitch": -12.0, "yaw": -282.0, "light": Color("FFB27A"), "energy": 0.55, "shadow": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35},
 ]
 
 ## The lighting at `phase`, linearly interpolated between the two keyframes
@@ -44,7 +55,10 @@ static func sample(phase: float) -> Dictionary:
 			var t: float = 0.0 if span <= 0.0 else (p - previous.at) / span
 			return {
 				"name": previous.name,
+				"minutes": lerpf(previous.minutes, key.minutes, t),
 				"pitch": lerpf(previous.pitch, key.pitch, t),
+				"yaw": lerpf(previous.yaw, key.yaw, t),
+				"shadow": lerpf(previous.shadow, key.shadow, t),
 				"light": previous.light.lerp(key.light, t),
 				"energy": lerpf(previous.energy, key.energy, t),
 				"sky": previous.sky.lerp(key.sky, t),
@@ -61,15 +75,28 @@ static func sample(phase: float) -> Dictionary:
 static func label(phase: float) -> String:
 	return sample(phase).name
 
-## Pushes one sampled moment onto the scene's sun and environment. The sun's
-## yaw is deliberately left alone -- swinging it too would have to snap back
-## at the rollover, which reads as the light spinning.
+## The wall-clock time at `phase`, as the panel shows it: "5:00 am",
+## "12:30 pm", "11:47 pm". A day opens at 5:00 am (dawn) and the clock runs
+## round to 5:00 am again as it rolls over.
+static func clock_text(phase: float) -> String:
+	var minutes := posmod(roundi(sample(phase).minutes), 1440)
+	var hour := minutes / 60
+	var minute := minutes % 60
+	var suffix := "am" if hour < 12 else "pm"
+	var display_hour := hour % 12
+	if display_hour == 0:
+		display_hour = 12
+	return "%d:%02d %s" % [display_hour, minute, suffix]
+
+## Pushes one sampled moment onto the scene's sun and environment.
 static func apply(phase: float, sun: DirectionalLight3D, environment: Environment) -> void:
 	var moment := sample(phase)
 	if sun != null:
 		sun.rotation_degrees.x = moment.pitch
+		sun.rotation_degrees.y = moment.yaw
 		sun.light_color = moment.light
 		sun.light_energy = moment.energy
+		sun.shadow_opacity = moment.shadow
 	if environment != null:
 		environment.background_color = moment.sky
 		environment.ambient_light_color = moment.ambient

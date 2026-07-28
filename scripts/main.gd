@@ -832,7 +832,8 @@ func _cycle_speed() -> void:
 func _update_clock_ui() -> void:
 	if _clock_time_label == null:
 		return
-	_clock_day_label.text = "Day %d · %s" % [_state.day, DayCycle.label(_day_phase())]
+	var phase := _day_phase()
+	_clock_day_label.text = "Day %d · %s" % [_state.day, DayCycle.clock_text(phase)]
 	var remaining: float = maxf(_state.day_time_left, 0.0)
 	# Only rewrite the countdown when the displayed second actually changes.
 	var whole_sec := ceili(remaining)
@@ -847,11 +848,11 @@ func _update_clock_ui() -> void:
 	_speed_button.disabled = not _state.auto_run
 	_report_button.disabled = _last_report == null
 	if not _state.auto_run:
-		_clock_mode_label.text = "Manual -- run the day yourself"
+		_clock_mode_label.text = "%s · manual -- run the day yourself" % DayCycle.label(phase)
 	elif _state.clock_paused:
-		_clock_mode_label.text = "Paused -- space or Resume to continue"
+		_clock_mode_label.text = "%s · paused -- space or Resume" % DayCycle.label(phase)
 	else:
-		_clock_mode_label.text = "Day runs itself at 0:00"
+		_clock_mode_label.text = "%s · day runs itself at 0:00" % DayCycle.label(phase)
 
 func _clock_color(remaining: float) -> Color:
 	if not _state.auto_run or _state.clock_paused:

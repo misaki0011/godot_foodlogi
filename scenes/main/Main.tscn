@@ -21,7 +21,12 @@ environment = SubResource("1")
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 position = Vector3(10, 20, 10)
 rotation = Vector3(-0.95, 0.6, 0)
-shadow_enabled = false
+shadow_enabled = true
+shadow_bias = 0.06
+shadow_normal_bias = 4.0
+shadow_blur = 1.5
+directional_shadow_mode = 0
+directional_shadow_max_distance = 70.0
 
 [node name="Camera3D" type="Camera3D" parent="."]
 position = Vector3(21.833, 36.641, 34.833)
