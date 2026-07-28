@@ -105,6 +105,13 @@ const GREEN_WASH_ALPHA := 0.05
 const HALO_GROW := 6.0
 const HALO_ALPHA := 0.22
 
+## Status glyph radius as a fraction of body height. This is the one part
+## of a settlement bubble that survives being colourblind, so it is sized
+## as a peer of the food dot rather than as a badge tucked in the corner
+## -- it has to be legible before the numbers are.
+const STATUS_GLYPH_RATIO := 0.19
+const STATUS_GLYPH_MARGIN := 13.0
+
 ## The freshness ring wrapped around a settlement's food dot.
 const RING_WIDTH := 5.0
 const RING_TRACK_COLOR := Color(0.15, 0.12, 0.08, 0.18)
@@ -246,12 +253,12 @@ func _draw_settlement() -> void:
 		var sweep := TAU * clampf(_freshness_pct / 100.0, 0.0, 1.0)
 		draw_arc(icon_center, ring_r, -PI * 0.5, -PI * 0.5 + sweep, 48, status_color(_freshness_status), RING_WIDTH, true)
 
-	var glyph_r := rect.size.y * 0.135
-	var glyph_center := Vector2(rect.end.x - 16.0 - glyph_r, row_cy)
+	var glyph_r := rect.size.y * STATUS_GLYPH_RATIO
+	var glyph_center := Vector2(rect.end.x - STATUS_GLYPH_MARGIN - glyph_r, row_cy)
 	_draw_status_glyph(glyph_center, glyph_r, accent)
 
 	var text_x := icon_center.x + ring_r + 12.0
-	var text_w := glyph_center.x - glyph_r - 12.0 - text_x
+	var text_w := glyph_center.x - glyph_r - 10.0 - text_x
 	if _freshness_pct >= 0:
 		_draw_fitted(_amount_text, text_x, text_w, row_cy - 14.0, int(rect.size.y * 0.40), TEXT_COLOR)
 		_draw_fitted("%d%%" % _freshness_pct, text_x, text_w, row_cy + 24.0, int(rect.size.y * 0.20), SUBTEXT_COLOR)
@@ -372,9 +379,12 @@ func _draw_cross(center: Vector2, r: float, color: Color) -> void:
 	draw_line(center + Vector2(-a, -a), center + Vector2(a, a), color, r * 0.28, true)
 	draw_line(center + Vector2(-a, a), center + Vector2(a, -a), color, r * 0.28, true)
 
+## Stroked heavier than the cross and check: a bare vertical bar covers
+## far less area than they do at the same weight, and read as the faint
+## one of the three sitting side by side on the map.
 func _draw_bang(center: Vector2, r: float, color: Color) -> void:
-	draw_line(center + Vector2(0, -r * 0.70), center + Vector2(0, r * 0.15), color, r * 0.28, true)
-	draw_circle(center + Vector2(0, r * 0.62), r * 0.16, color)
+	draw_line(center + Vector2(0, -r * 0.72), center + Vector2(0, r * 0.16), color, r * 0.34, true)
+	draw_circle(center + Vector2(0, r * 0.66), r * 0.19, color)
 
 ## Outgoing supply: what this node hands out, as opposed to a
 ## settlement's incoming demand.
