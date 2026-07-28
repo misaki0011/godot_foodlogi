@@ -12,6 +12,9 @@ func _initialize() -> void:
 	_test_established_route_cells()
 	_test_hub_buildable_on_any_route_tile()
 	_test_delivery_does_not_transit_nodes()
+	_test_bridge_keeps_crossing_routes_separate()
+	_test_bridge_cap_per_network()
+	_test_bridge_deck_costs_extra_freshness()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -20,7 +23,7 @@ func _test_route_build_cost() -> void:
 	var plains_cost := SimulationEngine.route_build_cost(Vector2i(4, 4), map)
 	assert(is_equal_approx(plains_cost, GameBalance.ROUTE_BUILD_COST))
 	var river_cost := SimulationEngine.route_build_cost(Vector2i(GameBalance.RIVER_COL, 4), map)
-	assert(is_equal_approx(river_cost, GameBalance.ROUTE_BUILD_COST + GameBalance.BRIDGE_COST), "River tiles must add the bridge surcharge")
+	assert(is_equal_approx(river_cost, GameBalance.ROUTE_BUILD_COST + GameBalance.RIVER_BRIDGE_COST), "River tiles must add the bridge surcharge")
 
 func _test_storage_preservation() -> void:
 	var state := GameState.new()
@@ -164,6 +167,100 @@ func _test_delivery_does_not_transit_nodes() -> void:
 	assert(SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 4), grain).is_empty(), "A delivery must not route through an intermediate settlement/source node")
 	# The source still reaches the settlement it connects to over clear road.
 	assert(not SimulationEngine.find_path(state, nodes, Vector2i(0, 0), Vector2i(0, 2), grain).is_empty(), "A source must still reach a settlement over a clear road path")
+
+## The whole point of a bridge: two routes share one cell and stay separate
+## networks. Layout -- a north-south road from source S down to settlement A,
+## bridged at its midpoint, and an east-west road from source E that crosses
+## over the deck on its way to settlement W.
+##
+##            S                     W --- [X] --- E     (X = the bridge tile)
+##            |                            |
+##           [X]  <- same tile             A
+##            |
+##            A
+func _test_bridge_keeps_crossing_routes_separate() -> void:
+	var grain: FoodData = GameBalance.food_types().grain
+	var bridge := Vector2i(2, 2)
+	var nodes := {}
+	nodes[Vector2i(2, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S, north
+	nodes[Vector2i(2, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # A, south
+	nodes[Vector2i(4, 2)] = _make_node(GameEnums.NodeType.SOURCE)      # E, east
+	nodes[Vector2i(0, 2)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # W, west
+
+	var state := GameState.new()
+	for cell in [Vector2i(2, 1), Vector2i(2, 3), Vector2i(1, 2), Vector2i(3, 2)]:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	# The north-south road came first, so the deck runs east-west across it.
+	state.grid[bridge] = {"kind": "route", "level": "dirt", "bridge_axis": Vector2i(1, 0)}
+	var north_south: Array[Vector2i] = [Vector2i(2, 0), Vector2i(2, 1), bridge, Vector2i(2, 3), Vector2i(2, 4)]
+	var east_west: Array[Vector2i] = [Vector2i(4, 2), Vector2i(3, 2), bridge, Vector2i(1, 2), Vector2i(0, 2)]
+	_connect_chain(state, north_south)
+	_connect_chain(state, east_west)
+
+	# Each road still works end to end straight through the crossing.
+	assert(not SimulationEngine.find_path(state, nodes, Vector2i(2, 0), Vector2i(2, 4), grain).is_empty(), "The road under a bridge must still run straight through it")
+	assert(not SimulationEngine.find_path(state, nodes, Vector2i(4, 2), Vector2i(0, 2), grain).is_empty(), "The deck must carry its own route straight over the bridge")
+	# But neither can turn onto the other: that's the whole feature.
+	assert(SimulationEngine.find_path(state, nodes, Vector2i(2, 0), Vector2i(0, 2), grain).is_empty(), "A delivery must never turn off the road below onto the deck")
+	assert(SimulationEngine.find_path(state, nodes, Vector2i(4, 2), Vector2i(2, 4), grain).is_empty(), "A delivery must never drop off the deck onto the road below")
+	# Two separate networks, despite physically sharing a cell.
+	var comp_of := SimulationEngine.road_components(state)
+	assert(comp_of[SimulationEngine.vertex(Vector2i(2, 1), SimulationEngine.LANE_GROUND)] != comp_of[SimulationEngine.vertex(Vector2i(1, 2), SimulationEngine.LANE_GROUND)],
+		"Roads crossing at a bridge must stay separate connected networks")
+	# Both crossings are live routes, so the overlay lights up both lanes.
+	var est := SimulationEngine.established_route_vertices(state, nodes)
+	assert(est.has(SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)), "The road under a live bridge must be established")
+	assert(est.has(SimulationEngine.vertex(bridge, SimulationEngine.LANE_DECK)), "The deck of a live bridge must be established")
+
+func _test_bridge_cap_per_network() -> void:
+	# One straight road with enough tiles to bridge every other one. A bridge
+	# counts against the network of the road it sits on, so the cap bites once
+	# BRIDGE_CAP_PER_NETWORK of them exist -- even though nothing has been
+	# drawn across any of them yet.
+	var state := GameState.new()
+	var spine: Array[Vector2i] = []
+	for x in range(1, 10):
+		var cell := Vector2i(x, 5)
+		spine.append(cell)
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	_connect_chain(state, spine)
+
+	for i in range(GameBalance.BRIDGE_CAP_PER_NETWORK):
+		var cell: Vector2i = spine[i * 2 + 1]
+		assert(not SimulationEngine.network_at_bridge_cap(state, cell), "A network under its bridge cap must accept another bridge")
+		state.grid[cell]["bridge_axis"] = Vector2i(0, 1)
+	for cell in spine:
+		if not SimulationEngine.is_bridge(state, cell):
+			assert(SimulationEngine.network_at_bridge_cap(state, cell), "Every remaining tile on an at-cap network must refuse a new bridge")
+
+	# A second, unconnected road gets its own budget.
+	var other := Vector2i(1, 9)
+	state.grid[other] = {"kind": "route", "level": "dirt"}
+	assert(not SimulationEngine.network_at_bridge_cap(state, other), "An unconnected road network must have its own bridge budget")
+
+func _test_bridge_deck_costs_extra_freshness() -> void:
+	# The same straight run, once as plain road and once with its middle tile
+	# bridged. Crossing the deck must cost strictly more freshness -- that's
+	# what stops an overpass from being a free upgrade over going around.
+	var milk: FoodData = GameBalance.food_types().milk
+	var path: Array[Vector2i] = [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0)]
+	var plain := GameState.new()
+	var bridged := GameState.new()
+	for cell in path:
+		plain.grid[cell] = {"kind": "route", "level": "dirt"}
+		bridged.grid[cell] = {"kind": "route", "level": "dirt"}
+	# Deck runs east-west, i.e. along the path -- so this path IS on the deck.
+	bridged.grid[Vector2i(2, 0)]["bridge_axis"] = Vector2i(1, 0)
+	var over_deck := SimulationEngine.simulate_freshness(bridged, path, milk)
+	assert(over_deck < SimulationEngine.simulate_freshness(plain, path, milk), "Crossing a bridge deck must cost extra freshness decay")
+
+	# The road passing UNDERNEATH pays nothing extra: same tile, other axis.
+	var under: Array[Vector2i] = [Vector2i(2, -1), Vector2i(2, 0), Vector2i(2, 1)]
+	var under_plain: Array[Vector2i] = [Vector2i(5, -1), Vector2i(5, 0), Vector2i(5, 1)]
+	for cell in under_plain:
+		bridged.grid[cell] = {"kind": "route", "level": "dirt"}
+	assert(is_equal_approx(SimulationEngine.simulate_freshness(bridged, under, milk), SimulationEngine.simulate_freshness(bridged, under_plain, milk)),
+		"The road under a bridge must decay exactly like plain road")
 
 ## Connects each consecutive pair in `cells` -- mirrors what a real drag
 ## gesture would link, since state.grid[cell] = ... no longer implies

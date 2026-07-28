@@ -188,17 +188,27 @@ func _report() -> void:
 
 	_check_tool_sweeps(state, camera, terrain, route_to_settlement_b, route_to_settlement_c)
 
-	# Storage tool: only buildable on an existing route tile.
+	_check_bridge_tool(state, camera, terrain)
+
+	# Storage tool: only buildable on an existing route tile, and it remembers
+	# the road it covered so it can be drawn over it and hand it back.
 	_main.call("_set_tool", "cool")
 	_main.call("_handle_click", mid_cell)
 	assert(state.grid[mid_cell].kind == "storage")
 	assert(state.grid[mid_cell].stype == GameEnums.StorageType.COOL)
+	assert(state.grid[mid_cell].get("level", "") == "dirt", "Storage must remember the level of the road it was built on")
+	_check_structure_renders_on_its_road(terrain, mid_cell)
 
-	# Bulldoze: removes the tile with no refund.
+	# Bulldoze takes the BUILDING off first, leaving the road it stood on -- a
+	# storage tile follows the same rule as a hub or a bridge. Clearing the road
+	# itself is a second click. Neither refunds.
 	_main.call("_set_tool", "remove")
 	var balance_before_bulldoze: float = state.balance
 	_main.call("_handle_click", mid_cell)
-	assert(not state.grid.has(mid_cell))
+	assert(state.grid.has(mid_cell), "Bulldozing storage must leave the road it was built on behind")
+	assert(state.grid[mid_cell].kind == "route" and state.grid[mid_cell].level == "dirt", "A bulldozed storage tile must hand its road back at the level it was")
+	_main.call("_handle_click", mid_cell)
+	assert(not state.grid.has(mid_cell), "A second bulldoze must clear the bare road tile")
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
 
 	# Tapping a settlement (any tool) shows its info tip, not a dialog, and
@@ -226,9 +236,13 @@ func _report() -> void:
 ## dragged from the farm reports the farm; one connected to no source at all
 ## reports nothing and stays untinted.
 func _check_route_source_attribution(state: GameState, farm_road: Vector2i, sourceless_road: Vector2i, farm: NodeData) -> void:
-	var by_cell: Dictionary = _main.call("_established_sources_by_cell")
-	assert(by_cell.get(farm_road, []) == [farm.node_id], "A road delivering from the farm must be attributed to the farm")
-	assert(by_cell.get(sourceless_road, []).is_empty(), "A road on no source's delivery path must be attributed to none")
+	# Keyed by graph vertex since bridges landed (a crossing's deck and the road
+	# under it are attributed separately); plain road only ever has a ground lane.
+	var by_vertex: Dictionary = _main.call("_established_sources_by_vertex")
+	var farm_vertex := SimulationEngine.vertex(farm_road, SimulationEngine.LANE_GROUND)
+	var sourceless_vertex := SimulationEngine.vertex(sourceless_road, SimulationEngine.LANE_GROUND)
+	assert(by_vertex.get(farm_vertex, []) == [farm.node_id], "A road delivering from the farm must be attributed to the farm")
+	assert(by_vertex.get(sourceless_vertex, []).is_empty(), "A road on no source's delivery path must be attributed to none")
 	# The overlay colour follows what the source produces, not the shared
 	# source-marker colour -- that's the whole point of colouring by source.
 	var grain_color: Color = GameBalance.food_types()["grain"].color
@@ -240,6 +254,165 @@ func _check_route_source_attribution(state: GameState, farm_road: Vector2i, sour
 	assert(two_a < 0.0 and two_b > 0.0 and is_equal_approx(two_a, -two_b), "Two sources sharing a road must straddle its centre evenly")
 	assert(_main.call("_shared_source_ids", ["farm", "dairy"], ["dairy", "harbor"]) == ["dairy"], "A shared stretch carries exactly the sources both tiles have")
 	print("Route source attribution (ROUTE-16) checks passed.")
+
+## ROUTE-17: the Bridge tool, end to end through the real UI. A bridge is a
+## PLACED STRUCTURE -- the player builds a road, clicks the Bridge tool on a
+## straight run of it, and only then may a second route be dragged straight
+## over the deck. Works in an empty corner of the map (column 17, rows 9-13,
+## clear of every node placement) so nothing here disturbs the earlier checks.
+func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) -> void:
+	var road: Array[Vector2i] = [Vector2i(17, 9), Vector2i(17, 10), Vector2i(17, 11), Vector2i(17, 12), Vector2i(17, 13)]
+	for cell in road:
+		assert(not state.grid.has(cell), "The bridge checks need a clear stretch of map to work in")
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	for i in range(1, road.size()):
+		state.add_connection(road[i - 1], road[i])
+	var bridge: Vector2i = road[2]
+	# Two tiles are paid up past Dirt, so the bulldoze checks below can prove a
+	# cleared structure hands its road back at the level it actually was.
+	state.grid[bridge].level = "paved"
+	state.grid[road[3]].level = "main"
+
+	_main.call("_set_tool", "bridgeBuild")
+	# A dead end isn't a straight run: there's no "across" to span.
+	var balance_before: float = state.balance
+	_main.call("_handle_click", road[4])
+	assert(not SimulationEngine.is_bridge(state, road[4]), "A bridge must be refused on a tile that isn't a straight through-run of road")
+	assert(is_equal_approx(state.balance, balance_before), "A refused bridge must not charge the player")
+
+	# The mid-run tile does qualify, and the deck spans ACROSS the road: the
+	# road here runs north-south, so the deck runs east-west.
+	_main.call("_handle_click", bridge)
+	assert(SimulationEngine.is_bridge(state, bridge), "The Bridge tool must convert a straight run of route tile into a crossing")
+	assert(SimulationEngine.bridge_axis(state, bridge) == Vector2i(1, 0), "A deck must run across the road it crosses, not along it")
+	assert(is_equal_approx(state.balance, balance_before - GameBalance.BRIDGE_BUILD_COST), "Building a bridge must cost BRIDGE_BUILD_COST")
+	assert(state.grid[bridge].kind == "route", "A bridge tile stays a route tile -- the road underneath keeps running")
+
+	# A bridge tile carries two roads already: nothing else can go on it, and
+	# no drag may anchor to it.
+	for tool in ["hubBuild", "cool"]:
+		_main.call("_set_tool", tool)
+		_main.call("_handle_click", bridge)
+		assert(state.grid[bridge].kind == "route", "Nothing may be built on top of a bridge tile (tool: %s)" % tool)
+	var bridge_screen := camera.unproject_position(terrain.map_to_local(Vector3i(bridge.x, 0, bridge.y)) + Vector3.UP)
+	_main.call("_set_tool", "route")
+	_main.call("_start_press", bridge_screen)
+	assert(not _main.get("_press_eligible"), "Pressing on a bridge must not start a route drag -- a crossing is passed over, never anchored to")
+
+	# Now the crossing route itself: two unfinished stubs either side, dragged
+	# straight over the deck. This is the ONE case where a drag may run over a
+	# cell that already exists.
+	var west := Vector2i(15, 11)
+	var east := Vector2i(19, 11)
+	for cell in [west, east]:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	var across: Array[Vector2i] = [west, Vector2i(16, 11), bridge, Vector2i(18, 11), east]
+	_main.set("_drag_path", across)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag straight over a bridge deck must be valid: %s" % _main.get("_drag_invalid_reason"))
+	var balance_before_cross: float = state.balance
+	_main.call("_commit_drag")
+	assert(state.grid.has(Vector2i(16, 11)) and state.grid.has(Vector2i(18, 11)), "The crossing drag must build the fresh ground either side of the deck")
+	assert(is_equal_approx(state.balance, balance_before_cross - 2 * GameBalance.ROUTE_BUILD_COST), "A crossing drag pays only for the new tiles, never again for the bridge it crosses")
+
+	# The whole point: two routes through one cell, still two networks.
+	var comp_of := SimulationEngine.road_components(state)
+	assert(comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)] != comp_of[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+		"Two routes crossing at a bridge must stay separate connected networks")
+	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] == comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)],
+		"A bridge's ground lane belongs to the road running underneath it")
+	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_DECK)] == comp_of[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+		"A bridge's deck belongs to the route crossing over it")
+
+	# Straight over, or not at all: no turning on the deck, no stopping on it.
+	var turns: Array[Vector2i] = [west, Vector2i(16, 11), bridge, road[3]]
+	_main.set("_drag_path", turns)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag must not turn a corner on a bridge deck")
+	var stops: Array[Vector2i] = [west, Vector2i(16, 11), bridge]
+	_main.set("_drag_path", stops)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag must not stop on a bridge deck")
+
+	# The per-network cap: a second bridge is fine, a third is refused.
+	_main.call("_set_tool", "bridgeBuild")
+	_main.call("_handle_click", road[1])
+	assert(SimulationEngine.is_bridge(state, road[1]), "A road network under its bridge cap must accept another bridge")
+	var balance_at_cap: float = state.balance
+	_main.call("_handle_click", road[3])
+	assert(not SimulationEngine.is_bridge(state, road[3]), "A road network at BRIDGE_CAP_PER_NETWORK (%d) must refuse another bridge" % GameBalance.BRIDGE_CAP_PER_NETWORK)
+	assert(is_equal_approx(state.balance, balance_at_cap), "A bridge refused by the cap must not charge the player")
+
+	# Bulldozing a bridge takes the STRUCTURE away, not the road it was built
+	# on: the tile survives as a route tile AT ITS OWN LEVEL, still carrying the
+	# road that ran underneath, while the route that crossed over is cut.
+	# Merging the two instead would silently join the networks the crossing was
+	# keeping apart, and resetting to dirt would bin paving nobody asked to lose.
+	_main.call("_set_tool", "remove")
+	var balance_before_clear: float = state.balance
+	_main.call("_handle_click", bridge)
+	assert(state.grid.has(bridge), "Bulldozing a bridge must leave the road it was built on behind")
+	assert(not SimulationEngine.is_bridge(state, bridge), "Bulldozing a bridge must remove the deck")
+	assert(state.grid[bridge].kind == "route", "A bulldozed bridge must leave a route tile")
+	assert(state.grid[bridge].level == "paved", "A bulldozed bridge must hand its road back at the level it was, not reset it to dirt")
+	assert(state.has_connection(bridge, road[1]) and state.has_connection(bridge, road[3]), "The road under a bulldozed bridge must stay connected")
+	assert(not state.has_connection(bridge, Vector2i(16, 11)) and not state.has_connection(bridge, Vector2i(18, 11)),
+		"Bulldozing a bridge must cut the route that crossed over it, not merge it into the road below")
+	var comp_after := SimulationEngine.road_components(state)
+	assert(comp_after[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] != comp_after[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+		"The two roads must stay separate networks after the bridge between them is cleared")
+	assert(is_equal_approx(state.balance, balance_before_clear), "Bulldoze must not refund")
+
+	# Same rule for a hub: the structure goes, the road stays at its own level.
+	# A hub cell replaces the route cell outright, so the level has to survive
+	# on the hub cell itself for this to be possible at all.
+	_main.call("_set_tool", "hubBuild")
+	_main.call("_handle_click", road[3])
+	assert(state.grid[road[3]].kind == "hub", "The hub checks need a hub on the road first")
+	assert(state.grid[road[3]].get("level", "") == "main", "A hub must remember the level of the road it was built on")
+	_check_structure_renders_on_its_road(terrain, road[3])
+	_main.call("_set_tool", "remove")
+	_main.call("_handle_click", road[3])
+	assert(state.grid.has(road[3]), "Bulldozing a hub must leave the road it was built on behind")
+	assert(state.grid[road[3]].kind == "route", "A bulldozed hub must leave a route tile")
+	assert(state.grid[road[3]].level == "main", "A bulldozed hub must hand its road back at the level it was, not reset it to dirt")
+	assert(state.has_connection(road[3], road[2]) and state.has_connection(road[3], road[4]), "The road under a bulldozed hub must stay connected")
+	assert(not SimulationEngine.network_at_hub_cap(state, road[3]), "Bulldozing a hub must free its slot in the per-network cap")
+
+	# Clear up so the later tool checks see the map they expect.
+	for cell in state.grid.keys():
+		if cell.x >= 15 and cell.y >= 9:
+			state.grid.erase(cell)
+			state.remove_connections(cell)
+	_main.call("_set_tool", "route")
+	print("Bridge tool (ROUTE-17) checks passed.")
+
+## A hub or storage building renders ON a road, not instead of one: the road
+## block it was built on is drawn underneath and the marker stands on top of it,
+## rather than the marker replacing the road and leaving a gap in the network.
+func _check_structure_renders_on_its_road(terrain: GridMap, cell: Vector2i) -> void:
+	var grid_visuals: Node3D = _main.get_node("GridVisuals")
+	var world_pos: Vector3 = terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.0, 0)
+	var marker: Node3D = null
+	var road: Node3D = null
+	for child in grid_visuals.get_children():
+		if absf(child.position.x - world_pos.x) > 0.01 or absf(child.position.z - world_pos.z) > 0.01:
+			continue
+		if child is NodeMarker:
+			marker = child
+		# GridVisuals also carries the established-route overlay, which floats
+		# well above the tile at the same x/z -- the road block is whatever sits
+		# lowest, right on the tile surface.
+		elif road == null or child.position.y < road.position.y:
+			road = child
+	assert(road != null, "A built-on tile must still draw the road underneath it")
+	assert(marker != null, "A built-on tile must draw its building marker")
+	# Every road piece is drawn centred on its own height, so the block's offset
+	# above the tile gives back the height the marker has to clear. Marker scenes
+	# are authored with their origin at their base (hub_marker.tscn).
+	var road_height := 2.0 * (road.position.y - world_pos.y)
+	assert(road_height > 0.0, "The road block under a building must have real height")
+	assert(is_equal_approx(marker.position.y, world_pos.y + road_height), "A building marker must stand on top of its road block, not sink into it")
 
 ## ROUTE-15: bulldoze and upgrade also work as a drag, applying to every tile
 ## the sweep crosses. Drives real press/drag/release gestures over two

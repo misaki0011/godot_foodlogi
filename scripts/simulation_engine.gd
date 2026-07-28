@@ -8,20 +8,85 @@ class_name SimulationEngine
 ## dragging, see Main._commit_drag) links two cells, so side-by-side but
 ## unconnected routes stay separate networks (v0.5). A Small Hub can be built
 ## on any existing route tile (Main._do_build_hub), capped per connected
-## network -- see network_at_hub_cap and SPEC.md §4.4 (v0.5 revision).
+## network -- see network_at_hub_cap and SPEC.md §4.4 (v0.5 revision). A Bridge
+## can likewise be placed on a straight route tile, letting a second route cross
+## over the first without joining it -- see the lane block below, which is why
+## every traversal here works in (tile, lane) vertices rather than plain tiles.
 
 const DIRECTIONS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
-## pos -> [neighbor, ...], derived directly from state.connections -- the
-## explicit, player-dragged links are the graph now (v0.5); mere physical
-## adjacency is never enough. `nodes_by_pos` is kept on the signature for
-## call-site stability (callers still need it separately, e.g. find_path's
-## "don't transit a node" rule) but no longer drives graph construction here.
-static func build_graph(state: GameState, _nodes_by_pos: Dictionary) -> Dictionary:
-	var adj := {}
-	for pos in state.connections.keys():
-		adj[pos] = state.connections[pos].keys()
-	return adj
+## ---------- bridges: lanes, and why a graph vertex isn't just a tile ----------
+## A bridge tile (Main._do_build_bridge) is an ordinary route tile carrying a
+## raised deck: its cell keeps kind "route" and gains `bridge_axis`, the axis
+## the DECK runs along. The road it crosses runs along the perpendicular axis.
+## The two share the cell and must never share a network.
+##
+## So connectivity is a property of a (tile, lane) pair rather than of a tile,
+## and that pair -- packed as Vector3i(pos.x, pos.y, lane) -- is the graph
+## vertex used by every traversal below:
+##   LANE_GROUND: the ordinary surface. Every tile and every node has one.
+##   LANE_DECK:   the raised deck. Bridge tiles only.
+## Which lane you land on is pure geometry: step onto a bridge ALONG its
+## bridge_axis and you're on the deck, step onto it ACROSS that axis and you're
+## on the road below (lane_for_step). From either you may only leave the way you
+## came in -- straight through, same lane (exits). That single rule is the whole
+## mechanism: two routes cross a shared cell without merging, with no second
+## grid layer and no second connection set. GameState.connections stays exactly
+## as it was, a flat symmetric set of tile<->tile edges.
+const LANE_GROUND := 0
+const LANE_DECK := 1
+
+static func is_bridge(state: GameState, pos: Vector2i) -> bool:
+	var cell = state.grid.get(pos)
+	return cell != null and cell.has("bridge_axis")
+
+## The axis a bridge tile's deck runs along -- Vector2i(1, 0) or (0, 1), or
+## ZERO for any tile that isn't a bridge.
+static func bridge_axis(state: GameState, pos: Vector2i) -> Vector2i:
+	var cell = state.grid.get(pos)
+	if cell == null or not cell.has("bridge_axis"):
+		return Vector2i.ZERO
+	return cell.bridge_axis
+
+## Whether the cardinal `step` runs along `axis` rather than across it.
+static func _is_along(axis: Vector2i, step: Vector2i) -> bool:
+	return (axis.x != 0) == (step.x != 0)
+
+## Which lane of `to` you arrive on after moving one cell in direction `step`.
+## Everything that isn't a bridge has only LANE_GROUND to arrive on.
+static func lane_for_step(state: GameState, to: Vector2i, step: Vector2i) -> int:
+	var axis := bridge_axis(state, to)
+	if axis == Vector2i.ZERO:
+		return LANE_GROUND
+	return LANE_DECK if _is_along(axis, step) else LANE_GROUND
+
+static func vertex(pos: Vector2i, lane: int) -> Vector3i:
+	return Vector3i(pos.x, pos.y, lane)
+
+static func vertex_pos(v: Vector3i) -> Vector2i:
+	return Vector2i(v.x, v.y)
+
+## The lanes a tile actually has: two for a bridge, one for anything else.
+static func _lanes_at(state: GameState, pos: Vector2i) -> Array[int]:
+	var lanes: Array[int] = [LANE_GROUND]
+	if is_bridge(state, pos):
+		lanes.append(LANE_DECK)
+	return lanes
+
+## The graph vertices reachable in one step from `v`, over EXPLICIT
+## connections only (v0.5) -- physical adjacency still never implies a link.
+## On a bridge vertex the outgoing steps are filtered to the vertex's own lane,
+## which is what keeps a deck and the road beneath it from ever interchanging.
+static func exits(state: GameState, v: Vector3i) -> Array[Vector3i]:
+	var pos := vertex_pos(v)
+	var axis := bridge_axis(state, pos)
+	var out: Array[Vector3i] = []
+	for n in state.connections.get(pos, {}).keys():
+		var step: Vector2i = n - pos
+		if axis != Vector2i.ZERO and _is_along(axis, step) != (v.z == LANE_DECK):
+			continue
+		out.append(vertex(n, lane_for_step(state, n, step)))
+	return out
 
 ## Connected components over BUILT TILES ALONE (route/storage/hub), traversed
 ## via EXPLICIT connections only (v0.5) -- nodes are NOT transit vertices,
@@ -30,22 +95,29 @@ static func build_graph(state: GameState, _nodes_by_pos: Dictionary) -> Dictiona
 ## that touch only a shared node, or that simply sit next to each other
 ## without a dragged connection, are therefore SEPARATE networks. Used for
 ## hub-cap/formation (each road network gets its own hub budget) and, via
-## established_route_cells, the overlay. Vector2i tile -> component id.
+## established_route_cells, the overlay.
+##
+## Keyed by GRAPH VERTEX (Vector3i, see the lane block above), not by tile: a
+## bridge tile appears twice, once for its deck and once for the road beneath,
+## and those two entries normally land in DIFFERENT components -- which is
+## exactly what "the two routes never merge" means here.
 static func road_components(state: GameState) -> Dictionary:
 	var comp_of := {}
 	var comp_id := 0
-	for start in state.grid:
-		if comp_of.has(start):
-			continue
-		var queue: Array[Vector2i] = [start]
-		comp_of[start] = comp_id
-		while not queue.is_empty():
-			var u: Vector2i = queue.pop_front()
-			for v in state.connections.get(u, {}).keys():
-				if state.grid.has(v) and not comp_of.has(v):
-					comp_of[v] = comp_id
-					queue.append(v)
-		comp_id += 1
+	for start_pos in state.grid:
+		for lane in _lanes_at(state, start_pos):
+			var start := vertex(start_pos, lane)
+			if comp_of.has(start):
+				continue
+			var queue: Array[Vector3i] = [start]
+			comp_of[start] = comp_id
+			while not queue.is_empty():
+				var u: Vector3i = queue.pop_front()
+				for v in exits(state, u):
+					if state.grid.has(vertex_pos(v)) and not comp_of.has(v):
+						comp_of[v] = comp_id
+						queue.append(v)
+			comp_id += 1
 	return comp_of
 
 ## The set (Vector2i -> true) of built tiles on some complete source->
@@ -65,42 +137,56 @@ static func road_components(state: GameState) -> Dictionary:
 ## pruned: a tile survives only while it still links to 2+ things (another
 ## kept tile, or a node it's connected to), leaving the through-paths that run
 ## from a source to a settlement.
-static func established_route_cells(state: GameState, nodes_by_pos: Dictionary, only_source_id := "") -> Dictionary:
+## Works in graph vertices throughout (so a bridge's deck can be established
+## while the road under it isn't, and vice versa); established_route_cells
+## flattens the result back to tiles for callers that only need to shade a map
+## cell.
+static func established_route_vertices(state: GameState, nodes_by_pos: Dictionary, only_source_id := "") -> Dictionary:
 	var comp_of := road_components(state)
 	# Which road networks touch a source / a settlement (a dragged tile<->node
 	# connection, not mere adjacency).
 	var comp_has_source := {}
 	var comp_has_settlement := {}
 	for pos in state.grid:
-		var comp = comp_of[pos]
-		for n in state.connections.get(pos, {}).keys():
-			var node: NodeData = nodes_by_pos.get(n)
-			if node == null:
-				continue
-			if node.node_type == GameEnums.NodeType.SOURCE:
-				if only_source_id == "" or node.node_id == only_source_id:
-					comp_has_source[comp] = true
-			else:
-				comp_has_settlement[comp] = true
+		for lane in _lanes_at(state, pos):
+			var v := vertex(pos, lane)
+			var comp = comp_of[v]
+			for w in exits(state, v):
+				var node: NodeData = nodes_by_pos.get(vertex_pos(w))
+				if node == null:
+					continue
+				if node.node_type == GameEnums.NodeType.SOURCE:
+					if only_source_id == "" or node.node_id == only_source_id:
+						comp_has_source[comp] = true
+				else:
+					comp_has_settlement[comp] = true
 	var kept := {}
 	for pos in state.grid:
-		var comp = comp_of[pos]
-		if comp_has_source.get(comp, false) and comp_has_settlement.get(comp, false):
-			kept[pos] = true
-	# Iteratively prune dead-end tiles. A tile survives only while it links to
-	# 2+ things (kept tiles or nodes) -- i.e. it's mid-path, not a stub tip.
+		for lane in _lanes_at(state, pos):
+			var v := vertex(pos, lane)
+			var comp = comp_of[v]
+			if comp_has_source.get(comp, false) and comp_has_settlement.get(comp, false):
+				kept[v] = true
+	# Iteratively prune dead-end vertices. One survives only while it links to
+	# 2+ things (kept vertices or nodes) -- i.e. it's mid-path, not a stub tip.
 	var changed := true
 	while changed:
 		changed = false
-		for pos in kept.keys():
+		for v in kept.keys():
 			var degree := 0
-			for n in state.connections.get(pos, {}).keys():
-				if kept.has(n) or _counts_as_route_end(nodes_by_pos.get(n), only_source_id):
+			for w in exits(state, v):
+				if kept.has(w) or _counts_as_route_end(nodes_by_pos.get(vertex_pos(w)), only_source_id):
 					degree += 1
 			if degree <= 1:
-				kept.erase(pos)
+				kept.erase(v)
 				changed = true
 	return kept
+
+static func established_route_cells(state: GameState, nodes_by_pos: Dictionary, only_source_id := "") -> Dictionary:
+	var cells := {}
+	for v in established_route_vertices(state, nodes_by_pos, only_source_id):
+		cells[vertex_pos(v)] = true
+	return cells
 
 ## Whether `node` anchors an end of a route being traced for `only_source_id`.
 ## Settlements always do. A source does too -- but when tracing one specific
@@ -121,57 +207,90 @@ static func _counts_as_route_end(node: NodeData, only_source_id: String) -> bool
 ## constraint, and it's checked live rather than cached on the cell.
 static func network_at_hub_cap(state: GameState, pos: Vector2i) -> bool:
 	var comp_of := road_components(state)
-	var comp = comp_of.get(pos, -1)
+	# Hubs are never built on a bridge tile (Main._do_build_hub refuses), so
+	# ground lanes are the only ones that can carry or host one.
+	var comp = comp_of.get(vertex(pos, LANE_GROUND), -1)
 	var count := 0
 	for p in state.grid.keys():
-		if state.grid[p].kind == "hub" and comp_of.get(p, -2) == comp:
+		if state.grid[p].kind == "hub" and comp_of.get(vertex(p, LANE_GROUND), -2) == comp:
 			count += 1
 	return count >= GameBalance.HUB_CAP_PER_NETWORK
+
+## True when the road network `pos` sits on already carries
+## GameBalance.BRIDGE_CAP_PER_NETWORK bridges, so Main._do_build_bridge must
+## refuse another one there. `pos` is the tile the new bridge would go on, so
+## the network in question is the one its road is part of right now -- its
+## ground lane.
+##
+## An existing bridge counts against BOTH networks it serves (the road beneath
+## it and the deck across it): a crossing is infrastructure for each of them,
+## and counting it once would let a player keep the budget clear by always
+## approaching from the other side.
+static func network_at_bridge_cap(state: GameState, pos: Vector2i) -> bool:
+	var comp_of := road_components(state)
+	var comp = comp_of.get(vertex(pos, LANE_GROUND), -1)
+	var count := 0
+	for p in state.grid.keys():
+		if not is_bridge(state, p):
+			continue
+		if comp_of.get(vertex(p, LANE_GROUND), -2) == comp or comp_of.get(vertex(p, LANE_DECK), -3) == comp:
+			count += 1
+	return count >= GameBalance.BRIDGE_CAP_PER_NETWORK
 
 ## Dijkstra minimizing cumulative freshness-decay weight; ties broken
 ## naturally by whichever path accumulates less decay first. A delivery path
 ## may only touch a node at its two ends (start = source, end = settlement) --
 ## a source/settlement is a terminal endpoint, never a transit shortcut
 ## (§4.7), so any node reached mid-search is a dead end and is never expanded.
+## Searches over graph VERTICES rather than tiles (see the lane block above),
+## so a delivery that climbs a bridge deck is forced to carry straight on over
+## it and can never drop onto the road underneath. Crossing a deck is weighted
+## by GameBalance.BRIDGE_DECK_DECAY_MULT, matching what simulate_freshness will
+## actually charge, so Dijkstra prefers a short detour over a needless climb.
+## The returned path is flattened back to tiles, which stays lossless for every
+## caller: the lane of each step is re-derivable from the step's own direction.
 static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vector2i, to_pos: Vector2i, food: FoodData) -> Array[Vector2i]:
-	var adj := build_graph(state, nodes_by_pos)
-	if not adj.has(from_pos) or not adj.has(to_pos):
-		return []
-	var dist := {from_pos: 0.0}
+	var start := vertex(from_pos, LANE_GROUND)
+	var dist := {start: 0.0}
 	var prev := {}
 	var visited := {}
-	var frontier: Array = [[0.0, from_pos]]
+	var frontier: Array = [[0.0, start]]
+	var goal := Vector3i(-1, -1, -1)
 	while not frontier.is_empty():
 		frontier.sort_custom(func(a, b): return a[0] < b[0])
 		var top = frontier.pop_front()
 		var d: float = top[0]
-		var u: Vector2i = top[1]
+		var u: Vector3i = top[1]
 		if visited.has(u):
 			continue
 		visited[u] = true
-		if u == to_pos:
+		var u_pos := vertex_pos(u)
+		if u_pos == to_pos:
+			goal = u
 			break
 		# A node other than the delivery's own source is an endpoint, not a
 		# through-route: reach it if it's the destination, but never route past
 		# it into its other adjacent roads.
-		if nodes_by_pos.has(u) and u != from_pos:
+		if nodes_by_pos.has(u_pos) and u_pos != from_pos:
 			continue
-		for v in adj.get(u, []):
+		for v in exits(state, u):
 			if visited.has(v):
 				continue
-			var w: float = 0.01 if nodes_by_pos.has(v) else food.decay_per_tile
+			var w: float = 0.01 if nodes_by_pos.has(vertex_pos(v)) else food.decay_per_tile
+			if v.z == LANE_DECK:
+				w *= GameBalance.BRIDGE_DECK_DECAY_MULT
 			var nd := d + w
 			if not dist.has(v) or nd < dist[v]:
 				dist[v] = nd
 				prev[v] = u
 				frontier.append([nd, v])
-	if not dist.has(to_pos):
+	if goal.x < 0:
 		return []
 	var path: Array[Vector2i] = []
-	var cur: Vector2i = to_pos
+	var cur := goal
 	while true:
-		path.append(cur)
-		if cur == from_pos:
+		path.append(vertex_pos(cur))
+		if cur == start:
 			break
 		cur = prev[cur]
 	path.reverse()
@@ -184,12 +303,19 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 	var protection_left := 0
 	var protection_mult := 1.0
 	for i in range(1, path.size()):
-		var cell = state.grid.get(path[i])
+		var pos: Vector2i = path[i]
+		var cell = state.grid.get(pos)
 		var mult := 1.0
 		if protection_left > 0:
 			mult = protection_mult
 			protection_left -= 1
 		var decay: float = food.decay_per_tile * mult
+		# Climbing onto a bridge deck and back down costs an extra tile's worth
+		# of decay. Only the route ON the deck pays it -- the road passing
+		# underneath is untouched, which is why the lane has to be re-derived
+		# from the step's own direction rather than read off the tile.
+		if lane_for_step(state, pos, pos - path[i - 1]) == LANE_DECK:
+			decay *= GameBalance.BRIDGE_DECK_DECAY_MULT
 		if cell and cell.kind == "storage":
 			decay = 0.0
 			var st = GameBalance.STORAGE_TYPES[cell.stype]
@@ -198,6 +324,10 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 		fresh -= decay
 	return clampf(fresh, 0.0, 100.0)
 
+## Capacity belongs to the TILE, so the two routes crossing at a bridge share
+## one budget rather than getting a lane each -- a crossing is a single piece of
+## built infrastructure with a single throughput, and keeping it per-tile is
+## what lets the congestion overlay and tile_usage stay tile-keyed.
 static func tile_capacity(state: GameState, pos: Vector2i) -> float:
 	var cell = state.grid.get(pos)
 	if cell == null:
@@ -213,7 +343,7 @@ static func tile_capacity(state: GameState, pos: Vector2i) -> float:
 static func route_build_cost(pos: Vector2i, map_data: MapData) -> float:
 	var cost := GameBalance.ROUTE_BUILD_COST
 	if map_data.is_river(pos.x, pos.y):
-		cost += GameBalance.BRIDGE_COST
+		cost += GameBalance.RIVER_BRIDGE_COST
 	return cost
 
 ## Sums last-run delivered food through `pos`, grouped by originating
@@ -380,6 +510,11 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 				if state.has_connection(pos, h):
 					up *= 1.0 - float(GameBalance.HUB_TYPES[state.grid[h].htype].discount)
 					break
+			# The deck is a structure, not road surface, so its upkeep is added
+			# after the hub discount rather than being discounted along with the
+			# road underneath.
+			if cell.has("bridge_axis"):
+				up += GameBalance.BRIDGE_UPKEEP
 			route_upkeep += up
 		elif cell.kind == "storage":
 			storage_upkeep += GameBalance.STORAGE_TYPES[cell.stype].upkeep
