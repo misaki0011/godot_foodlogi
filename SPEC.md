@@ -56,6 +56,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 32. **Bridges: a placed structure that lets one route cross another without joining it.** A drag could never cross an existing road at all (item 20), so a route that needed to get past one had to go around it or stop -- and the obvious fix, letting drags overlap freely, is exactly what turns a map into spaghetti. A bridge is instead a **placed structure**, built with its own tool onto one existing route tile carrying a straight through-run of road, the way a hub is: the road already there keeps running underneath, a raised deck spans it at right angles, and a later drag may run straight over the deck without the two routes ever becoming one network. Making it a purchase the player places and can see on the map, rather than a side effect of a wobbly drag, is what keeps crossings deliberate. Internally, connectivity stops being a property of a tile and becomes one of a `(tile, lane)` graph vertex: the lane you land on follows the direction you stepped in, and from either you may only leave the way you came in -- so `find_path`, `road_components` and `established_route_cells` keep the two roads apart with no second grid layer and no change to `GameState.connections`. Kept narrow on purpose (straight runs only, both landings on-map and not a node, no two bridges landing on each other, nothing else buildable on a bridge tile, no drag starting or stopping on one) and priced to lose to a detour: §60 to build, §6/day extra upkeep, 2x freshness decay to cross the deck, shared tile capacity, and a cap of 2 per connected road network. See §4.1.
 
+33. **Bulldozing a hub or a bridge leaves its road behind.** Bulldoze erased whatever cell it was pointed at, connections and all -- right for a plain route or storage tile, wrong for a hub or a bridge, which are structures built *on top of* a route tile. Clearing one now removes only the structure: the tile survives as a plain **dirt** route tile with its connections intact, so the road keeps running through it instead of the network being split in half by an edit the player didn't ask for. Dirt regardless of the road's previous level -- a hub cell doesn't record the level it replaced, and one uniform rule reads better on the map than a level that sometimes survives. A bridge additionally drops its **deck** connections while keeping the road beneath it (the deck being the road that ceases to exist), so the route that crossed over is cut at both ends; without that the two roads the crossing was keeping apart would silently merge into one network the moment it came down. The bulldoze sweep applies the same rule to every tile it crosses. See §4.1, §4.4.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -463,6 +465,13 @@ direction. Turning a corner on top of somebody else's road is invalid, as is
 stopping on the deck. The crossing route pays only for the fresh ground either
 side; the bridge itself was paid for when it was placed.
 
+**Bulldozing.** A bridge is a structure on top of a route tile, so clearing one
+takes only the structure: the tile survives as a plain **dirt** route tile,
+still carrying the road that ran underneath, and only the deck's connections
+are dropped. The route that crossed over is cut at both ends. Merging it into
+the road below instead would silently join the two networks the crossing was
+built to keep apart. Hubs follow the same rule (§4.4).
+
 **Costs.** §60 to build, plus §6/day upkeep on top of the road's own (the deck
 is a structure, so its upkeep is not discounted by an adjacent hub). Crossing
 the deck costs **2× the usual freshness decay** for that tile — ramping up and
@@ -473,6 +482,28 @@ belongs to the tile, so both roads share one throughput budget.
 Together the price, the upkeep, the freshness penalty and the per-network cap
 are what keep crossings rare and deliberate. Going around remains the right
 answer most of the time; a bridge is for when it genuinely isn't.
+
+### Bulldozing a structure leaves its road behind (added in v0.5 item 33)
+
+Bulldoze used to erase whatever cell it was pointed at, connections and all.
+That is right for a plain route tile or a storage tile, but wrong for a **hub**
+or a **bridge**: both are structures built *on top of* an existing route tile,
+so taking one away should not also swallow the road it was built on and split
+the network in half.
+
+Clearing a hub or a bridge therefore removes only the structure. The tile
+survives as a plain **dirt** route tile, with its connections intact — the road
+keeps running through it. (Dirt regardless of what the road was upgraded to
+before: a hub cell no longer records the level it replaced, and one uniform
+rule is easier to read on the map than a level that sometimes survives.)
+
+A bridge additionally drops its **deck** connections while keeping the road
+beneath it. The deck is the road that ceases to exist, so the route that
+crossed over is cut at both ends; without that step, the two roads the crossing
+was deliberately keeping apart would silently merge into one network the moment
+it came down.
+
+The sweep tool (below) applies exactly the same rule to every tile it crosses.
 
 ### Sweeping bulldoze and upgrade across tiles (added in v0.4 item 26)
 

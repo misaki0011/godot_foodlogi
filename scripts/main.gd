@@ -72,7 +72,7 @@ const TOOL_HINTS := {
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
 	"bridgeBuild": "Click a straight run of route tile to build a Bridge over it, so a second route can later cross without joining it. The crossing route still has to be drawn over the top afterwards.",
-	"remove": "Click a built tile to bulldoze it, or drag across several to clear them all at once (no refund).",
+	"remove": "Click a built tile to bulldoze it, or drag across several to clear them all at once (no refund). A hub or a bridge leaves the road it was built on behind, as a dirt tile.",
 }
 
 ## Tools whose action can be swept across many tiles in one drag, rather than
@@ -564,10 +564,16 @@ func _commit_sweep() -> void:
 	var count := _sweep_cells.size()
 	var plural := "" if count == 1 else "s"
 	if _tool == "remove":
+		# Same rule as a single bulldoze (see _clear_cell): a swept hub or
+		# bridge leaves its road behind as dirt rather than taking it with it.
+		var kept := 0
 		for cell in _sweep_cells:
-			_state.grid.erase(cell)
-			_state.remove_connections(cell)
-		_show_toast("Cleared %d tile%s." % [count, plural])
+			if _clear_cell(cell) != "tile":
+				kept += 1
+		if kept > 0:
+			_show_toast("Cleared %d tile%s -- %d left as dirt route." % [count, plural, kept])
+		else:
+			_show_toast("Cleared %d tile%s." % [count, plural])
 	else:
 		for cell in _sweep_cells:
 			var cell_data = _state.grid[cell]
@@ -849,14 +855,49 @@ func _deck_axis_for(cell: Vector2i) -> Vector2i:
 		return Vector2i.ZERO
 	return Vector2i(0, 1) if links[0].x != 0 else Vector2i(1, 0)
 
+## Bulldozes one cell, and the rule depends on what's there. A hub and a bridge
+## are both things built ON TOP of an existing route tile, so removing one takes
+## the structure away and leaves the road it was built on, as a plain dirt tile
+## -- clearing the road too would swallow infrastructure the player never asked
+## to lose and split the network in half. Everything else (a plain route tile, a
+## storage tile) is cleared outright, connections and all, as it always was.
+##
+## A bridge additionally drops its DECK connections while keeping the road
+## beneath it: the deck is the road that ceases to exist. Without that the two
+## roads the crossing was deliberately keeping apart would silently merge into
+## one network the moment it came down -- the exact opposite of what the player
+## built it for.
+##
+## Returns "hub"/"bridge" when a structure was taken off a surviving tile, "tile"
+## when the cell itself was removed, and "" when there was nothing there.
+func _clear_cell(cell: Vector2i) -> String:
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null:
+		return ""
+	if SimulationEngine.is_bridge(_state, cell):
+		var axis: Vector2i = cell_data.bridge_axis
+		for step in [axis, -axis]:
+			_state.remove_connection(cell, cell + step)
+		_state.grid[cell] = {"kind": "route", "level": "dirt"}
+		return "bridge"
+	if cell_data.kind == "hub":
+		_state.grid[cell] = {"kind": "route", "level": "dirt"}
+		return "hub"
+	_state.grid.erase(cell)
+	_state.remove_connections(cell)
+	return "tile"
+
 func _do_bulldoze(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
 		_show_toast("Nothing to remove here.", true)
 		return
-	var was_bridge := SimulationEngine.is_bridge(_state, cell)
-	_state.grid.erase(cell)
-	_state.remove_connections(cell)
-	_show_toast("Bridge cleared, along with both roads that ran through it." if was_bridge else "Tile cleared.")
+	match _clear_cell(cell):
+		"bridge":
+			_show_toast("Bridge removed. The road it crossed stays as dirt route; the route that ran over it is cut.")
+		"hub":
+			_show_toast("Hub removed. The tile stays as dirt route.")
+		_:
+			_show_toast("Tile cleared.")
 
 func _after_action() -> void:
 	_render_grid()
@@ -1759,7 +1800,7 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	var hub_grid := _add_tool_grid(box)
 	_add_tool_button(hub_grid, "Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild", "Build a Small Hub on any existing route tile for §%d. Each connected road network supports %d hubs." % [roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), GameBalance.HUB_CAP_PER_NETWORK])
 	_add_tool_button(hub_grid, "Bridge  §%d" % roundi(GameBalance.BRIDGE_BUILD_COST), "bridgeBuild", "Build a Bridge over a straight run of route tile for §%d, so a second route can be drawn straight over it without joining it. §%d/day extra upkeep, the deck costs %.0f× freshness decay to cross, and each connected road network supports %d." % [roundi(GameBalance.BRIDGE_BUILD_COST), roundi(GameBalance.BRIDGE_UPKEEP), GameBalance.BRIDGE_DECK_DECAY_MULT, GameBalance.BRIDGE_CAP_PER_NETWORK])
-	_add_tool_button(hub_grid, "Bulldoze", "remove", "Remove a built tile, along with every connection touching it. No refund.")
+	_add_tool_button(hub_grid, "Bulldoze", "remove", "Remove a built tile, along with every connection touching it. A hub or a bridge only loses the structure -- the road it was built on stays as a dirt tile. No refund.")
 
 func _build_map_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "MAP")

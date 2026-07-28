@@ -61,6 +61,16 @@ func add_connection(a: Vector2i, b: Vector2i) -> void:
 func has_connection(a: Vector2i, b: Vector2i) -> bool:
 	return connections.has(a) and connections[a].has(b)
 
+## Drops the single edge between `a` and `b` from both sides, leaving every
+## other edge on either cell intact. Used when a tile survives a bulldoze but
+## loses one road through it -- clearing a bridge takes down its deck links
+## while the road underneath keeps running (Main._clear_cell).
+func remove_connection(a: Vector2i, b: Vector2i) -> void:
+	if connections.has(a):
+		connections[a].erase(b)
+	if connections.has(b):
+		connections[b].erase(a)
+
 ## Removes every edge touching `pos` (both its own entry and the reverse
 ## entry on each neighbor it was linked to) -- call when a tile is bulldozed
 ## so no dangling edge points at a cell that no longer exists.
