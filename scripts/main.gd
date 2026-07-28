@@ -1143,10 +1143,12 @@ func _established_route_cells() -> Dictionary:
 ## settlement: a source's amount drawn today vs. its daily produce
 ## (SimulationEngine.run_day's last_source_status), muted once fully
 ## tapped out; a settlement's delivered vs. requested amount per food
-## plus average freshness (last_settlement_status), colored red/amber/
+## plus average freshness (last_settlement_status), flagged red/amber/
 ## green by combined amount+freshness status (see
 ## _render_settlement_bubbles). Both read as "0/max" before the first
-## simulated day, since neither dictionary has entries yet.
+## simulated day, since neither dictionary has entries yet. The two are
+## told apart by shape, not colour -- sources are signs on a post,
+## settlements are speech balloons (bubble_canvas.gd).
 func _render_supply_bubbles() -> void:
 	var foods := GameBalance.food_types()
 	for pos in _nodes_by_pos:
@@ -1170,8 +1172,8 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 		var bubble_status := FoodBubbleMarker.Status.MUTED if used >= produced - 0.01 else FoodBubbleMarker.Status.DEFAULT
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.STACK_SPACING, 0)
-		bubble.setup(foods[food_id], used, produced, bubble_status)
+		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.SOURCE_STACK_SPACING, 0)
+		bubble.setup_source(foods[food_id], used, produced, bubble_status)
 		stack += 1
 
 ## A settlement can demand up to 3 foods (Town D, City E), and some
@@ -1185,6 +1187,10 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 ## when the full requested amount arrived at bonus_freshness or above;
 ## AMBER for every other combination (partial amount, or full amount but
 ## sub-bonus freshness).
+## A settlement whose every demanded food is GREEN has nothing the player
+## can act on, so its whole stack collapses to one "All fresh" bubble --
+## keeping the map's attention on the settlements still in trouble, and
+## taking the 3-food settlements' clutter out of their neighbours' way.
 func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
 	var status = _state.last_settlement_status.get(n.node_id, {})
 	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
@@ -1192,7 +1198,9 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 	# above it -- otherwise this billboard sits inside the pin head and the
 	# two fuse into an unreadable blob.
 	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
-	var index := 0
+
+	var entries: Array = []
+	var all_green := true
 	for food_id in n.demand:
 		var requested: float = n.demand[food_id]
 		var delivered: float = 0.0
@@ -1205,26 +1213,66 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 				avg_fresh = s.fresh_sum / delivered
 
 		var bubble_status: FoodBubbleMarker.Status
+		# How the delivered freshness alone rates, independent of amount:
+		# this colors the bubble's ring, so a red bubble distinguishes
+		# "nothing arrived" from "what arrived was stale".
+		var freshness_status := FoodBubbleMarker.Status.RED
 		var freshness_pct := -1
 		if delivered <= 0.0:
 			bubble_status = FoodBubbleMarker.Status.RED
 		else:
 			freshness_pct = roundi(avg_fresh)
 			if avg_fresh < n.min_freshness:
+				freshness_status = FoodBubbleMarker.Status.RED
+			elif avg_fresh >= n.bonus_freshness:
+				freshness_status = FoodBubbleMarker.Status.GREEN
+			else:
+				freshness_status = FoodBubbleMarker.Status.AMBER
+
+			if freshness_status == FoodBubbleMarker.Status.RED:
 				bubble_status = FoodBubbleMarker.Status.RED
-			elif delivered >= requested - 0.01 and avg_fresh >= n.bonus_freshness:
+			elif delivered >= requested - 0.01 and freshness_status == FoodBubbleMarker.Status.GREEN:
 				bubble_status = FoodBubbleMarker.Status.GREEN
 			else:
 				bubble_status = FoodBubbleMarker.Status.AMBER
 
-		var row := index / 2
-		var col := index % 2
+		if bubble_status != FoodBubbleMarker.Status.GREEN:
+			all_green = false
+		entries.append({
+			"food_id": food_id,
+			"delivered": delivered,
+			"requested": requested,
+			"status": bubble_status,
+			"freshness_pct": freshness_pct,
+			"freshness_status": freshness_status,
+		})
+
+	if entries.is_empty():
+		return
+
+	if all_green:
+		var summary: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+		_grid_visuals.add_child(summary)
+		summary.position = base_pos
+		summary.setup_all_clear()
+		return
+
+	for index in entries.size():
+		var e: Dictionary = entries[index]
+		var row: int = index / 2
+		var col: int = index % 2
 		var col_offset: float = (col - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
 		bubble.position = base_pos + Vector3(col_offset, row * FoodBubbleMarker.STACK_SPACING, 0)
-		bubble.setup(foods[food_id], delivered, requested, bubble_status, freshness_pct)
-		index += 1
+		bubble.setup_settlement(
+			foods[e.food_id],
+			e.delivered,
+			e.requested,
+			e.status,
+			e.freshness_pct,
+			e.freshness_status,
+		)
 
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
 ## so a route tile always uses the same unrotated scene regardless of its
