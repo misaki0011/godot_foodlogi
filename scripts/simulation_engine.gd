@@ -65,7 +65,7 @@ static func road_components(state: GameState) -> Dictionary:
 ## pruned: a tile survives only while it still links to 2+ things (another
 ## kept tile, or a node it's connected to), leaving the through-paths that run
 ## from a source to a settlement.
-static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) -> Dictionary:
+static func established_route_cells(state: GameState, nodes_by_pos: Dictionary, only_source_id := "") -> Dictionary:
 	var comp_of := road_components(state)
 	# Which road networks touch a source / a settlement (a dragged tile<->node
 	# connection, not mere adjacency).
@@ -78,7 +78,8 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 			if node == null:
 				continue
 			if node.node_type == GameEnums.NodeType.SOURCE:
-				comp_has_source[comp] = true
+				if only_source_id == "" or node.node_id == only_source_id:
+					comp_has_source[comp] = true
 			else:
 				comp_has_settlement[comp] = true
 	var kept := {}
@@ -94,12 +95,24 @@ static func established_route_cells(state: GameState, nodes_by_pos: Dictionary) 
 		for pos in kept.keys():
 			var degree := 0
 			for n in state.connections.get(pos, {}).keys():
-				if kept.has(n) or nodes_by_pos.has(n):
+				if kept.has(n) or _counts_as_route_end(nodes_by_pos.get(n), only_source_id):
 					degree += 1
 			if degree <= 1:
 				kept.erase(pos)
 				changed = true
 	return kept
+
+## Whether `node` anchors an end of a route being traced for `only_source_id`.
+## Settlements always do. A source does too -- but when tracing one specific
+## source, every OTHER source stops counting, which is what makes the pruning
+## pass drop the spurs that only some other source feeds: with its far end no
+## longer anchored, such a spur unravels tile by tile.
+static func _counts_as_route_end(node: NodeData, only_source_id: String) -> bool:
+	if node == null:
+		return false
+	if node.node_type != GameEnums.NodeType.SOURCE:
+		return true
+	return only_source_id == "" or node.node_id == only_source_id
 
 ## True when `pos`'s connected road network (see road_components) already has
 ## HUB_CAP_PER_NETWORK built hubs, so Main._do_build_hub must refuse a new one
@@ -170,7 +183,6 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 	var fresh := 100.0
 	var protection_left := 0
 	var protection_mult := 1.0
-	var used_freeze := false
 	for i in range(1, path.size()):
 		var cell = state.grid.get(path[i])
 		var mult := 1.0
@@ -183,11 +195,7 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 			var st = GameBalance.STORAGE_TYPES[cell.stype]
 			protection_left = st.protection
 			protection_mult = st.mult
-			if cell.stype == GameEnums.StorageType.FREEZE:
-				used_freeze = true
 		fresh -= decay
-	if used_freeze and food.freeze_penalty > 0.0:
-		fresh -= food.freeze_penalty
 	return clampf(fresh, 0.0, 100.0)
 
 static func tile_capacity(state: GameState, pos: Vector2i) -> float:

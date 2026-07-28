@@ -39,6 +39,17 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 22. **A drag may also start or end on a route tile that isn't part of an established route yet.** Items 18-19 restricted a drag to start on a source/hub and end on a hub/settlement, which -- combined with item 20's "no crossing existing tiles" -- meant unfinished infrastructure (a route segment that doesn't yet reach both a source and a settlement, e.g. one built out from a hub that has no source connection yet) could only ever be picked up again at its own governing hub, never at any of its plain route tiles. This relaxes both ends: a drag may also start or end on a route tile that `SimulationEngine.established_route_cells` does NOT contain -- i.e. one that isn't currently part of a live, delivering path. An already-established route tile is unaffected and still only reachable through its own hub or settlement (never picked up mid-network) -- this exception exists purely so unfinished, not-yet-delivering infrastructure can be extended or joined piece by piece without forcing a hub at every waypoint. The interior-must-be-empty-ground rule (item 20) is unchanged: this only widens what counts as a valid START or END, not what a drag may cross through. See §4.1.
 23. **One symmetric route tile design per level, usable in any direction.** Each route level (Dirt, Paved, Main) previously rendered a directional tread/stripe requiring a rotated mesh for "lr" vs. "ud", plus a dedicated L-shaped corner mesh (rotated four ways) wherever a tile bent -- this doubled the asset count per upgradeable level and made every route tile's appearance depend on a shape/facing computed from its real connections (see the now-removed "Route tile directional shape" system). Dirt and Main are redesigned to be radially symmetric, the same way Paved's four-cobblestone layout already was: Dirt uses a centered square worn-earth patch with four corner pebbles instead of a directional tread strip, and Main uses a painted cross (both axes) instead of a single center line. Because a symmetric mesh reads identically under any rotation, ONE mesh per level now covers every route shape and facing -- there is no corner variant, and nothing is rotated at render time. `SimulationEngine.route_shape()` and its shape-family/facing machinery are removed entirely; a route tile's rendering is now just `level -> mesh`. See §4.1.
 
+24. **The day runs itself on a real-time clock.** A day is now a 60-second countdown shown in the top-right corner rather than a "Run the Day" click. The player keeps building while it drains; at 0:00 the day simulates, the calendar advances, and the next day's clock starts immediately, so planning and simulation are continuous instead of alternating around a button press. The clock can be paused (button or spacebar), run at 1x/2x/4x, or switched off entirely for the older manual loop, and a day can still be run early. Because a modal every 60 seconds would defeat the point, an auto-run day posts a small self-dismissing summary card (day, grade/score, profit, freshness, happiness) under the clock instead of the full-screen report; the full report stays one Report-button click away, and opening it freezes the clock so reading it never costs build time. See §3.5, §10.8.
+25. **One left-hand control panel replaces the right sidebar.** The 300px build sidebar on the right edge is retired, and everything it carried -- treasury/day, the efficiency-chase numbers, every build tool, and the legend -- moves into the top-left map-controls panel, which becomes the game's single HUD panel. Two panels ate both edges of the screen and split related controls across them, which is why the most-used tools had to be duplicated on both (item 9/14's shortcuts); one panel gives the map back most of that width and makes each tool exist exactly once, with the day clock alone in the opposite corner. Tool buttons are now short and priced (e.g. "Cool §180"), with the full description in the tooltip and the hint bar, and the legend collapses. See §10.7.
+
+26. **Bulldoze and Upgrade can be swept across many tiles in one drag.** Both were strictly one click per tile, which made clearing a bad run or upgrading a long road a repetitive series of taps -- and on a touchscreen, a series of taps that is easy to mis-hit. Either tool can now be dragged: every tile the pointer crosses is marked, and the tool is applied to all of them on release. The sweep starts on press with no hold threshold (unlike a route drag, it only ever touches tiles that already exist, and nothing happens until release, so there is no accidental-build risk to guard against), and a press released without moving is still the ordinary single-tile action. Route drawing is unchanged -- it traces a path with start/end rules, not a set of tiles. See §4.1.
+
+27. **The established-route overlay is coloured per source, food by food.** The overlay was one gold line regardless of what travelled it, so telling the grain route from the milk route meant tracing it back by eye. Each source now gets its own lane in the colour of the food it produces, and where several sources' deliveries share a road their lanes run side by side down it -- a colour joins the road where its source does, and peels off exactly where their paths part. Route TILES keep their ordinary built colour (Dirt/Paved/Main brown); only the overlay carries source colour. All source *markers* share one colour (§16), so the food colour is what actually distinguishes one source from another, and it is the colour language the speech bubbles already use. The legend lists the mapping, built from the region's own sources. See §4.1.
+
+28. **Freeze Storage and the Regional Hub upgrade are retired.** Both are removed from the build, not merely hidden: `GameEnums.StorageType` is down to NORMAL/COOL, `GameEnums.HubType` to SMALL, their entries in `GameBalance.STORAGE_TYPES`/`HUB_TYPES` and `HUB_REGIONAL_UPGRADE_COST` are deleted, `Main._do_upgrade_hub` and both tool buttons are gone, and with no freezer left to trigger it the freeze-penalty rule goes too -- `FoodData.freeze_penalty` and the penalty branch in `SimulationEngine.simulate_freshness` are deleted along with it. Storage is now Normal and Cool; a hub is always a Small Hub. The full-game material in §6, §8 and §11 still describes both (Freezer Plants, Frozen Food, Chapter 5's freeze chain, Regional Networks); treat those as post-MVP scope superseded by this item, not as descriptions of the current build. See §4.3, §4.4.
+
+29. **The light follows the clock: one in-game day is one sun cycle, and it casts shadows.** A day now visibly runs dawn -> morning -> midday -> afternoon -> sunset -> dusk -> night -> dawn while the player builds, by driving the sun's angle, the sunlight's colour and strength, the shadow strength, and the sky/ambient tint off the day clock's phase. Shadows are switched on and the sun sweeps a full turn over the day, so they visibly travel and stretch -- short and tucked under objects at midday, long and raking at dawn and sunset, faint under moonlight. The clock panel reads the wall-clock time beside the day number ("Day 3 - 6:45 pm"), with the phase name on the line below. The cycle is continuous across the day rollover -- the first and last keyframes are the same moment, one turn of the sun apart -- so the sun comes back up exactly as the clock hits 0:00 rather than the sky snapping or the light spinning back. A stopped clock (paused, or manual mode) holds the light where it is, since time of day IS the day clock. Shadows are desktop-only: a phone browser drops the WebGL context outright when the GPU budget is overrun, and reducing the shadow map was not enough to stay inside it, so the web build runs the cycle without shadows while desktop keeps them at full quality. See §3.6.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -196,6 +207,8 @@ Network efficiency: B+
 
 The report should show why smart routing mattered.
 
+This full-screen report is shown at the end of a **manually** run day. A day the clock runs by itself (§3.5) posts a compact, self-dismissing summary card instead -- the auto-run loop can't stop for a dialog every day -- and this full report stays available on demand from the day clock panel (§10.8).
+
 ### 3.4 Upgrade phase
 
 The player spends profit or reputation to unlock:
@@ -206,6 +219,42 @@ The player spends profit or reputation to unlock:
 - Hub upgrades.
 - New regions.
 - Route improvements.
+
+### 3.5 Day clock (added in v0.4 item 24)
+
+The planning phase (§3.1) is not open-ended. Each day is a real-time countdown, and the simulation phase (§3.2) fires when it expires:
+
+- **Day length:** 60 real-time seconds at 1x speed. The clock starts full on day 1 and restarts full after every simulated day, including one the player runs early.
+- **Auto-run (default):** at 0:00 the day simulates itself, the day counter advances, and the next day's clock begins immediately. The player never has to press anything to keep the game moving, and can keep drawing routes, placing storage, building hubs, and bulldozing while the clock drains.
+- **Speed:** 1x / 2x / 4x multipliers on the drain rate, for players who don't want to wait out a day they're happy with.
+- **Pause:** holds the countdown indefinitely (spacebar or the Pause button). Building is still allowed while paused, which is the deliberate "stop the pressure and think" affordance.
+- **Run early:** running the day by hand simulates it immediately and restarts the clock. Running early spends the rest of the day's build time -- it does not bank it.
+- **Manual mode:** switching Auto off stops the clock entirely and restores the older loop, where a day only runs when the player asks and the blocking report's "Continue to next day" is what advances the calendar.
+
+The clock is frozen while the full-screen report (§3.3) is open, so reading a report never costs the player build time.
+
+### 3.6 Time-of-day lighting (added in v0.4 item 29)
+
+The day clock also drives the light, so one in-game day is one full sun cycle rather than a fixed midday:
+
+| Phase | At | Clock | Sun | Look |
+|---|---:|---|---|---|
+| Dawn | 0.00 | 5:00 am | low, -12 deg | warm orange light, grey-blue sky, dim, long shadows |
+| Morning | 0.18 | 8:00 am | -35 deg | bright warm light, clear sky |
+| Midday | 0.40 | 12:00 pm | high, -70 deg | white light, brightest moment, shadows tucked under objects |
+| Afternoon | 0.60 | 3:00 pm | -45 deg | warm light, still bright |
+| Sunset | 0.76 | 6:30 pm | low, -12 deg | strong orange light, orange horizon, long raking shadows |
+| Dusk | 0.88 | 8:00 pm | -8 deg | violet light, deep blue sky |
+| Night | 0.95 | 11:00 pm | -50 deg | dim blue moonlight, darkest moment, faint shadows |
+| Dawn | 1.00 | 5:00 am | low, -12 deg | identical to 0.00 -- the cycle joins up |
+
+- **Phase is the day clock's own progress**, 0 at the start of a day and 1 as it rolls over. Values between keyframes are interpolated, so the change is continuous rather than stepped.
+- **The cycle joins up at the rollover.** The first and last keyframes are the same moment, so night falls in the last stretch of a day and the sun rises exactly as the clock reaches 0:00 -- "Day N" always opens at dawn, and the sky never snaps.
+- **A stopped clock holds the light.** Pausing, or switching to manual mode, freezes time of day too: the light is the clock, so freezing one freezes the other.
+- **Night stays playable.** Ambient light never drops to zero, so the map, routes and overlays remain readable in the dark; the UI, speech bubbles and route overlay are unshaded and unaffected throughout.
+- **Shadows travel with the sun.** The sun sweeps a full turn over the day (its yaw runs from +78 deg round to -282 deg, the same orientation one turn on, so the sweep never doubles back or snaps at the rollover), and shadow strength rides the same curve: crisp at midday, softer at dawn and dusk, barely there under moonlight. Long raking shadows near sunrise and sunset are the point, so the shadow range is set wide enough to hold them.
+- **Shadows are desktop-only.** A browser hands the page a far smaller GPU budget than a native build, and overrunning it doesn't degrade gracefully -- the browser destroys the WebGL context and the game dies with "WebGL context lost, please reload the page". Shadows are the largest allocation the scene asks for, so the web build runs without them (`DayCycle.shadows_available()`); everything else in the cycle -- sun angle, light colour and energy, sky and ambient tint -- still runs, so a web day still visibly moves from dawn to night. Desktop keeps full-quality shadows: a 4096 map (2048 on native mobile) over a range just wide enough to cover the region from any in-game zoom or pan (70 units), since a wider range spreads the same map over more ground and aliases the grass block's corner tufts into a diagonal hatch.
+- **The clock panel reads the wall-clock time** beside the day number -- "Day 3 - 6:45 pm" -- with the phase name on the line below (§10.8). A day opens at 5:00 am and the clock runs round to 5:00 am again as it rolls over.
 
 ---
 
@@ -365,6 +414,30 @@ built roads, or a road and a node, only ever get linked by a drag that ends
 exactly ON that shared hub, settlement, or unestablished route tile --
 never by crossing through the middle of one another.
 
+### Sweeping bulldoze and upgrade across tiles (added in v0.4 item 26)
+
+Bulldoze and Upgrade are **sweep** tools: dragging either one across a run of tiles applies it to every tile the pointer crosses, instead of requiring a click per tile.
+
+- **Starts immediately on press.** There is no hold threshold, unlike a route drag. A sweep only ever acts on tiles that already exist, nothing is applied until release, and the preview shows exactly what will happen first -- so there is nothing to protect against, and skipping the hold keeps the gesture clear of the long-press that mobile browsers intercept.
+- **A tap is still a tap.** A press released without ever reaching a second cell performs the ordinary single-tile action, exactly as before.
+- **Cells the tool can't act on are skipped, not fatal.** Empty ground under a bulldoze sweep, or a route already at Main under an upgrade sweep, is simply passed over -- a slightly wobbly drag across a road still does the obvious thing.
+- **All or nothing on cost.** An upgrade sweep whose total exceeds the treasury applies to nothing at all, matching the route drag's transactional rule. The preview turns gray while it is unaffordable, so the player can shorten the sweep before releasing rather than being surprised by a rejection. Bulldoze costs nothing and can never be blocked this way.
+- **One level per tile per sweep.** A tile crossed several times in one gesture is still upgraded once.
+
+The preview colour says what the tool will do: red markers on the tiles a bulldoze sweep will clear, green on the tiles an upgrade sweep will lift, gray when the sweep is blocked and will do nothing. A faint line traces every crossed cell, affected or not, so the gesture reads even where it passes over empty ground.
+
+### Overlay colour by source (added in v0.4 item 27)
+
+The established-route overlay (below) draws one **lane per source**, in the colour of the food that source produces:
+
+- **A tile is attributed to a source when that source can reach a settlement *through* it**, not merely when they share a road network. Attribution runs the established-route computation once per source, counting only that source as a starting anchor -- so a spur that only one source feeds unravels in every other source's pass, and never takes their colour.
+- **Shared roads carry several lanes at once.** Where two sources' deliveries run down the same road, both colours run down it side by side, evenly straddling the road's centre; a lone source runs down the middle. The lanes are laid out perpendicular to each link, so they stay parallel along the whole shared stretch, and a link between two tiles carries exactly the sources both tiles have.
+- **Route tiles themselves are not recoloured.** They keep their ordinary Dirt/Paved/Main appearance -- colouring the road surface as well was tried and dropped: it fought with the level colours, and the overlay is where "which supply is this" belongs.
+- **The endpoints stay distinct regardless of colour:** a green arrow at the source end (pointing the way delivery flows) and a red bar at the settlement end.
+- **The legend lists the mapping**, generated from the region's own sources rather than hardcoded, so it can't drift from what is actually drawn.
+
+Colour comes from the *food* rather than the source marker because every source marker shares one colour (§16), so the food is the only thing that visually distinguishes one source from another -- and it matches the colours already used by the source/settlement speech bubbles (§10.1).
+
 ### Established-route overlay (added in v0.4, endpoints marked in v0.5)
 
 A bright gold line is continuously overlaid on top of the map along every
@@ -439,11 +512,12 @@ Settlement result: Normal payment
 
 # 4.3 Storage System
 
-Storage buildings preserve food freshness. There are three storage types:
+Storage buildings preserve food freshness. There are two storage types:
 
 1. Normal Storage
 2. Cool Storage
-3. Freeze Storage
+
+(A third, Freeze Storage, was retired in v0.4 item 28 -- see §4.3.3.)
 
 The storage types should not simply be weak, medium, and strong. Each should have a role.
 
@@ -513,52 +587,13 @@ Medium-cost storage for fresh and chilled foods.
 
 ---
 
-## 4.3.3 Freeze Storage
+## 4.3.3 Freeze Storage (RETIRED in v0.4 item 28)
 
-Expensive storage for long-distance preservation and highly perishable foods.
+**Freeze Storage no longer exists in the build.** It was an expensive third storage tier (400 to build, 80/day upkeep, 70 capacity, 14-tile protection distance, 0.10x loss multiplier) aimed at seafood and long-distance chains, paired with a "freeze-sensitive food" rule that docked quality from foods that dislike freezing (Bread -4, Vegetables -8, Milk -10) so it couldn't be the answer to everything.
 
-### Best for
+Both are gone: the storage type, its balance entry, the `freeze_penalty` food field, and the penalty branch in the freshness simulation. Storage is Normal and Cool only. Seafood, which this tier existed to serve, now relies on Cool Storage and short routes like everything else -- worth watching in playtests, since it is the fastest-decaying food in the set.
 
-- Meat
-- Seafood
-- Ice cream
-- Frozen meals
-- Emergency stock
-- Long-distance supply chains
-
-### Effects
-
-- Pauses freshness loss while food is stored.
-- Gives very strong protection after food leaves.
-- High upkeep.
-- Lower capacity.
-- Some foods suffer a quality penalty when frozen.
-
-### Suggested values
-
-| Stat | Value |
-|---|---:|
-| Build cost | 400 |
-| Daily upkeep | 80 |
-| Capacity | 70 food |
-| Protection distance | 14 tiles |
-| Freshness loss multiplier during protection | 0.10x |
-
-### Freeze-sensitive food rule
-
-Some foods dislike freezing.
-
-| Food | Freeze result |
-|---|---|
-| Seafood | Good |
-| Meat | Good |
-| Ice cream | Required |
-| Bread | Minor quality penalty |
-| Fresh vegetables | Texture penalty |
-| Salad | Cannot freeze |
-| Milk | Quality penalty |
-
-This prevents Freeze Storage from being the best answer for everything.
+Kept here rather than deleted so the numbers are recoverable if the tier is ever revived.
 
 ---
 
@@ -633,7 +668,7 @@ This preserves the topology decision: keep networks physically separate to recei
 | Regional Hub | 350 | 60 | 8 links | 25% | 600 food/day |
 | Central Hub | 800 | 140 | 14 links | 35% | 1,400 food/day |
 
-In the MVP, a hub always forms as a Small Hub. Regional Hub is reached by manually upgrading an existing Small Hub and paying the cost difference. Central Hub is out of MVP scope.
+**Only the Small Hub exists in the build.** Every hub is a Small Hub, built manually on any route tile. The Regional Hub upgrade was retired in v0.4 item 28 -- its tool, its 200 upgrade cost, and the REGIONAL enum value are all removed -- and Central Hub was never in MVP scope. The rows above are kept for the numbers, should either tier be revived.
 
 ### Hub last-delivery hover view (added in v0.3)
 
@@ -1301,16 +1336,45 @@ Rejected or missing amount
 Overall status
 ```
 
-### 10.7 Mobile / touch controls
+### 10.7 Control panel (revised in v0.4 item 25)
 
-A fixed panel in the top-left corner of the screen provides map navigation that doesn't depend on a mouse wheel or keyboard, so the game can be played and tested from a phone browser:
+**One** panel along the left edge carries the entire HUD. It replaces the earlier split between a top-left map-controls panel and a 300px right-hand build sidebar: two panels ate both edges of the screen, every build action meant crossing from one to the other, and the most-used tools had to be duplicated on both to soften that. The panel scrolls if the window is too short for it, and only the day clock (§10.8) lives outside it, in the opposite corner.
+
+Top to bottom:
+
+- **Status:** current day and treasury on one row; grade, best score, and 7-day average score as three captioned numbers beneath it (LOOP-01/LOOP-06).
+- **Build tools:** every tool as a short, priced toggle in two columns -- Route §8 / Upgrade, then Normal §80 / Cool §180, then Hub §150 / Bulldoze. The panel is narrow, so a button carries only its name and price; the full explanation is in its tooltip and, once selected, in the bottom hint bar. Each tool now exists exactly once, so there is no shortcut copy to keep in sync.
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
 - **Bubbles On/Off (added in v0.4):** a toggle button hides or shows every source/settlement speech bubble (§10.1/UI-01) at once. A busy network can crowd many bubbles together; toggling them off leaves the routes, storage, and hubs visible without needing to zoom out or pan away.
-- **Route / Erase / Hub shortcuts (added in v0.4):** the most-used build tools -- Draw Route, Bulldoze, and (item 14) Build Hub -- also appear as compact toggle buttons on this panel, so building and erasing don't require reaching across to the right-hand sidebar. They select the exact same tools as the sidebar's own buttons, and the active tool stays highlighted on every copy at once.
+- **Legend:** collapsed by default, since it is reference material rather than a control. Expanding it scrolls it into view.
 
-These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
+None of this depends on a mouse wheel or keyboard, so the game stays playable and testable from a phone browser. These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
+
+### 10.8 Day clock panel (added in v0.4 item 24)
+
+A fixed panel in the **top-right** corner of the screen -- diagonally opposite the control panel (§10.7), so the two never crowd each other -- carries the day timer and its transport controls:
+
+```text
+Day 3                    0:47
+[==================        ]
+Day runs itself at 0:00
+[ Pause || ]  [ 1x ]
+[ Auto ]      [ Report ]
+[ Run Day Now > ]
+```
+
+- **Day and time:** the day number plus the in-game wall-clock time (§3.6) -- "Day 3 - 6:45 pm". The phase name ("Sunset") sits on the mode line below it.
+- **Countdown:** minutes:seconds remaining in the current day, drawn large. It turns amber under 15 seconds and red under 5 so the end of a day is legible from the corner of the eye, and goes gray whenever the clock isn't running (paused, or manual mode). The bar beneath it shows the same value as a fraction of the full day.
+- **Pause / speed:** hold the countdown, or cycle 1x/2x/4x (§3.5). Both are disabled in manual mode, where there is no running clock to control. The spacebar toggles pause as well.
+- **Auto:** toggles the auto-running clock against the manual loop. Switching modes always resets the countdown to a full day, so the player is never dropped into an about-to-expire day.
+- **Report:** reopens the last simulated day's full report for review (disabled before the first simulated day). This never advances the calendar -- only the end-of-day report's "Continue to next day" does that.
+- **Run Day Now:** simulates the current day immediately instead of waiting out the clock.
+
+Directly beneath the panel, an auto-run day posts a **summary card** -- day number, grade and score, profit, average freshness, settlement happiness, plus a personal-best or capacity-blocked line -- which fades on its own after a few seconds. It is non-blocking by design: the auto-run loop can't stop for a dialog every day, so the card carries the headline and the Report button carries the detail.
+
+Like the control panel, this one is usable by mouse or touch and never triggers a tile action underneath it.
 
 ---
 
@@ -1379,8 +1443,7 @@ One region with:
 - Route (Dirt / Paved / Main)
 - Normal Storage
 - Cool Storage
-- Freeze Storage
-- Hub — built manually on any existing route tile, always as a Small Hub (see §4.4). Regional Hub is a manual upgrade path from an existing Small Hub, not a placeable building in its own right.
+- Hub — built manually on any existing route tile, always as a Small Hub (see §4.4). Freeze Storage and the Regional Hub upgrade were retired in v0.4 item 28.
 
 ### MVP systems
 
