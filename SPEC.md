@@ -54,6 +54,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 31. **A delivery only pays if the whole order arrived, and pays extra if it arrived fresh.** Income was banked cart by cart, so a settlement that got half its order still earned half the money and the map's red/amber/green bubbles were commentary rather than consequence. Per food line the rule is now the bubble: red pays nothing, amber pays the line, green pays the line plus `GameBalance.FRESHNESS_BONUS_RATE` (25%) again. A short order is not a partial sale -- the settlement went without, so the run earns nothing however fresh what did arrive happened to be. Green is judged against that settlement's own `bonus_freshness`, the same figure the satisfaction score divides by and the hover tip already quotes (80% at the villages, 85% at Town D, 90% at City E), so the threshold that turns a bubble green is the threshold that pays. The freshness *multiplier* on the line itself is unchanged. The day report breaks out both halves under Income -- the bonus earned, and what the incomplete orders cost -- so the rule is legible without reverse-engineering the profit line. Note this bites hardest early, when few lines are complete and most of the map is red; §9's tuning may need revisiting alongside it. See §9, §10.1. Satisfaction, waste and the efficiency grade are deliberately untouched.
 
+32. **Bridges: a placed structure that lets one route cross another without joining it.** A drag could never cross an existing road at all (item 20), so a route that needed to get past one had to go around it or stop -- and the obvious fix, letting drags overlap freely, is exactly what turns a map into spaghetti. A bridge is instead a **placed structure**, built with its own tool onto one existing route tile carrying a straight through-run of road, the way a hub is: the road already there keeps running underneath, a raised deck spans it at right angles, and a later drag may run straight over the deck without the two routes ever becoming one network. Making it a purchase the player places and can see on the map, rather than a side effect of a wobbly drag, is what keeps crossings deliberate. Internally, connectivity stops being a property of a tile and becomes one of a `(tile, lane)` graph vertex: the lane you land on follows the direction you stepped in, and from either you may only leave the way you came in -- so `find_path`, `road_components` and `established_route_cells` keep the two roads apart with no second grid layer and no change to `GameState.connections`. Kept narrow on purpose (straight runs only, both landings on-map and not a node, no two bridges landing on each other, nothing else buildable on a bridge tile, no drag starting or stopping on one) and priced to lose to a detour: §60 to build, §6/day extra upkeep, 2x freshness decay to cross the deck, shared tile capacity, and a cap of 2 per connected road network. See §4.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -416,7 +418,61 @@ drag ever touches are its very first and very last -- there's no way for a
 new route to physically overlap an unrelated existing one. Two separately-
 built roads, or a road and a node, only ever get linked by a drag that ends
 exactly ON that shared hub, settlement, or unestablished route tile --
-never by crossing through the middle of one another.
+never by crossing through the middle of one another. The one exception is a
+**bridge**, a structure the player places and pays for first, which a drag
+may then run straight over without the two routes joining (see below).
+
+### Bridges: crossing a route without joining it (added in v0.5 item 32)
+
+The interior-must-be-empty-ground rule above has exactly one exception, and it
+is a structure the player pays for and places deliberately: a **bridge**.
+
+A bridge is not drawn as part of a route drag. It is a **placed structure**,
+built with its own tool onto **one existing route tile**, the way a hub is
+(§4.4). It turns that tile into a road-over-road crossing: the road already
+there keeps running underneath, and a raised deck spans it at right angles. A
+later drag may then run **straight over the deck**, and the two routes share
+that cell without ever becoming one network.
+
+Making it a placed structure rather than an automatic side effect of a drag is
+the point. A crossing becomes a purchase the player decides on and can see on
+the map before anything is drawn over it, instead of something that quietly
+happens whenever a drag wobbles across an existing road — which is what would
+turn the map into spaghetti.
+
+**Placement rules.** A bridge may only be built where "across" is unambiguous
+and the result stays legible:
+
+- The tile must be an existing plain route tile carrying a **straight
+  through-run** of road — exactly two connections, pointing opposite ways. No
+  corners, forks or dead ends, and never a hub, storage tile or river crossing.
+- Both tiles the deck would land on must be **on the map and not a node**. A
+  delivery never passes through a source or settlement (§4.7), so a deck can
+  never land on one.
+- **No two bridges may land on each other**, which stops decks butting
+  end-to-end into a continuous elevated road.
+- A connected road network supports at most **2 bridges**. An existing bridge
+  counts against both networks it serves — the road beneath it and the route
+  across it — so approaching from the other side does not reset the budget.
+- Nothing else can be built on a bridge tile afterwards, and a route drag may
+  neither start nor stop on one: a crossing is passed over, never anchored to.
+
+**Crossing rules.** Once the structure exists, a drag may cross it only
+**straight through, along the deck's own axis** — entered and left in the same
+direction. Turning a corner on top of somebody else's road is invalid, as is
+stopping on the deck. The crossing route pays only for the fresh ground either
+side; the bridge itself was paid for when it was placed.
+
+**Costs.** §60 to build, plus §6/day upkeep on top of the road's own (the deck
+is a structure, so its upkeep is not discounted by an adjacent hub). Crossing
+the deck costs **2× the usual freshness decay** for that tile — ramping up and
+back down is roughly one extra tile's worth — so an overpass loses to a short
+detour and is only worth it when going around would be genuinely long. Capacity
+belongs to the tile, so both roads share one throughput budget.
+
+Together the price, the upkeep, the freshness penalty and the per-network cap
+are what keep crossings rare and deliberate. Going around remains the right
+answer most of the time; a bridge is for when it genuinely isn't.
 
 ### Sweeping bulldoze and upgrade across tiles (added in v0.4 item 26)
 

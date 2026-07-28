@@ -2,9 +2,16 @@
 set -euo pipefail
 
 GODOT_VERSION="4.6.2"
+# Two different spellings of the same release, and they are not interchangeable:
+# the download URLs and the binary inside the zip use "4.6.2-stable", while the
+# editor looks for export templates under "4.6.2.stable" (version.status, as
+# reported by `godot --version`). Installing to the hyphenated path leaves the
+# templates where nothing will ever find them, and every export then fails with
+# "No export template found at the expected path".
 GODOT_RELEASE="${GODOT_VERSION}-stable"
+GODOT_TEMPLATE_RELEASE="${GODOT_VERSION}.stable"
 INSTALL_DIR="${HOME}/.local/bin"
-TEMPLATES_DIR="${HOME}/.local/share/godot/export_templates/${GODOT_RELEASE}"
+TEMPLATES_DIR="${HOME}/.local/share/godot/export_templates/${GODOT_TEMPLATE_RELEASE}"
 TEMP_DIR="$(mktemp -d)"
 
 cleanup() {

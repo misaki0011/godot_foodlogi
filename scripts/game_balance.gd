@@ -6,8 +6,32 @@ class_name GameBalance
 const STARTING_FUNDS := 1500.0
 const ROUTE_BUILD_COST := 8.0
 const ROUTE_BASE_UPKEEP := 2.0
-const BRIDGE_COST := 40.0
+## Surcharge for drawing a route tile onto the river column -- an automatic,
+## free-standing river crossing, nothing to do with the placed BRIDGE_* deck
+## below (which crosses a ROAD, not water).
+const RIVER_BRIDGE_COST := 40.0
 const HUB_CAP_PER_NETWORK := 2
+
+## ---------- bridges: road-over-road crossings (placed structure) ----------
+## Built with the Bridge tool onto one existing route tile, turning it into a
+## crossing: the road already there keeps running underneath, and a raised deck
+## across it lets a SECOND route pass straight over without the two ever
+## joining networks (see SimulationEngine's lane rules).
+##
+## A bridge is the single, deliberate, paid exception to "a new route can never
+## cross an existing tile", so it is priced and capped to stay one: at §60 plus
+## its own upkeep it loses to a detour of up to ~7 tiles, the deck costs an
+## extra tile's worth of freshness to climb, and a connected road network only
+## ever supports BRIDGE_CAP_PER_NETWORK of them. Together those keep crossings
+## rare and deliberate instead of letting the map fill with interchanges.
+const BRIDGE_BUILD_COST := 60.0
+const BRIDGE_UPKEEP := 6.0
+const BRIDGE_CAP_PER_NETWORK := 2
+## Freshness decay multiplier for the tile a delivery spends ON the deck --
+## ramping up and back down costs roughly one extra tile of decay, so an
+## overpass is a genuine trade-off against going around rather than a strictly
+## better road.
+const BRIDGE_DECK_DECAY_MULT := 2.0
 const GRID_SIZE := Vector2i(21, 14)
 const RIVER_COL := 10
 

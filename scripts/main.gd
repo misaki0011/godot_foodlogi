@@ -15,7 +15,11 @@ extends Node3D
 ## upgrade, bulldoze) remain a single tap on an existing route tile.
 ## A Small Hub can be built on any existing route tile with the Build Hub
 ## tool, capped at GameBalance.HUB_CAP_PER_NETWORK per connected road network
-## (v0.5 revision -- see SPEC.md §4.4). Hovering (desktop) or tapping (mobile,
+## (v0.5 revision -- see SPEC.md §4.4). The Bridge tool likewise converts a
+## straight run of route tile into a road-over-road crossing, the one paid
+## exception to the never-cross rule: a later drag may run straight over the
+## deck without the two routes joining networks (see _do_build_bridge and
+## SimulationEngine's lane rules). Hovering (desktop) or tapping (mobile,
 ## no dialog) any tile or node shows a live info tooltip. A top-left panel
 ## provides touch zoom/pan controls for exploring the map on mobile.
 
@@ -37,7 +41,22 @@ const ROUTE_LEVEL_SCENES := {
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
 
 const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
-const BRIDGE_COLOR := Color("8FB9D8")
+const RIVER_BRIDGE_COLOR := Color("8FB9D8")
+
+## ---------- bridge decks ----------
+## A bridge tile draws its ordinary road block plus a raised deck slab running
+## across it, flanked by two rails. The rails are what make the crossing read as
+## a bridge from the fixed isometric camera rather than as a floating slab, and
+## the deck sits high enough above the road surface to leave the tile underneath
+## clearly visible -- the whole point of the structure is that the player can
+## see two roads there, not one.
+const BRIDGE_DECK_HEIGHT := 0.62
+const BRIDGE_DECK_THICKNESS := 0.14
+const BRIDGE_DECK_WIDTH_RATIO := 0.5 # of the tile, across the deck's axis
+const BRIDGE_RAIL_HEIGHT := 0.22
+const BRIDGE_RAIL_THICKNESS := 0.09
+const BRIDGE_DECK_COLOR := Color("C7B79B")
+const BRIDGE_RAIL_COLOR := Color("8A7758")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}
 const STORAGE_TOOLS := {"normal": GameEnums.StorageType.NORMAL, "cool": GameEnums.StorageType.COOL}
 const ZOOM_MIN := 14.0
@@ -52,6 +71,7 @@ const TOOL_HINTS := {
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
+	"bridgeBuild": "Click a straight run of route tile to build a Bridge over it, so a second route can later cross without joining it. The crossing route still has to be drawn over the top afterwards.",
 	"remove": "Click a built tile to bulldoze it, or drag across several to clear them all at once (no refund).",
 }
 
@@ -128,10 +148,12 @@ var _zoom_dir := 0.0
 ## settlement, never picked up again mid-network, while unfinished
 ## infrastructure that isn't serving any delivery yet can be freely extended
 ## from or joined to at any of its own tiles. EVERY CELL IN BETWEEN those two
-## ends must be empty ground (v0.5 item 20): a new route can never cross or
-## reuse an already-built tile or a different node, it only ever runs over
-## fresh grass. The only pre-existing cells a drag ever touches are its first
-## and last.
+## ends must be empty ground (v0.5 item 20), with exactly one exception: a
+## BRIDGE tile may be crossed, and only straight over, along the deck's own
+## axis (_crosses_bridge_at). Otherwise a new route can never cross or reuse an
+## already-built tile or a different node, it only ever runs over fresh grass.
+## A drag can neither start nor stop on a bridge -- a crossing is something a
+## route passes over, never somewhere it anchors.
 ## _process() promotes an eligible press to _drag_active once held past
 ## HOLD_TO_DRAG_MSEC without releasing. A release before that threshold --
 ## or a release without ever dragging to a second cell -- is a plain tap on
@@ -303,7 +325,7 @@ func _start_press(screen_position: Vector2) -> void:
 	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (
 		(node != null and node.node_type == GameEnums.NodeType.SOURCE) or
 		(cell_data != null and cell_data.kind == "hub") or
-		(cell_data != null and cell_data.kind == "route" and not _established_route_cells().has(cell))
+		(cell_data != null and cell_data.kind == "route" and not SimulationEngine.is_bridge(_state, cell) and not _established_route_cells().has(cell))
 	)
 	if _press_eligible:
 		_drag_kind = "route"
@@ -413,9 +435,12 @@ func _recompute_drag_validity() -> void:
 			continue
 		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell)
 		if pre_existing:
-			if i != last_index and _drag_invalid_reason == "":
+			if i == last_index or _crosses_bridge_at(i):
+				continue
+			if _drag_invalid_reason == "":
 				_drag_valid = false
-				_drag_invalid_reason = "A new route can't cross or reuse an existing tile or node -- it can only run over empty ground between its two ends."
+				_drag_invalid_reason = ("A bridge can only be crossed straight over, along the deck." if SimulationEngine.is_bridge(_state, cell)
+					else "A new route can't cross or reuse an existing tile or node -- it can only run over empty ground between its two ends, or straight over a bridge.")
 			continue
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
 		newly_built[cell] = true
@@ -437,10 +462,32 @@ func _recompute_drag_validity() -> void:
 	var end_cell_data = _state.grid.get(end_cell)
 	var ends_at_hub: bool = end_cell_data != null and end_cell_data.kind == "hub"
 	var ends_at_settlement: bool = end_node != null and end_node.node_type == GameEnums.NodeType.SETTLEMENT
-	var ends_at_unestablished_route: bool = end_cell_data != null and end_cell_data.kind == "route" and not _established_route_cells().has(end_cell)
+	var ends_at_bridge: bool = SimulationEngine.is_bridge(_state, end_cell)
+	var ends_at_unestablished_route: bool = end_cell_data != null and end_cell_data.kind == "route" and not ends_at_bridge and not _established_route_cells().has(end_cell)
 	if not (ends_at_hub or ends_at_settlement or ends_at_unestablished_route):
 		_drag_valid = false
-		_drag_invalid_reason = "A route must end at a hub, a settlement, or an unfinished route tile."
+		# Stopping ON a deck would leave a route hanging in mid-air over
+		# somebody else's road, which is exactly the mess bridges are meant to
+		# avoid -- a crossing is something you pass over, not somewhere you park.
+		_drag_invalid_reason = ("A route can't stop on a bridge -- carry straight over and land on the far side."
+			if ends_at_bridge
+			else "A route must end at a hub, a settlement, or an unfinished route tile.")
+
+## Whether _drag_path[i] is a bridge tile the drag is legitimately crossing:
+## the one and only case where a route may run over a cell that already exists.
+## It has to be a genuine crossing -- entered and left in the same direction,
+## along the deck's own axis -- so a drag can neither turn a corner on top of
+## somebody else's road nor sneak along the road underneath.
+func _crosses_bridge_at(i: int) -> bool:
+	var cell: Vector2i = _drag_path[i]
+	if not SimulationEngine.is_bridge(_state, cell) or i + 1 >= _drag_path.size():
+		return false
+	var incoming: Vector2i = cell - _drag_path[i - 1]
+	var outgoing: Vector2i = _drag_path[i + 1] - cell
+	if incoming != outgoing:
+		return false
+	var axis := SimulationEngine.bridge_axis(_state, cell)
+	return (axis.x != 0) == (incoming.x != 0)
 
 ## Writes every queued new tile and connection from a valid drag path in one
 ## batch, then runs the usual post-build pass once for the whole gesture
@@ -661,6 +708,8 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_build_storage(cell)
 		"hubBuild":
 			_do_build_hub(cell)
+		"bridgeBuild":
+			_do_build_bridge(cell)
 		"remove":
 			_do_bulldoze(cell)
 	_after_action()
@@ -697,6 +746,9 @@ func _do_build_storage(cell: Vector2i) -> void:
 	if cell_data == null or cell_data.kind != "route":
 		_show_toast("Storage must be built on an existing route tile.", true)
 		return
+	if SimulationEngine.is_bridge(_state, cell):
+		_show_toast("A bridge tile already carries two roads -- there's no room to build on it.", true)
+		return
 	var stype: GameEnums.StorageType = STORAGE_TOOLS[_tool]
 	var st = GameBalance.STORAGE_TYPES[stype]
 	if _state.balance < st.build:
@@ -717,6 +769,9 @@ func _do_build_hub(cell: Vector2i) -> void:
 	if cell_data == null or cell_data.kind != "route":
 		_show_toast("Select a route tile to build a hub.", true)
 		return
+	if SimulationEngine.is_bridge(_state, cell):
+		_show_toast("A bridge tile already carries two roads -- there's no room to build on it.", true)
+		return
 	if SimulationEngine.network_at_hub_cap(_state, cell):
 		_show_toast("This road already has %d hub%s -- the cap is reached." % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"], true)
 		return
@@ -728,13 +783,80 @@ func _do_build_hub(cell: Vector2i) -> void:
 	_state.grid[cell] = {"kind": "hub", "htype": GameEnums.HubType.SMALL}
 	_show_toast("Small Hub built for §%d." % roundi(cost))
 
+## Turns one existing route tile into a road-over-road crossing: the road
+## already there keeps running underneath, and a raised deck across it lets a
+## SECOND route be drawn straight over without the two ever joining networks
+## (SimulationEngine's lane rules do the actual separating; this only places the
+## structure and records the deck's axis).
+##
+## It is the single, deliberate, paid exception to "a new route can never cross
+## an existing tile", so the gate is deliberately narrow -- the tile must be a
+## plain straight through-run of road with room to land on both sides, no two
+## bridges may touch, and a connected road network only ever supports
+## GameBalance.BRIDGE_CAP_PER_NETWORK of them. Between that, the build cost up
+## front and the deck's extra freshness cost, going around stays the right
+## answer most of the time -- which is what keeps the map from filling up with
+## interchanges.
+func _do_build_bridge(cell: Vector2i) -> void:
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route":
+		_show_toast("A bridge must be built on an existing route tile.", true)
+		return
+	if SimulationEngine.is_bridge(_state, cell):
+		_show_toast("There's already a bridge here.", true)
+		return
+	if _map_data.is_river(cell.x, cell.y):
+		_show_toast("This tile already bridges the river -- a second deck can't be stacked on it.", true)
+		return
+	var axis := _deck_axis_for(cell)
+	if axis == Vector2i.ZERO:
+		_show_toast("A bridge needs a straight run of road to cross -- pick a tile with road connected on exactly two opposite sides.", true)
+		return
+	for step in [axis, -axis]:
+		var landing: Vector2i = cell + step
+		if not _cell_in_bounds(landing):
+			_show_toast("A bridge needs room to land on both sides -- this one would run off the map.", true)
+			return
+		if _node_at(landing) != null:
+			_show_toast("A bridge can't land on a source or settlement -- a delivery never passes through one.", true)
+			return
+		if SimulationEngine.is_bridge(_state, landing):
+			_show_toast("Bridges can't sit side by side -- leave at least a tile of open road between them.", true)
+			return
+	if SimulationEngine.network_at_bridge_cap(_state, cell):
+		_show_toast("This road network already has %d bridge%s -- the cap is reached." % [GameBalance.BRIDGE_CAP_PER_NETWORK, "" if GameBalance.BRIDGE_CAP_PER_NETWORK == 1 else "s"], true)
+		return
+	var cost: float = GameBalance.BRIDGE_BUILD_COST
+	if _state.balance < cost:
+		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
+		return
+	_state.balance -= cost
+	cell_data["bridge_axis"] = axis
+	_show_toast("Bridge built for §%d -- draw a route straight over it to cross without joining the road below." % roundi(cost))
+
+## The axis a bridge deck would run along at `cell`: across the road already
+## there, so the deck is perpendicular to it. Only a straight through-run
+## qualifies -- exactly two connections, pointing opposite ways -- which keeps
+## bridges off corners, forks and dead ends, where "across" wouldn't mean
+## anything and the result would read as a knot rather than a crossing.
+## Vector2i.ZERO when the tile doesn't qualify.
+func _deck_axis_for(cell: Vector2i) -> Vector2i:
+	var links: Array[Vector2i] = []
+	for d in DIRECTIONS:
+		if _state.has_connection(cell, cell + d):
+			links.append(d)
+	if links.size() != 2 or links[0] != -links[1]:
+		return Vector2i.ZERO
+	return Vector2i(0, 1) if links[0].x != 0 else Vector2i(1, 0)
+
 func _do_bulldoze(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
 		_show_toast("Nothing to remove here.", true)
 		return
+	var was_bridge := SimulationEngine.is_bridge(_state, cell)
 	_state.grid.erase(cell)
 	_state.remove_connections(cell)
-	_show_toast("Tile cleared.")
+	_show_toast("Bridge cleared, along with both roads that ran through it." if was_bridge else "Tile cleared.")
 
 func _after_action() -> void:
 	_render_grid()
@@ -905,11 +1027,31 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 	elif cell_data:
 		if cell_data.kind == "route":
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
-			text = "[b]%s Route[/b]\nCapacity: %d/day\nUpkeep ×%.1f" % [lvl.label, roundi(lvl.cap), lvl.upkeep_mult]
-			if SimulationEngine.network_at_hub_cap(_state, cell):
-				text += "\n[color=orange]⚠ This road already has %d hub%s -- the cap is reached[/color]" % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"]
+			if cell_data.has("bridge_axis"):
+				# A bridge tile carries two roads and can host nothing else, so
+				# it replaces the plain route tip outright rather than annotating
+				# it -- none of the "you could build X here" hints apply.
+				text = "[b]Bridge over %s Route[/b]\nCapacity: %d/day, shared by both roads\nUpkeep ×%.1f +§%d for the deck\nDeck runs %s: a route drawn straight over it never joins the road below.\n[color=orange]Crossing the deck costs %.0f× the usual freshness decay[/color]" % [
+					lvl.label,
+					roundi(lvl.cap),
+					lvl.upkeep_mult,
+					roundi(GameBalance.BRIDGE_UPKEEP),
+					"east-west" if cell_data.bridge_axis.x != 0 else "north-south",
+					GameBalance.BRIDGE_DECK_DECAY_MULT,
+				]
 			else:
-				text += "\n[color=#4FA8A0]⚙ Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
+				text = "[b]%s Route[/b]\nCapacity: %d/day\nUpkeep ×%.1f" % [lvl.label, roundi(lvl.cap), lvl.upkeep_mult]
+				if SimulationEngine.network_at_hub_cap(_state, cell):
+					text += "\n[color=orange]⚠ This road already has %d hub%s -- the cap is reached[/color]" % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"]
+				else:
+					text += "\n[color=#4FA8A0]⚙ Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
+				# Only advertise the Bridge tool where it would actually take:
+				# a straight through-run, on a network under its bridge cap.
+				if _deck_axis_for(cell) != Vector2i.ZERO:
+					if SimulationEngine.network_at_bridge_cap(_state, cell):
+						text += "\n[color=orange]⚠ This road network already has %d bridge%s -- the cap is reached[/color]" % [GameBalance.BRIDGE_CAP_PER_NETWORK, "" if GameBalance.BRIDGE_CAP_PER_NETWORK == 1 else "s"]
+					else:
+						text += "\n[color=#4FA8A0]⌒ Bridge tool can span this tile for §%d, so another route can cross over[/color]" % roundi(GameBalance.BRIDGE_BUILD_COST)
 		elif cell_data.kind == "storage":
 			var st = GameBalance.STORAGE_TYPES[cell_data.stype]
 			text = "[b]%s[/b]\nUpkeep: §%d/day\nProtects next %d tiles at %d%% decay" % [st.name, roundi(st.upkeep), st.protection, roundi(st.mult * 100)]
@@ -931,7 +1073,7 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 				text += ("\n[color=orange]! Hit 100%%+ capacity on the last run -- deliveries were capped here[/color]" if c.over
 					else "\n[color=orange]! Ran 90%+ of capacity on the last run -- close to a bottleneck[/color]")
 	elif _map_data.is_river(cell.x, cell.y):
-		text = "[b]River[/b]\nBuilding here requires a bridge (+§%d)." % GameBalance.BRIDGE_COST
+		text = "[b]River[/b]\nBuilding here requires a bridge (+§%d)." % GameBalance.RIVER_BRIDGE_COST
 	if text == "":
 		_tip_panel.visible = false
 		return
@@ -1015,9 +1157,13 @@ func _render_grid() -> void:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
 		if cell.kind == "route":
 			if _map_data.is_river(pos.x, pos.y):
-				_add_tile_box(world_pos, BRIDGE_COLOR, 0.16)
+				_add_tile_box(world_pos, RIVER_BRIDGE_COLOR, 0.16)
 			else:
 				_add_route_block(world_pos, cell.level)
+			# A bridge tile keeps its ordinary road block -- the road underneath
+			# stays fully visible -- and gains a deck floating across it.
+			if cell.has("bridge_axis"):
+				_add_bridge_deck(world_pos, cell.bridge_axis)
 		elif cell.kind == "storage":
 			var marker: NodeMarker = STORAGE_SCENE.instantiate()
 			_grid_visuals.add_child(marker)
@@ -1049,7 +1195,7 @@ func _render_grid() -> void:
 const ESTABLISHED_LANE_SPACING := 0.42
 
 func _render_established_routes() -> void:
-	var sources_here := _established_sources_by_cell()
+	var sources_here := _established_sources_by_vertex()
 	if sources_here.is_empty():
 		return
 	# One lane per source. Each established tile carries a dot per source whose
@@ -1059,31 +1205,36 @@ func _render_established_routes() -> void:
 	# part. The node ends stay distinguished regardless of colour: a green
 	# arrow at the source (pointing the way delivery flows) and a red bar at
 	# the settlement.
-	for cell in sources_here:
-		var ids: Array = sources_here[cell]
-		var here: Vector3 = _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
+	#
+	# Iterated per GRAPH VERTEX rather than per tile (SimulationEngine's lane
+	# rules), so at a bridge the deck and the road beneath it each get their own
+	# lines -- drawn at their own heights, and only along their own axis. That's
+	# what makes a crossing read as one route passing over another instead of
+	# two colours meeting in a junction.
+	for v in sources_here:
+		var cell := SimulationEngine.vertex_pos(v)
+		var ids: Array = sources_here[v]
+		var here := _established_point(v)
 		# Dots have no direction of their own, so they take their lane axis
 		# from the tile's first established link. On a straight run that lines
 		# the dots up with the bars exactly; on a corner it's the axis of one
 		# of the two arms, which still reads as one continuous lane.
 		var dot_axis := Vector3(0.0, 0.0, 1.0)
-		for d in DIRECTIONS:
-			var n: Vector2i = cell + d
-			if _state.has_connection(cell, n) and (sources_here.has(n) or _nodes_by_pos.has(n)):
-				dot_axis = _lane_axis(d)
+		for w in SimulationEngine.exits(_state, v):
+			if sources_here.has(w) or _nodes_by_pos.has(SimulationEngine.vertex_pos(w)):
+				dot_axis = _lane_axis(SimulationEngine.vertex_pos(w) - cell)
 				break
 		for i in range(ids.size()):
 			_add_established_marker(here + dot_axis * _lane_offset(i, ids.size()), _source_food_color(ids[i]))
-		for d in DIRECTIONS:
-			var n: Vector2i = cell + d
-			if not _state.has_connection(cell, n):
-				continue
-			var there: Vector3 = _terrain.map_to_local(Vector3i(n.x, 0, n.y)) + Vector3(0, ESTABLISHED_ROUTE_Y, 0)
-			if sources_here.has(n):
+		for w in SimulationEngine.exits(_state, v):
+			var n := SimulationEngine.vertex_pos(w)
+			var d: Vector2i = n - cell
+			var there := _established_point(w)
+			if sources_here.has(w):
 				# Tile<->tile: draw one bar per undirected pair (east/south only),
 				# since the other tile will iterate and draw the matching half.
 				if d == Vector2i(1, 0) or d == Vector2i(0, 1):
-					var shared := _shared_source_ids(ids, sources_here[n])
+					var shared := _shared_source_ids(ids, sources_here[w])
 					var axis := _lane_axis(d)
 					for i in range(shared.size()):
 						var offset := axis * _lane_offset(i, shared.size())
@@ -1101,6 +1252,14 @@ func _render_established_routes() -> void:
 					_add_established_start_arrow((here + there) * 0.5, -d)
 				else:
 					_add_established_segment(here, there, ESTABLISHED_END_COLOR)
+
+## Where the overlay draws for a graph vertex: the tile's centre, lifted to the
+## deck's height when the vertex is a bridge deck so the crossing line visibly
+## rides over the one underneath.
+func _established_point(v: Vector3i) -> Vector3:
+	var cell := SimulationEngine.vertex_pos(v)
+	var lift: float = BRIDGE_DECK_HEIGHT if v.z == SimulationEngine.LANE_DECK else 0.0
+	return _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, ESTABLISHED_ROUTE_Y + lift, 0)
 
 ## The horizontal axis lanes spread along, perpendicular to a link running in
 ## direction `d`.
@@ -1129,14 +1288,17 @@ func _shared_source_ids(a: Array, b: Array) -> Array:
 ## (see SimulationEngine.established_route_cells' only_source_id filter). Two
 ## sources feeding one shared trunk both colour the trunk, but neither
 ## colours the other's spur.
-func _established_sources_by_cell() -> Dictionary:
+## Keyed by graph vertex, not tile, so a bridge's deck and the road beneath it
+## are attributed independently -- one may be carrying deliveries while the
+## other is a dead stub, and the overlay has to show exactly that.
+func _established_sources_by_vertex() -> Dictionary:
 	var result := {}
 	for pos in _nodes_by_pos:
 		var node: NodeData = _nodes_by_pos[pos]
 		if node.node_type != GameEnums.NodeType.SOURCE:
 			continue
-		for cell in SimulationEngine.established_route_cells(_state, _nodes_by_pos, node.node_id):
-			result.get_or_add(cell, []).append(node.node_id)
+		for v in SimulationEngine.established_route_vertices(_state, _nodes_by_pos, node.node_id):
+			result.get_or_add(v, []).append(node.node_id)
 	return result
 
 ## The set (Vector2i -> true) of built tiles on some complete source->
@@ -1297,6 +1459,36 @@ func _source_food_color(source_id: String) -> Color:
 		mixed.b += color.b
 	var count := float(node.produces.size())
 	return Color(mixed.r / count, mixed.g / count, mixed.b / count, 1.0)
+
+## The raised deck of a bridge tile: a slab spanning the full cell along the
+## deck's own axis (so it meets the road on either side rather than stopping
+## short), narrowed across that axis and flanked by two rails, which is what
+## makes it read as a crossing rather than a floating block from the fixed
+## isometric camera. The road it crosses is drawn normally underneath and stays
+## visible on both sides of the slab.
+func _add_bridge_deck(pos: Vector3, axis: Vector2i) -> void:
+	var along := Vector3(1.0, 0.0, 0.0) if axis.x != 0 else Vector3(0.0, 0.0, 1.0)
+	var across := Vector3(0.0, 0.0, 1.0) if axis.x != 0 else Vector3(1.0, 0.0, 0.0)
+	var length: float = _terrain.cell_size.x if axis.x != 0 else _terrain.cell_size.z
+	var span: float = _terrain.cell_size.z if axis.x != 0 else _terrain.cell_size.x
+	var width: float = span * BRIDGE_DECK_WIDTH_RATIO
+	var deck_pos := pos + Vector3(0.0, BRIDGE_DECK_HEIGHT, 0.0)
+	_add_box(deck_pos, along * length + across * width + Vector3(0.0, BRIDGE_DECK_THICKNESS, 0.0), BRIDGE_DECK_COLOR)
+	var rail_size := along * length + across * BRIDGE_RAIL_THICKNESS + Vector3(0.0, BRIDGE_RAIL_HEIGHT, 0.0)
+	var rail_y := Vector3(0.0, (BRIDGE_DECK_THICKNESS + BRIDGE_RAIL_HEIGHT) * 0.5, 0.0)
+	for side in [1.0, -1.0]:
+		_add_box(deck_pos + across * (width * 0.5 * side) + rail_y, rail_size, BRIDGE_RAIL_COLOR)
+
+func _add_box(center: Vector3, size: Vector3, color: Color) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	mesh_instance.mesh = mesh
+	mesh_instance.position = center
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	mesh_instance.material_override = material
+	_grid_visuals.add_child(mesh_instance)
 
 func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -1553,7 +1745,7 @@ func _build_status_section(box: VBoxContainer) -> void:
 func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "ROUTES")
 	var route_grid := _add_tool_grid(box)
-	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.BRIDGE_COST)])
+	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.RIVER_BRIDGE_COST)])
 	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade Route -- Dirt to Paved (§%d), Paved to Main (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost)])
 
 	_add_section_title(box, "STORAGE")
@@ -1566,6 +1758,7 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "HUBS & CLEARING")
 	var hub_grid := _add_tool_grid(box)
 	_add_tool_button(hub_grid, "Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild", "Build a Small Hub on any existing route tile for §%d. Each connected road network supports %d hubs." % [roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), GameBalance.HUB_CAP_PER_NETWORK])
+	_add_tool_button(hub_grid, "Bridge  §%d" % roundi(GameBalance.BRIDGE_BUILD_COST), "bridgeBuild", "Build a Bridge over a straight run of route tile for §%d, so a second route can be drawn straight over it without joining it. §%d/day extra upkeep, the deck costs %.0f× freshness decay to cross, and each connected road network supports %d." % [roundi(GameBalance.BRIDGE_BUILD_COST), roundi(GameBalance.BRIDGE_UPKEEP), GameBalance.BRIDGE_DECK_DECAY_MULT, GameBalance.BRIDGE_CAP_PER_NETWORK])
 	_add_tool_button(hub_grid, "Bulldoze", "remove", "Remove a built tile, along with every connection touching it. No refund.")
 
 func _build_map_section(box: VBoxContainer) -> void:
@@ -1641,7 +1834,8 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, Color("8B6B9C"), "Junction over the hub cap")
 	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
 	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
-	_add_legend_row(_legend_box, BRIDGE_COLOR, "River / bridge")
+	_add_legend_row(_legend_box, RIVER_BRIDGE_COLOR, "River / river crossing")
+	_add_legend_row(_legend_box, BRIDGE_DECK_COLOR, "Bridge deck -- routes cross, never join")
 
 	# Which delivery line belongs to which supply (ROUTE-16). Built from the
 	# map's own sources, so it can never drift from what's drawn out there.
