@@ -211,6 +211,7 @@ func _report() -> void:
 	assert(state.grid.size() == grid_size_before_tip, "Tapping a settlement must not attempt to build there")
 
 	_check_day_clock(state)
+	_check_day_cycle(state)
 
 	var terrain_types_seen := {}
 	for cell in used_cells:
@@ -355,6 +356,38 @@ func _check_day_clock(state: GameState) -> void:
 	_main.call("_close_report")
 	assert(state.day == day_before, "Reviewing a past report must not advance the day")
 	print("Day clock (LOOP-07) checks passed.")
+
+## LOOP-08: the sun cycle rides the day clock. Checks the shape of the curve
+## rather than exact colours: midday is the brightest moment and night the
+## dimmest, the sun sits highest at midday and near the horizon at dawn and
+## sunset, and the cycle joins up across the day rollover instead of snapping.
+func _check_day_cycle(state: GameState) -> void:
+	var midday := DayCycle.sample(0.40)
+	var night := DayCycle.sample(0.95)
+	var dawn := DayCycle.sample(0.0)
+	var sunset := DayCycle.sample(0.76)
+	assert(midday.energy > dawn.energy and midday.energy > night.energy, "Midday must be the brightest moment of the day")
+	assert(night.energy < dawn.energy, "Night must be dimmer than dawn")
+	assert(night.ambient_energy > 0.0, "Night must keep some ambient light, or the map goes pure black")
+	assert(midday.pitch < dawn.pitch and midday.pitch < sunset.pitch, "The sun must sit highest at midday and low at dawn/sunset")
+	assert(DayCycle.label(0.40) == "Midday" and DayCycle.label(0.80) == "Sunset" and DayCycle.label(0.0) == "Dawn")
+
+	# Continuity across the rollover: the last moment of a day and the first
+	# moment of the next must be the same light, or the sky visibly snaps.
+	var end_of_day := DayCycle.sample(0.9999)
+	var start_of_next := DayCycle.sample(0.0)
+	assert(absf(end_of_day.energy - start_of_next.energy) < 0.05, "The sun cycle must join up across the day rollover")
+	var sky_gap: float = maxf(maxf(absf(end_of_day.sky.r - start_of_next.sky.r), absf(end_of_day.sky.g - start_of_next.sky.g)), absf(end_of_day.sky.b - start_of_next.sky.b))
+	assert(sky_gap < 0.05, "The sky must not snap at the day rollover")
+
+	# The phase follows the clock, and a stopped clock holds the light still.
+	state.day_time_left = GameBalance.DAY_LENGTH_SEC
+	assert(is_equal_approx(_main.call("_day_phase"), 0.0), "A full clock means the start of the day")
+	state.day_time_left = 0.0
+	assert(is_equal_approx(_main.call("_day_phase"), 1.0), "An expired clock means the end of the day")
+	state.day_time_left = GameBalance.DAY_LENGTH_SEC * 0.5
+	assert(is_equal_approx(_main.call("_day_phase"), 0.5), "Half the clock left means half the day gone")
+	print("Day cycle lighting (LOOP-08) checks passed.")
 
 ## Screen position of a grid cell's centre, for driving real press/drag
 ## gestures through Main's input entry points.

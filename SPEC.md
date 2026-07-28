@@ -48,6 +48,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 28. **Freeze Storage and the Regional Hub upgrade are retired.** Both are removed from the build, not merely hidden: `GameEnums.StorageType` is down to NORMAL/COOL, `GameEnums.HubType` to SMALL, their entries in `GameBalance.STORAGE_TYPES`/`HUB_TYPES` and `HUB_REGIONAL_UPGRADE_COST` are deleted, `Main._do_upgrade_hub` and both tool buttons are gone, and with no freezer left to trigger it the freeze-penalty rule goes too -- `FoodData.freeze_penalty` and the penalty branch in `SimulationEngine.simulate_freshness` are deleted along with it. Storage is now Normal and Cool; a hub is always a Small Hub. The full-game material in §6, §8 and §11 still describes both (Freezer Plants, Frozen Food, Chapter 5's freeze chain, Regional Networks); treat those as post-MVP scope superseded by this item, not as descriptions of the current build. See §4.3, §4.4.
 
+29. **The light follows the clock: one in-game day is one sun cycle.** A day now visibly runs dawn -> morning -> midday -> afternoon -> sunset -> dusk -> night -> dawn while the player builds, by driving the sun's angle, the sunlight's colour and strength, and the sky/ambient tint off the day clock's phase. The clock panel names the current stretch beside the day number ("Day 3 - Sunset"). The cycle is continuous across the day rollover -- the first and last keyframes are the same moment -- so the sun comes back up exactly as the clock hits 0:00 rather than the sky snapping. A stopped clock (paused, or manual mode) holds the light where it is, since time of day IS the day clock. See §3.6.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -230,6 +232,27 @@ The planning phase (§3.1) is not open-ended. Each day is a real-time countdown,
 - **Manual mode:** switching Auto off stops the clock entirely and restores the older loop, where a day only runs when the player asks and the blocking report's "Continue to next day" is what advances the calendar.
 
 The clock is frozen while the full-screen report (§3.3) is open, so reading a report never costs the player build time.
+
+### 3.6 Time-of-day lighting (added in v0.4 item 29)
+
+The day clock also drives the light, so one in-game day is one full sun cycle rather than a fixed midday:
+
+| Phase | At | Sun | Look |
+|---|---:|---|---|
+| Dawn | 0.00 | low, -12 deg | warm orange light, grey-blue sky, dim |
+| Morning | 0.18 | -35 deg | bright warm light, clear sky |
+| Midday | 0.40 | high, -70 deg | white light, brightest moment |
+| Afternoon | 0.60 | -45 deg | warm light, still bright |
+| Sunset | 0.76 | low, -12 deg | strong orange light, orange horizon |
+| Dusk | 0.88 | -6 deg | violet light, deep blue sky |
+| Night | 0.95 | -50 deg | dim blue moonlight, darkest moment |
+| Dawn | 1.00 | low, -12 deg | identical to 0.00 -- the cycle joins up |
+
+- **Phase is the day clock's own progress**, 0 at the start of a day and 1 as it rolls over. Values between keyframes are interpolated, so the change is continuous rather than stepped.
+- **The cycle joins up at the rollover.** The first and last keyframes are the same moment, so night falls in the last stretch of a day and the sun rises exactly as the clock reaches 0:00 -- "Day N" always opens at dawn, and the sky never snaps.
+- **A stopped clock holds the light.** Pausing, or switching to manual mode, freezes time of day too: the light is the clock, so freezing one freezes the other.
+- **Night stays playable.** Ambient light never drops to zero, so the map, routes and overlays remain readable in the dark; the UI, speech bubbles and route overlay are unshaded and unaffected throughout.
+- **The clock panel names the current stretch** beside the day number (§10.8), so the phase is readable even at a glance away from the map.
 
 ---
 
@@ -1340,6 +1363,7 @@ Day runs itself at 0:00
 [ Run Day Now > ]
 ```
 
+- **Day and phase:** the day number plus the current stretch of the sun cycle (§3.6) -- "Day 3 - Sunset".
 - **Countdown:** minutes:seconds remaining in the current day, drawn large. It turns amber under 15 seconds and red under 5 so the end of a day is legible from the corner of the eye, and goes gray whenever the clock isn't running (paused, or manual mode). The bar beneath it shows the same value as a fraction of the full day.
 - **Pause / speed:** hold the countdown, or cycle 1x/2x/4x (§3.5). Both are disabled in manual mode, where there is no running clock to control. The spacebar toggles pause as well.
 - **Auto:** toggles the auto-running clock against the manual loop. Switching modes always resets the countdown to a full day, so the player is never dropped into an about-to-expire day.

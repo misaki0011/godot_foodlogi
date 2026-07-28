@@ -63,6 +63,8 @@ const SWEEP_TOOLS := {"remove": true, "upgrade": true}
 @onready var _terrain: TerrainRenderer = $TerrainMap
 @onready var _node_spawner: NodeSpawner = $NodeMarkers
 @onready var _camera: Camera3D = $Camera3D
+@onready var _sun: DirectionalLight3D = $DirectionalLight3D
+@onready var _world_environment: WorldEnvironment = $WorldEnvironment
 
 var _map_data: MapData
 var _state := GameState.new()
@@ -229,6 +231,7 @@ func _ready() -> void:
 	var max_corner: Vector3 = _terrain.map_to_local(Vector3i(_map_data.grid_size.x - 1, 0, _map_data.grid_size.y - 1))
 	_map_bounds_min = Vector2(min_corner.x, min_corner.z)
 	_map_bounds_max = Vector2(max_corner.x, max_corner.z)
+	_apply_day_cycle()
 	_build_ui()
 	_set_tool("route")
 	_update_ui()
@@ -758,7 +761,20 @@ func _tick_day_clock(delta: float) -> void:
 	_state.day_time_left -= delta * GameBalance.DAY_SPEEDS[_state.speed_index]
 	if _state.day_time_left <= 0.0:
 		_run_day()
+	_apply_day_cycle()
 	_update_clock_ui()
+
+## ---------- time-of-day lighting (LOOP-08) ----------
+
+## How far through the current day the clock is, 0 at its start and 1 as it
+## rolls over -- the sun cycle's phase (see DayCycle). A stopped clock
+## (paused, or manual mode) holds the light where it is, which is the point:
+## time of day is the day clock, so freezing one freezes the other.
+func _day_phase() -> float:
+	return clampf(1.0 - _state.day_time_left / GameBalance.DAY_LENGTH_SEC, 0.0, 1.0)
+
+func _apply_day_cycle() -> void:
+	DayCycle.apply(_day_phase(), _sun, _world_environment.environment)
 
 ## Simulates one day, from either the clock hitting zero or the player asking
 ## for it early. Always restarts the clock, so an early run costs the rest of
@@ -816,7 +832,7 @@ func _cycle_speed() -> void:
 func _update_clock_ui() -> void:
 	if _clock_time_label == null:
 		return
-	_clock_day_label.text = "Day %d" % _state.day
+	_clock_day_label.text = "Day %d · %s" % [_state.day, DayCycle.label(_day_phase())]
 	var remaining: float = maxf(_state.day_time_left, 0.0)
 	# Only rewrite the countdown when the displayed second actually changes.
 	var whole_sec := ceili(remaining)
