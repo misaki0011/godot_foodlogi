@@ -80,6 +80,11 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 44. **A settlement's type now decides how much it can ever want.** Village/Town/City were a free-text `kind` label with no mechanical weight, so a "City" was a village that happened to be spelled differently. Each type now carries a **demand cap** -- Village 2, Town 4, City 5 -- alongside the footprint it already had from item 41, so size on the map and appetite on the ledger say the same thing. The cap is 5 rather than the 8 first proposed because there are only five foods in the game and a settlement cannot want the same one twice; City E wanting **all five** is what "the late objective" can actually mean. `GameEnums.SettlementType` and `NodeData.settlement_type` carry the rule, with `kind` demoted to a display label -- a cap keyed off free text is no rule at all. Nothing enforces the cap at runtime: the order book only ever opens lines that are already authored, so `MapData.validate()` is the whole enforcement, and it now rejects a settlement written past its type. Town D and City E were filled to their budgets, which is what makes the cap mean anything: **Town D gains grain (20) and City E gains grain (30) and bread (30)**, taking the region from 12 demand lines to 15. That is what turns source upgrades (item 42) from a single-purpose fix into an economy: grain goes to 85 against the Farm's 80 and bread to 95 against the Bakery's 80, so three of the five sources -- Farm, Bakery, Garden -- now have demand they cannot meet un-upgraded. Milk and seafood keep their slack; reaching them would mean raising an authored amount rather than adding a line, which is a balance decision rather than a structural one. See §4.8, §12.
 
+45. **The region becomes the stage: region 1 is retired to a tutorial, and the main game is a roster of climates.** One region was always the MVP's scope, not the game's, and it has now taught everything it can -- every system in §4 is reachable on it, so the endless efficiency chase (item 0.2.5) is the only thing left to do there. The main game is a **roster of regions**, each unlocked by grading well on the last, each keeping its own best grade/score and its own treasury (a region is a run, not a save file the player carries between maps).
+    What separates one region from another is deliberately **not** which city it depicts. The obvious model here is a map roster themed on cities, where each map's flavour is a street/coast/river silhouette; copying that would make this a city game with food trucks, and it also throws away the one axis this game has and that one does not -- **cargo that degrades, at rates that differ 12x across the food set** (grain 0.5/tile, seafood 6.0). So a region is a **landscape and a climate**, and the climate reaches into the freshness maths: `MapData.climate_decay_mult` scales every food's per-tile decay for the whole map, so the same five foods play differently region to region. A cold region is where seafood finally travels; a hot one is where cool storage stops being optional and short beats clever. Regions are named for the land, not the town (§12.1).
+    Three supporting changes make the roster authorable. First, **terrain becomes a per-cell grid** rather than `river_col`, an int from which `get_terrain(x, _y)` derived a whole column while ignoring `y` entirely -- region 1's river is now authored into that grid like anything else, and `river_col` is retired (§8.1). Second, **§8's original terrain table is superseded**: it gave Mountain "high cost *and* more decay", which is strictly worse than plains in both terms, so no player would ever route through it -- that is a wall, and water is already the game's wall. Mountain is now expensive to build but **preserving** (cold air), which makes the short expensive path genuinely compete with the long cheap one; Snow keeps the cost and gains a **capacity** penalty, which is an axis no other terrain touches (§8.2). Third, a `BLOCKED` terrain gives a map author unbuildable non-water ground -- cliffs, and the walls that turn Oldwall's City into a gated funnel (§8.4).
+    Region 1 itself is **unchanged in content**: same grid, same nodes, same demand, same opening lines. It is relabelled the tutorial region and its river is re-authored into the terrain grid, and nothing about how it plays moves. The §6 chapter list stays the full-game teaching order it always was; the roster is what actually delivers it, one region per lesson rather than one chapter per unlock. See §8, §12.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1099,9 +1104,15 @@ satisfaction = demand_fulfillment_score
 
 The game should introduce systems gradually.
 
+Progression runs at two scales. **Within** a region, the order book below paces
+demand one line at a time. **Across** regions, the roster in §12.1 unlocks a
+new landscape and climate each time the player grades well on the last; the
+chapter list at the end of this section is the teaching order that roster
+delivers.
+
 ### Gradual demand: orders open as deliveries earn them (added in v0.6, revised in items 38-40)
 
-The chapter list below is the full-game shape. On the single MVP region the
+The chapter list below is the full-game shape. On the tutorial region the
 same intent is delivered by the order book, which paces one map instead of
 six levels:
 
@@ -1378,7 +1389,7 @@ D: poor delivery quality
 
 Terrain should support routing decisions but not dominate the game.
 
-### MVP terrain types
+### Original MVP terrain types (SUPERSEDED by §8.2, kept for history)
 
 | Terrain | Cost effect | Freshness effect | Design purpose |
 |---|---:|---:|---|
@@ -1388,18 +1399,126 @@ Terrain should support routing decisions but not dominate the game.
 | River | Bridge required | Normal | Creates chokepoints |
 | Snow | Medium-high cost | More decay for fresh foods | Supports storage puzzles |
 
+Only Plains and River were ever built (TERR-01). The rest were never
+implemented, and when the roster in §12.1 came to need them the table above
+turned out not to describe decisions the player would ever actually take --
+see §8.2 for what replaces it and why.
+
+### 8.1 Per-cell terrain grid (added in v0.6 item 45)
+
+Terrain is a **per-cell grid on `MapData`**, not a derived property:
+
+```text
+MapData.terrain : PackedByteArray   # grid_size.x * grid_size.y, row-major
+MapData.terrain_at(x, y) -> TerrainType
+```
+
+This replaces `river_col`, an exported int from which `get_terrain(x, _y)`
+answered for a whole column while ignoring `y` outright. That was exactly
+enough terrain for one region with one straight river down it, and no more:
+a ridge, a coastline, a delta or a wall cannot be expressed as "column N".
+Region 1's river is re-authored as WATER cells in its own grid, so it stays
+identical on screen while ceasing to be a special case in code. `river_col`
+and `is_river(x, y)` are retired; the water test is
+`terrain_at(x, y) == WATER`.
+
+`GameEnums.TerrainType` keeps `PLAINS = 0` and `RIVER = 1` at their existing
+values so authored data does not shift under the change (`RIVER` is aliased
+to `WATER`, its clearer name now that it covers sea inlets and delta
+channels too), and appends `FOREST`, `MOUNTAIN`, `SNOW`, `BLOCKED`.
+
+**Validation** (`MapData.validate()`, run by the dev checks, not at runtime)
+gains three rules, because a terrain map can be authored into an unplayable
+state in ways a node list cannot:
+
+- `terrain.size()` must equal `grid_size.x * grid_size.y`.
+- No node footprint may sit on WATER or BLOCKED ground.
+- **Every node must have at least one buildable orthogonal neighbour.** A
+  source walled in by cliffs can never be connected to anything, and the
+  order book would then offer lines against it forever.
+
+Note `MapData.difficulty_of` still ranks lines by *straight-line* distance to
+the nearest producing source, and so does not know a mountain is in the way.
+That stays deliberate and stays correct for its purpose: it ranks the problems
+a map poses, and on a terrain map the ranking is simply coarser than the
+routes the player will actually draw.
+
+### 8.2 Terrain modifiers (supersedes the original table)
+
+| Terrain | Build cost | Upkeep | Decay | Capacity | Design purpose |
+|---|---:|---:|---:|---:|---|
+| Plains | 1.0x | 1.0x | 1.0x | 1.0x | Default |
+| Forest | 0.75x | 1.0x | 1.15x | 1.0x | Cheap ground that costs a little freshness |
+| Mountain | 3.0x | 1.5x | **0.6x** | 1.0x | Short and expensive vs. long and cheap |
+| Snow | 1.2x | 1.5x | **0.5x** | **0.6x** | Preserves well, moves badly |
+| Water | unbuildable except at a crossing (flat §40, `RIVER_BRIDGE_COST`) | — | 1.0x | 1.0x | Chokepoints |
+| Blocked | unbuildable, no exception | — | — | — | Cliffs, walls, gated approaches |
+
+These plug into the multipliers §4.1 already writes down and has never used
+(`terrain_cost_multiplier`, `terrain_decay_multiplier`), plus an upkeep and a
+capacity multiplier on the same per-tile basis.
+
+**Why Mountain now preserves food.** The original table charged mountain
+ground more money *and* more freshness. Nothing is traded there -- it is worse
+on both axes than going around, so a rational player never builds on it and
+the terrain is functionally a wall. Water is already the game's wall, and it
+is a better one because a crossing is purchasable. Making mountain ground
+expensive but **cold** turns it into the game's first genuine cost/quality
+trade: a milk or seafood run over a ridge can beat the valley detour on
+freshness while losing on money, and which one wins depends on the food, the
+distance, and whether the settlement pays a bonus tier -- a decision, not a
+no-brainer. It also gives §4.3's storage a rival, since terrain becomes a
+second way to protect cargo.
+
+**Why Snow is not a second mountain.** Both preserve, so Snow needs its own
+identity: it is the only terrain that touches **capacity**. A snow tile moves
+60% of its level's rated throughput (36 / 96 / 240 for Dirt / Paved / Main),
+which pressures route upgrades and parallel roads instead of the treasury.
+
+**Forest is unchanged in intent** -- cheap ground bought with a little decay,
+already a trade-off as originally written.
+
+### 8.3 Regional climate (added in v0.6 item 45)
+
+```text
+MapData.climate_decay_mult : float = 1.0    # scales every food's per-tile decay
+```
+
+Applied once, on top of per-terrain decay, for the whole map. This is the
+roster's main instrument (§12.1): the food set is fixed at five, and a
+multiplier on decay re-ranks all five at once without authoring a single new
+food. At 0.75 a cold region makes seafood (6.0/tile) routable across a map for
+the first time; at 1.4 a hot one puts grain in the position seafood normally
+occupies. Region 1 is 1.0 and plays exactly as it does today.
+
+Deliberately a single scalar rather than a per-food table: per-food would let a
+region quietly redefine what a food *is*, and the point is that the player's
+knowledge of the food set carries between regions while the answer changes.
+
+### 8.4 Blocked ground
+
+`BLOCKED` is unbuildable ground that is not water, so it has no crossing price
+and no bridge -- there is no version of the map where a route gets through it.
+Water says "pay §40 or go around"; blocked ground says "go around". It exists
+so a map can shape an approach rather than merely tax it, which is what makes
+Oldwall's gates (§12.1) a funnel instead of a toll.
+
 ### Terrain example
 
 ```text
 Direct mountain route:
-Short, expensive, higher freshness loss.
+Short, expensive to build and maintain, but the cargo arrives fresher.
 
 Valley route:
-Longer, cheaper, lower freshness loss.
+Longer, cheap, and every extra tile costs freshness.
 
 Cool Storage route:
-Extra building cost, better delivered quality.
+Extra building cost, better delivered quality, works on any terrain.
 ```
+
+The three now genuinely compete, which the original version of this example
+did not: with mountains costing both money and freshness, the valley route
+won on every axis and the choice was decorative.
 
 ---
 
@@ -1635,6 +1754,9 @@ Profit increased by 18%.
 
 The first playable version should be small.
 
+This section describes **region 1 only**, which is now the tutorial region. The
+main game's stages are a roster of further regions -- see §12.1.
+
 ### MVP map
 
 One region with:
@@ -1737,6 +1859,137 @@ it (§4.4).
 The first playable version has no save persistence, delivery animation,
 chapter tutorial sequence, Central Hub, source upgrades, or random events. It
 does retain last-day flow records in memory for hub and settlement popups.
+
+---
+
+## 12.1 Region Roster: the main-game stages (added in v0.6 item 45)
+
+§12's single region was the MVP's scope, not the game's. Every system in §4 is
+now reachable on it, which means it has taught everything it can and only the
+endless efficiency chase is left there. The main game is a **roster of
+regions**; region 1 is retired to the tutorial slot, unchanged in content.
+
+### 12.1.1 What separates one region from another
+
+A region is a **landscape and a climate**, not a place. The nearby model for a
+map roster is one themed on cities, where each map's character is a street,
+coast or river silhouette; following that would make this a city game that
+happens to move food, and it would leave unused the one axis this game has and
+that model does not -- **cargo that degrades, at rates differing 12x across the
+food set**. So each region combines:
+
+1. **A climate** (`climate_decay_mult`, §8.3), which re-ranks all five foods at
+   once. This is the primary instrument. The same five foods, the same player
+   knowledge, a different answer.
+2. **A landscape** (the terrain grid, §8.1-8.4), which decides where roads can
+   go and what they cost.
+3. **A binding constraint** -- exactly one system per region promoted from
+   background detail to the thing the map is about. Region 1's is freshness;
+   the others take turns.
+
+Regions are named for the land. Each keeps **its own best grade, best score and
+7-day average** (§7.5, §12's endless chase), and **its own treasury**: a region
+is a run, not a save the player carries between maps. Nothing unlocks
+permanently across regions -- every map starts at `STARTING_FUNDS`, which is
+what keeps a late region a puzzle rather than a formality funded by an earlier
+one.
+
+Each region authors its own `opening_lines`; the order book (§6) paces it from
+there with no further authoring, exactly as it does today.
+
+### 12.1.2 The roster
+
+| # | Region | Climate | Grid | Landscape | Binding constraint | Teaches |
+|---:|---|---:|---|---|---|---|
+| 1 | **Ashfield Plain** *(tutorial)* | 1.0 | 21x14 | Open plains, one river | Freshness | The whole vocabulary |
+| 2 | **The Terraces** | 0.9 | 21x16 | Mountain ridge, 3 passes | Cost vs. quality | Terrain as a second storage |
+| 3 | **Cold Coast** | 0.75 | 24x14 | Fjords, narrow crossings | Chokepoints | Seafood, and the cold chain |
+| 4 | **The Delta** | 1.0 | 22x16 | Braided channels, islands | Network topology | When *not* to connect |
+| 5 | **Oldwall** | 1.1 | 20x14 | Walled city, 3 gates | Route capacity | Upgrades and trunk roads |
+| 6 | **The Flats** | 1.4 | 24x16 | Nothing at all | Everything at once | The exam |
+
+**1. Ashfield Plain** *(tutorial -- shipped, unchanged)*. 21x14, five sources,
+five settlements, one river column, climate 1.0. Its river moves into the
+terrain grid (§8.1) and nothing else about it changes: same nodes, same
+demand, same opening lines, same difficulty ranking. It teaches the drag
+gesture, hubs, storage, the river surcharge and source upgrades, and it stays
+the map a returning player replays to warm up.
+
+**2. The Terraces.** A mountain ridge runs the length of the map with three
+passes through it. Lowland sources west (Farm, Bakery, Garden), upland
+settlements east, and a Dairy high on the ridge itself. Climate 0.9.
+*The hook* is §8.2's inverted mountain: a pass costs 3x to build and 1.5x to
+maintain, and preserves cargo at 0.6x decay. So the short expensive road over
+the ridge and the long cheap road around it are genuinely different answers,
+and which is right depends on whether the food is grain (barely decays -- go
+around) or milk (go over). The hub cap bites here too, since three passes and
+two hubs per network is a real budget.
+*Why second:* it is the first region where terrain is a tool rather than an
+obstacle, and it says so in one screen.
+
+**3. Cold Coast.** Sea inlets cut deep from the east, leaving fingers of land;
+two Harbors and a Dairy on headlands, settlements inland. Water is unbuildable
+except at authored **narrows**, one cell wide, which take the §40 crossing.
+Climate 0.75.
+*The hook* is that a cold map is the only place seafood (6.0/tile, the food the
+retired Freeze Storage existed to serve -- item 28) can cross a map at all.
+Cool Storage plus a short chain is the answer, and the narrows decide where the
+chain can physically go, so `RIVER_BRIDGE_COST` stops being a footnote and
+becomes a main cost line.
+*Why third:* it makes good on PROG-05's promise (§6 Chapter 5), which lost its
+answer when Freeze Storage was retired.
+
+**4. The Delta.** Braided channels fragment the map into islands, each holding
+a source or a settlement or two. Climate 1.0, flat ground throughout.
+*The hook* costs nothing to build, because the rules already do it: hub and
+bridge caps are **per connected road network** (§4.4), so a fragmented map
+hands the player a dozen small networks each with its own 2-hub budget.
+Bridging two islands into one network halves their combined hub allowance.
+Deciding *not* to connect two roads is a move the single-landmass region 1 has
+never once asked for, and here it is the whole map.
+*Why fourth:* it needs the player to already understand what a network is, and
+it re-reads a rule they think they know.
+
+**5. Oldwall.** The one nod to a dense-city map, reframed so it is not a street
+grid. A 3x3 City sits inside a ring of `BLOCKED` wall with exactly **three
+gate cells**; villages and sources ring the outside. Climate 1.1.
+*The hook* is that every delivery to the City eventually funnels through three
+tiles, so **route capacity** (60 / 160 / 400) becomes the binding constraint
+instead of freshness -- the first map that forces Main routes and parallel
+trunk roads rather than merely permitting them. A gate is also the obvious
+place for a hub, and there are three gates and two hubs.
+*Why fifth:* capacity is the least-exercised system in the game and wants a
+map of its own; it also satisfies the dense-city instinct with a chokepoint
+puzzle rather than by drawing streets.
+
+**6. The Flats.** No terrain features whatsoever, sources pushed to the far
+corners, and climate 1.4 -- everything spoils half again as fast. Nothing to
+blame, nothing to exploit, no clever crossing to find.
+*The hook* is that it is the exam: pure optimisation against the efficiency
+grade, and the natural permanent home for the endless chase (§18). A player
+who cannot hold an A here has a gap somewhere in §4.
+*Why last:* it is only interesting once the player has real instincts to test.
+
+### 12.1.3 Unlock and region select
+
+- A region unlocks by reaching **grade A** (§7.5, score >= 75) on the region
+  before it, on any single day. A grade rather than a day count, for the same
+  reason the order book gates on delivery rather than the calendar (§6): a
+  clock measures patience, and the roster should measure play.
+- A region-select screen lists each region with its landscape, climate, best
+  grade, best score and 7-day average; locked regions show their unlock
+  condition rather than being hidden, so the roster reads as a plan.
+- Region 1 is unlocked from the start and never locks again.
+- Progress is per region and persists; nothing else does.
+
+### 12.1.4 Relationship to §6's chapters
+
+§6's six chapters remain the full-game teaching order they always described.
+The roster is what delivers them -- one region per lesson rather than one
+chapter per unlock -- and the mapping is close but not exact, because a region
+has to be a place before it is a lesson: Chapter 5's long-distance seafood
+lands on Cold Coast, Chapter 6's city supply on Oldwall, and Chapters 1-4 are
+all reachable on the tutorial region, which is why it can stay the tutorial.
 
 ---
 
