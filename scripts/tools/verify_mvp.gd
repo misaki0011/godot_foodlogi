@@ -17,10 +17,11 @@ func _initialize() -> void:
 	_test_bridge_deck_costs_extra_freshness()
 	_test_map_is_sound()
 	_test_days_alone_open_nothing()
-	_test_filling_offers_a_choice()
-	_test_accepting_returns_the_other_to_the_pool()
-	_test_offers_stay_within_reach()
-	_test_offers_are_seeded()
+	_test_filling_opens_the_next_order()
+	_test_growth_alternates()
+	_test_no_tap_is_needed()
+	_test_openings_stay_within_reach()
+	_test_openings_are_seeded()
 	_test_dormant_settlements_are_not_scored()
 	_test_demand_and_freshness_are_stable()
 	print("MVP simulation checks passed.")
@@ -297,7 +298,6 @@ func _test_map_is_sound() -> void:
 	assert(open_lines == map.opening_lines.size(),
 		"The map must open with exactly its opening_lines, got %d of %d" % [open_lines, map.opening_lines.size()])
 	assert(open_lines == 3, "The opening is meant to be three orders, got %d" % open_lines)
-	assert(state.offers.is_empty(), "No offer is on the table before anything is filled")
 
 	# The opening must stay gentle: nothing in it may be harder than the
 	# median line on the map.
@@ -332,10 +332,7 @@ func _test_days_alone_open_nothing() -> void:
 	# Fifty days pass with nothing delivered -- no roads, no fills.
 	for _day in range(50):
 		state.day += 1
-		OrderBook.record_day(state, map.node_placements)
-		OrderBook.draw_offers(state, map)
-	assert(state.offers.is_empty(), "Idle days must not put an offer on the table")
-	assert(state.pending_draws == 0, "Idle days must not owe a draw")
+		OrderBook.record_day(state, map, map.node_placements)
 	var open_lines := 0
 	for node in map.node_placements:
 		if node.node_type == GameEnums.NodeType.SETTLEMENT:
@@ -344,97 +341,123 @@ func _test_days_alone_open_nothing() -> void:
 		"After 50 idle days the map must still hold only its opening orders, got %d" % open_lines)
 	print("50 idle days opened nothing.")
 
-func _test_filling_offers_a_choice() -> void:
+func _test_filling_opens_the_next_order() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var before := GameState.new()
+	before.run_seed = 4242
+	OrderBook.initialize(before, map)
+	var opening := _open_line_count(before, map)
+
+	var state := _state_with_villageA_grain_filled(map)
+	assert(_open_line_count(state, map) == opening + 1,
+		"Filling a line must open exactly one more, got %d from %d" % [_open_line_count(state, map), opening])
+
+## The two kinds of growth alternate, so the region both widens and thickens
+## instead of drifting into a run of one kind.
+func _test_growth_alternates() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var state := GameState.new()
+	state.run_seed = 77
+	OrderBook.initialize(state, map)
+
+	var kinds: Array[String] = []
+	# Fill every open line, over and over, until the map runs out.
+	for _round in range(20):
+		var served_before := {}
+		for node_id in state.active_orders:
+			if not state.active_orders[node_id].is_empty():
+				served_before[node_id] = true
+		var status := {}
+		for node in map.node_placements:
+			if node.node_type != GameEnums.NodeType.SETTLEMENT:
+				continue
+			var lines := {}
+			for food_id in OrderBook.active_demand(state, node):
+				lines[food_id] = {"requested": 10.0, "delivered": 10.0, "rejected": 0.0, "fresh_sum": 500.0}
+			if not lines.is_empty():
+				status[node.node_id] = lines
+		state.last_settlement_status = status
+		for opened in OrderBook.record_day(state, map, map.node_placements):
+			kinds.append("deepen" if served_before.has(opened.node_id) else "expand")
+
+	assert(_open_line_count(state, map) == map.demand_lines().size(),
+		"Filling everything repeatedly must eventually open every line, got %d of %d" % [
+			_open_line_count(state, map), map.demand_lines().size(),
+		])
+	var deepens := kinds.count("deepen")
+	var expands := kinds.count("expand")
+	assert(absi(deepens - expands) <= 2,
+		"Growth must stay balanced between deepen and expand, got %d/%d" % [deepens, expands])
+	print("Growth over a full run: %d deepen, %d expand." % [deepens, expands])
+
+## Nothing the player has to press. An order opens itself the moment a
+## delivery earns it -- there is no pending state to sit unnoticed.
+func _test_no_tap_is_needed() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
 	var state := _state_with_villageA_grain_filled(map)
+	# The newly opened line is live immediately: it is in active_demand, so
+	# the very next simulated day asks for it, with nothing to press first.
+	var live := 0
+	for node in map.node_placements:
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			live += OrderBook.active_demand(state, node).size()
+	assert(live == map.opening_lines.size() + 1, "The opened line must be live at once, got %d" % live)
 
-	assert(state.pending_draws == 1, "Filling a line must earn exactly one draw")
-	var offers := OrderBook.draw_offers(state, map)
-	assert(offers.size() == 2, "A draw must put two offers on the table, got %d" % offers.size())
-	assert(state.offers.size() == 2)
-
-	# One deepen (another food for a settlement already taking orders), one
-	# expand (a settlement taking none yet) -- the choice has to be between
-	# two different KINDS of move, not two flavours of the same one. Which
-	# settlements count as "already served" has to be read BEFORE the offers
-	# are accepted, so classify against a snapshot.
-	var served := {}
-	for node_id in state.active_orders:
-		if not state.active_orders[node_id].is_empty():
-			served[node_id] = true
-	var deepen := 0
-	var expand := 0
-	for offer in offers:
-		if served.has(offer.node_id):
-			deepen += 1
-		else:
-			expand += 1
-	assert(deepen == 1 and expand == 1,
-		"The pair must be one deepen and one expand, got %d/%d (%s)" % [deepen, expand, offers])
-
-	# Filling again while the player is still deciding queues the draw rather
-	# than crowding the map.
-	state.pending_draws += 1
-	assert(OrderBook.draw_offers(state, map).is_empty(), "A second pair must not deal while one is outstanding")
-	assert(state.offers.size() == 2, "The table still holds exactly one pair")
-
-func _test_accepting_returns_the_other_to_the_pool() -> void:
+## An opening must stay near the gentle end of what is left, so the line after
+## the tutorial can never be City E's vegetables -- a 16-step haul at 2.5
+## decay into a 90% bonus line, which is a wall.
+func _test_openings_stay_within_reach() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
-	var state := _state_with_villageA_grain_filled(map)
-	var offers := OrderBook.draw_offers(state, map)
-	var taken: Dictionary = offers[0]
-	var passed_over: Dictionary = offers[1]
-
-	assert(OrderBook.accept_offer(state, taken), "Accepting an offer on the table must succeed")
-	assert(state.offers.is_empty(), "Accepting clears the table")
-	assert(state.active_orders.get(taken.node_id, {}).has(taken.food_id), "The accepted line must be open")
-	assert(not state.active_orders.get(passed_over.node_id, {}).has(passed_over.food_id),
-		"The offer not taken must NOT open")
-
-	# The one passed over is not gone -- with only twelve lines on the map,
-	# discarding one per choice would mean a run never sees half its content.
-	var pool := OrderBook.eligible_lines(state, map)
-	var found := false
-	for line in pool:
-		if line.node_id == passed_over.node_id and line.food_id == passed_over.food_id:
-			found = true
-	assert(found, "The offer not taken must return to the pool")
-
-	assert(not OrderBook.accept_offer(state, passed_over), "An offer no longer on the table cannot be accepted")
-
-## Offers must stay near the gentle end of what is left, so a first choice can
-## never be City E's vegetables -- a 16-step haul at 2.5 decay into a 90%
-## bonus line, which is a wall, not a decision.
-func _test_offers_stay_within_reach() -> void:
-	var map: MapData = load("res://data/maps/region_1_map.tres")
-	var state := _state_with_villageA_grain_filled(map)
-
-	var remaining := OrderBook.eligible_lines(state, map)
+	var before := GameState.new()
+	before.run_seed = 4242
+	OrderBook.initialize(before, map)
+	var remaining := OrderBook.eligible_lines(before, map)
 	var median: float = remaining[remaining.size() / 2].difficulty
-	for offer in OrderBook.draw_offers(state, map):
-		assert(offer.difficulty <= median,
-			"%s/%s at difficulty %.1f is harder than the median of what is left (%.1f)" % [
-				offer.node_id, offer.food_id, offer.difficulty, median,
+
+	var state := _state_with_villageA_grain_filled(map)
+	for line in map.demand_lines():
+		if _is_opening_line(map, line):
+			continue
+		if not OrderBook.active_demand(state, _node(map, line.node_id)).has(line.food_id):
+			continue
+		assert(line.difficulty <= median,
+			"%s/%s at difficulty %.1f is harder than the median of what was left (%.1f)" % [
+				line.node_id, line.food_id, line.difficulty, median,
 			])
 
-## Same seed and same choices replay the same offers -- the simulation has no
-## other randomness left, and a run that cannot be reproduced cannot be
-## debugged.
-func _test_offers_are_seeded() -> void:
+## Same seed, same play, same openings -- the simulation has no other
+## randomness left, and a run that cannot be reproduced cannot be debugged.
+func _test_openings_are_seeded() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
-	var first: Array[String] = []
-	var second: Array[String] = []
-	for run in [first, second]:
-		var state := _state_with_villageA_grain_filled(map, 12345)
-		for offer in OrderBook.draw_offers(state, map):
-			run.append(OrderBook.offer_key(offer))
-	assert(first == second, "The same seed must deal the same pair: %s vs %s" % [first, second])
+	var first := _opened_line_ids(map, 12345)
+	var second := _opened_line_ids(map, 12345)
+	assert(first == second, "The same seed must open the same line: %s vs %s" % [first, second])
+	print("Seeded opening: seed 12345 -> %s, seed 999 -> %s." % [first, _opened_line_ids(map, 999)])
 
-	var other := _state_with_villageA_grain_filled(map, 999)
-	var differs: Array[String] = []
-	for offer in OrderBook.draw_offers(other, map):
-		differs.append(OrderBook.offer_key(offer))
-	print("Seeded offers: seed 12345 -> %s, seed 999 -> %s." % [first, differs])
+## The lines open beyond the map's authored opening, for a run pinned to
+## `seed_value`.
+func _opened_line_ids(map: MapData, seed_value: int) -> Array[String]:
+	var state := _state_with_villageA_grain_filled(map, seed_value)
+	var ids: Array[String] = []
+	for line in map.demand_lines():
+		if _is_opening_line(map, line):
+			continue
+		if OrderBook.active_demand(state, _node(map, line.node_id)).has(line.food_id):
+			ids.append(OrderBook.line_id(line))
+	return ids
+
+func _is_opening_line(map: MapData, line: Dictionary) -> bool:
+	for opening in map.opening_lines:
+		if opening.node_id == line.node_id and opening.food_id == line.food_id:
+			return true
+	return false
+
+func _open_line_count(state: GameState, map: MapData) -> int:
+	var total := 0
+	for node in map.node_placements:
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			total += OrderBook.active_demand(state, node).size()
+	return total
 
 ## A GameState with Village A's grain line delivered in full, which is what
 ## earns the first draw.
@@ -448,10 +471,11 @@ func _state_with_villageA_grain_filled(map: MapData, seed_value := 4242) -> Game
 	state.last_settlement_status = {
 		"villageA": {"grain": {"requested": 20.0, "delivered": 20.0, "rejected": 0.0, "fresh_sum": 20.0 * 40.0}},
 	}
-	var filled := OrderBook.record_day(state, map.node_placements)
-	assert(filled == 1, "The fixture must fill exactly one line, got %d" % filled)
-	# Latched: refilling the same line must not earn a second draw.
-	assert(OrderBook.record_day(state, map.node_placements) == 0, "A refilled line must not earn another draw")
+	var opened := OrderBook.record_day(state, map, map.node_placements)
+	assert(opened.size() == 1, "The fixture must open exactly one new line, got %d" % opened.size())
+	# Latched: refilling the same line must not open another.
+	assert(OrderBook.record_day(state, map, map.node_placements).is_empty(),
+		"A refilled line must not open another order")
 	return state
 
 func _test_dormant_settlements_are_not_scored() -> void:

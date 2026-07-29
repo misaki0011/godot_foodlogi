@@ -19,9 +19,6 @@ extends Control
 ##   SETTLEMENT        a cream speech balloon: dark text, big corner
 ##                     radius, triangular tail, a status-coloured border,
 ##                     and a freshness bar along the bottom.
-##   SETTLEMENT_OFFER  one of the two orders on the table (DEV-01): the same
-##                     balloon in a colour no status uses, asking to be
-##                     picked.
 ##
 ## A settlement's status is deliberately kept off the bubble *body*: a
 ## saturated tint behind the text both fights the food-coloured icon dot
@@ -89,23 +86,6 @@ const MUTED_BORDER_COLOR := Color(0.62, 0.63, 0.65, 0.4)
 const MUTED_TEXT_COLOR := Color(0.62, 0.63, 0.64)
 const MUTED_ICON_COLOR := Color(0.46, 0.47, 0.49)
 
-## An order being offered to the player (OrderBook.draw_offers). It keeps the
-## settlement balloon -- it is that settlement asking -- and stays at full
-## size and full contrast, because it is not a heads-up, it is the one thing
-## on the map waiting on a decision.
-##
-## The accent is violet, which is the point: red/amber/green are spoken for
-## by delivery status and grey by sources, so a fourth meaning needed a hue
-## that cannot be mistaken for any of them. Nothing else on this map is
-## purple, so "these two bubbles are a different kind of thing" reads before
-## any of the text does. It carries no freshness bar and no status glyph --
-## there is no delivery to report yet -- and instead ends on a plus, for the
-## order it would add.
-const OFFER_BUBBLE_COLOR := Color(0.96, 0.94, 0.99, 0.97)
-const OFFER_ACCENT_COLOR := Color("6E5FB8")
-const OFFER_TEXT_COLOR := Color(0.20, 0.17, 0.30)
-const OFFER_BORDER_WIDTH := 3
-
 ## Status accents. These are fully saturated -- they are only ever used
 ## for borders, tails, bars and glyphs, never as a background under text.
 ## They also differ in *lightness*, not just hue, so they stay separable
@@ -166,8 +146,6 @@ var _freshness_pct: int = -1
 ## Settlement only: this settlement's bonus_freshness, as the 0..1 point
 ## on the bar where the tick goes.
 var _threshold: float = 0.0
-## Pending only: the second line under the food name, e.g. "Day 5".
-var _subtext: String = ""
 
 static func status_color(status: FoodBubbleMarker.Status) -> Color:
 	match status:
@@ -195,22 +173,10 @@ func set_settlement(icon_color: Color, amount_text: String, status: FoodBubbleMa
 	_threshold = threshold
 	queue_redraw()
 
-## `text` names the food on offer and `subtext` the amount it would ask for
-## each day -- the two things the player weighs before tapping.
-func set_offer(icon_color: Color, text: String, subtext: String) -> void:
-	_kind = FoodBubbleMarker.Kind.SETTLEMENT_OFFER
-	_icon_color = icon_color
-	_amount_text = text
-	_subtext = subtext
-	_status = FoodBubbleMarker.Status.DEFAULT
-	queue_redraw()
-
 func _draw() -> void:
 	match _kind:
 		FoodBubbleMarker.Kind.SETTLEMENT:
 			_draw_settlement()
-		FoodBubbleMarker.Kind.SETTLEMENT_OFFER:
-			_draw_settlement_offer()
 		_:
 			_draw_source()
 
@@ -294,34 +260,6 @@ func _draw_settlement() -> void:
 		_draw_fitted(_amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.42), TEXT_COLOR)
 
 	_draw_freshness_bar(rect, accent)
-
-func _draw_settlement_offer() -> void:
-	var rect := _body_rect()
-	var radius := int(rect.size.y * SETTLEMENT_CORNER_RATIO)
-
-	# The same halo red uses for urgency, in violet: an offer is the only
-	# thing on this map that waits on the player, so it should be what the eye
-	# lands on -- and unlike red, there are never more than two of them.
-	_draw_halo(rect, radius, OFFER_ACCENT_COLOR)
-	_draw_tail(rect, OFFER_ACCENT_COLOR)
-	_draw_body(rect, radius, OFFER_BUBBLE_COLOR, OFFER_ACCENT_COLOR, OFFER_BORDER_WIDTH)
-
-	var cy := rect.position.y + rect.size.y * 0.5
-	var icon_r := rect.size.y * 0.24
-	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, cy)
-	draw_circle(icon_center, icon_r, _icon_color)
-	draw_arc(icon_center, icon_r, 0, TAU, 32, OFFER_ACCENT_COLOR, 2.0, true)
-
-	# A plus where a settlement bubble carries its status glyph: this is an
-	# order that would be ADDED, not one reporting how it went.
-	var glyph_r := rect.size.y * STATUS_GLYPH_RATIO
-	var glyph_center := Vector2(rect.end.x - STATUS_GLYPH_MARGIN - glyph_r, cy)
-	_draw_plus(glyph_center, glyph_r, OFFER_ACCENT_COLOR)
-
-	var text_x := icon_center.x + icon_r + 12.0
-	var text_w := glyph_center.x - glyph_r - 10.0 - text_x
-	_draw_fitted(_amount_text, text_x, text_w, cy - 13.0, int(rect.size.y * 0.34), OFFER_TEXT_COLOR)
-	_draw_fitted(_subtext, text_x, text_w, cy + 22.0, int(rect.size.y * 0.26), OFFER_TEXT_COLOR)
 
 # --- shared pieces ----------------------------------------------------
 
@@ -429,12 +367,6 @@ func _draw_cross(center: Vector2, r: float, color: Color) -> void:
 func _draw_bang(center: Vector2, r: float, color: Color) -> void:
 	draw_line(center + Vector2(0, -r * 0.72), center + Vector2(0, r * 0.16), color, r * 0.34, true)
 	draw_circle(center + Vector2(0, r * 0.66), r * 0.19, color)
-
-## An order this settlement would add if the player picks it.
-func _draw_plus(center: Vector2, r: float, color: Color) -> void:
-	var a := r * 0.62
-	draw_line(center + Vector2(-a, 0), center + Vector2(a, 0), color, r * 0.30, true)
-	draw_line(center + Vector2(0, -a), center + Vector2(0, a), color, r * 0.30, true)
 
 ## Outgoing supply: what this node hands out, as opposed to a
 ## settlement's incoming demand.

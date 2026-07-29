@@ -70,6 +70,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 39. **Three opening orders, and an offer that cannot be mistaken for a countdown.** Two playtest fixes to item 38. First, the map opened with a single order, which one short road from the Farm finished -- it taught the drag gesture and left nothing to weigh until the first offer arrived. It now opens with the three easiest lines (Village A's grain and bread, Village B's grain), so there is a real decision from the first minute -- which town first, whether one trunk road serves both -- while staying far short of the twelve-bubble wall. Second, an offer plaque read `Bread / 20/day`, and in the exact spot where the previous design printed `Day 3` that scanned as a duration: it was read as "wait 20 days", when nothing about an offer is a wait at all. It now reads the food name over `+20 · tap`. Per-day was never needed -- every quantity on this map is already per-day, a settlement bubble says `0/20` -- and the shorter lines also fix legibility, since more than about ten characters shrinks to the font floor at map zoom and turns to mush. See §6, §10.1.
 
+40. **A new order opens itself; nothing waits on a tap.** Item 38 put two offers on the map when an order filled and had the player tap one, trading a deepen-or-expand decision for a hard stop: the whole region stalled behind a tap that had to be noticed and understood, and in play it was not -- the plaques were read as something to wait out rather than something to press. Filling an order now simply opens the next one, immediately and silently, announced by the same toast as before. The variety the choice provided is kept by alternating the two kinds of growth strictly (deepen, expand, deepen, ...) rather than rolling for them, since a run of one kind is exactly what makes progression feel arbitrary -- five expansions running leaves five half-served towns and no reason for any of them. `GameState.offers` and `pending_draws` are gone, along with the violet offer bubble, `Kind.SETTLEMENT_OFFER` and the tap handler; nothing on the map now needs pressing to advance the game. Note what this gives up: the deepen-or-expand call is the game's, not the player's. See §6, §10.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1089,19 +1091,20 @@ satisfaction = demand_fulfillment_score
 
 The game should introduce systems gradually.
 
-### Gradual demand: the player chooses the next order (added in v0.6, revised in item 38)
+### Gradual demand: orders open as deliveries earn them (added in v0.6, revised in items 38-40)
 
 The chapter list below is the full-game shape. On the single MVP region the
-same intent is delivered by **offers**, which pace one map instead of six
-levels:
+same intent is delivered by the order book, which paces one map instead of
+six levels:
 
 ```text
-fill an order  ->  two offers appear  ->  the player picks one
+fill an order  ->  a new order opens, straight away
 ```
 
-**The model.** A settlement's `NodeData.demand` is what it will *eventually*
-want. Lines open one at a time, and which one is the player's decision. An
-unopened line is not simulated, not scored and not drawn.
+No prompt, no confirmation, nothing to press. **The model.** A settlement's
+`NodeData.demand` is what it will *eventually* want; lines open one at a time
+as deliveries earn them. An unopened line is not simulated, not scored and
+not drawn.
 
 **Nothing on the map ever appears or disappears.** All five settlements and
 all five sources stand there from day 1, so the player can see the whole
@@ -1111,13 +1114,12 @@ was considered and rejected -- a village visibly becoming a city reads as a
 city-builder, and in a logistics game the thing that should visibly develop
 is the network the player drew.
 
-**Progress, not days.** Nothing in `OrderBook` consults the calendar. The
-earlier design gated on an `earliest_day` floor plus a "held 70% happiness
-for 2 consecutive days" streak, and both were clocks -- the streak counted
-days too, just conditionally. Now: idle for a hundred days and nothing opens;
-fill an order and the choice is waiting immediately. `GameState.day` still
-drives the day clock, the sun cycle and the report, and drives no progression
-at all.
+**Progress, not days.** Nothing in `OrderBook` consults the calendar. An
+early design gated on an `earliest_day` floor plus a "held 70% happiness for
+2 consecutive days" streak, and both were clocks -- the streak counted days
+too, just conditionally. Now: idle for a hundred days and nothing opens; fill
+an order and the next is there immediately. `GameState.day` still drives the
+day clock, the sun cycle and the report, and drives no progression at all.
 
 **What counts as filled.** The whole requested amount arriving -- exactly the
 **amber** speech bubble, and exactly the point at which a line starts paying
@@ -1130,38 +1132,31 @@ nothing, and does not advance the player -- a short order is not a partial
 sale.
 
 Filled is **latched**: proving a line once proves it for good, so a later bad
-day can never un-open an order.
+day can never un-open an order, and refilling one already proved opens
+nothing (or a working network would sprout an order every day).
 
-**The pair is deepen vs expand.**
+**Growth alternates between two kinds.**
 
-| Offer | Meaning | Cost shape |
+| Kind | Meaning | Cost shape |
 | --- | --- | --- |
 | **Deepen** | another food for a settlement already served | reuses the trunk road, low marginal upkeep, needs a second source reaching the same place |
 | **Expand** | the first order at a settlement not yet served | new road, new upkeep, new territory |
 
-Two draws from one bucket often produce a hollow choice ("grain here or grain
-there"); one of each is the standing tension of a logistics game and stays
-meaningful every time it is asked. When a bucket is empty -- early on nothing
-has a second food worth adding, late on everything is already expanded into
--- the pair falls back to the easiest remaining candidates, still a real
-choice of destination.
+Strictly alternated rather than rolled, because a run of one kind is what
+makes progression feel arbitrary -- five expansions running leaves the player
+with five half-served towns and no reason for any of them. Alternating
+guarantees the network both widens and thickens. When the preferred kind has
+nothing left, it falls through to the other, and the preference only flips
+when a line actually opens, so a starved side never burns its turn.
 
-**The choice lives on the map, not in a dialog.** Each offer rides as a
-violet plaque over the settlement it would land on, and tapping that
-settlement takes it. What the player needs in order to decide -- how far each
-town is from a source, whether the river is in the way, where their roads
-already run -- *is* the map, and a modal would cover exactly that. Violet
-because red/amber/green are spoken for by delivery status and grey by
-sources; nothing else on this map is purple.
+An earlier revision (item 38) instead put **two offers** on the map, one of
+each kind, and had the player tap one. It bought a genuine deepen-or-expand
+decision at the price of stalling the whole region behind a tap that had to
+be noticed and understood, and in play it was not (item 40). The variety it
+provided is what the alternation now supplies automatically.
 
-**The offer not taken returns to the pool.** With only twelve lines on the
-map, discarding one per choice would mean a run never sees half its content.
-The choice is about what to do *next*, not about giving something up -- which
-is also what lets accepting be a single tap with no confirmation, since the
-worst a mis-tap costs is ordering.
-
-**Eligibility is a rank, not a distance.** Each side draws from the easiest
-`OFFER_POOL_SIZE` remaining candidates of its kind. Difficulty is derived
+**Eligibility is a rank, not a distance.** Each kind draws from the easiest
+`OFFER_POOL_SIZE` remaining candidates of its sort. Difficulty is derived
 from the map rather than authored (`MapData.difficulty_of`): how far the
 freshness falls short of what the settlement rewards, over the straight-line
 distance to the nearest source producing that food. Ranking region 1 this way
@@ -1169,15 +1164,10 @@ puts Village A's grain easiest (-18) and City E's vegetables hardest (+30),
 reproducing the hand-written teaching order for free and re-deriving it if a
 source ever moves. An absolute difficulty reach was tried first and is wrong:
 the difficulties are unevenly spaced, so any fixed reach is either too tight
-to offer a pair early or meaningless later.
+to offer anything early or meaningless later.
 
-**One pair outstanding at a time.** Filling a second line while the player is
-still deciding queues the draw rather than putting four plaques on the map.
-There is no timer on the decision: days keep running and scoring, and the
-plaques wait.
-
-**Seeded.** The pair is drawn from a per-run seed on `GameState`, so a run
-replays identically given the same seed and the same choices. Nothing else in
+**Seeded.** Openings are drawn from a per-run seed on `GameState`, so a run
+replays identically given the same seed and the same play. Nothing else in
 the simulation is random any more (item 37), so a run that could not be
 reproduced could not be debugged.
 
@@ -1188,25 +1178,15 @@ taking orders)").
 
 **The map authors one thing.** `MapData.opening_lines` -- the three easiest
 lines on the board (Village A's grain and bread, Village B's grain).
-Everything after them is chosen by the player. Fixed first beats rather than
-a choice, because on day 1 nothing is built and offers would be noise.
+Everything after them is earned. Fixed first beats rather than anything
+chosen, because on day 1 nothing is built.
 
 Three rather than one: a single opening order is solved by one short road
 from the nearest source and teaches only the drag gesture, so the player has
-nothing to weigh until the first offer lands. Three gives an actual decision
-from the first minute -- which town to reach first, whether one trunk road
-serves both -- while staying far short of the twelve-bubble wall this whole
-feature exists to remove.
-
-**An offer never displays a duration.** Its two lines are the food name and
-`+25 · tap`. The amount was written `25/day` at first and had to be changed:
-per-day is how every quantity on this map already reads (a settlement bubble
-says `0/20`, not `0/20 a day`), and sitting exactly where the older countdown
-plaque printed `Day 3`, it scanned as a waiting period -- it got read as
-"wait 25 days". Nothing about an offer is a wait, so nothing on it may look
-like one. The text also has to survive map zoom: more than about ten
-characters a line shrinks to the font floor and turns to mush, which is why
-the amount and the call to action share the small line.
+nothing to weigh at the start. Three gives an actual decision from the first
+minute -- which town to reach first, whether one trunk road serves both --
+while staying far short of the twelve-bubble wall this whole feature exists
+to remove.
 
 ### Chapter 1: Fresh Beginnings
 

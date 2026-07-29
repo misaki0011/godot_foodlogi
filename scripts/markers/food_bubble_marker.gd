@@ -49,9 +49,8 @@ const STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION + 0.1
 const SOURCE_STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION * SOURCE_SCALE + 0.1
 const COLUMN_SPACING := WORLD_WIDTH + 0.1
 
-## Which silhouette bubble_canvas.gd draws. SETTLEMENT_OFFER is one of the
-## two orders on the table waiting to be picked (DEV-01, see OrderBook).
-enum Kind { SOURCE, SETTLEMENT, SETTLEMENT_OFFER }
+## Which silhouette bubble_canvas.gd draws.
+enum Kind { SOURCE, SETTLEMENT }
 
 ## DEFAULT is a source's plain food-on-beige look; MUTED grays a source
 ## out once it has given away its whole daily produce. RED/AMBER/GREEN are
@@ -80,27 +79,6 @@ func setup_source(food: FoodData, used: float, produced: float, status: Status =
 func setup_settlement(food: FoodData, delivered: float, requested: float, status: Status, freshness_pct: int = -1, bonus_freshness_pct: float = 0.0) -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE
 	_canvas.set_settlement(food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
-	_bake()
-
-## One of the two orders on offer: the food it wants, how much, and what to do
-## about it. Full size, unlike the rest of the map's supporting information --
-## it is the one thing waiting on a decision.
-##
-## Laid out like a settlement bubble -- one big line, one small line under it
-## -- because the text has to survive being read at map zoom. Anything longer
-## than about ten characters shrinks to the font floor and turns to mush:
-## "Vegetables x25 / Tap to accept" was unreadable, which is why the amount
-## and the call to action share the small line.
-##
-## The amount is written "+25", never "25/day". Per-day is how every quantity
-## on this map already reads (a settlement bubble says "0/20", not "0/20 a
-## day"), so the suffix bought nothing -- and sitting where the old countdown
-## plaque used to print "Day 3", it scanned as a duration rather than a
-## quantity: it got read as "wait 25 days". Nothing on an offer may look like
-## a number of days, because nothing about it is a wait.
-func setup_offer(food: FoodData, amount: float) -> void:
-	_sprite.pixel_size = BASE_PIXEL_SIZE
-	_canvas.set_offer(food.color, food.display_name, "+%d · tap" % roundi(amount))
 	_bake()
 
 func _ratio_text(current: float, max_amount: float) -> String:

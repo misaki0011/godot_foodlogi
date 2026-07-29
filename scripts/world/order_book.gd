@@ -4,10 +4,16 @@ class_name OrderBook
 ## chosen (DEV-01).
 ##
 ## A settlement's NodeData.demand is its *eventual* appetite -- every food it
-## will ever ask for. It does not all switch on at once. Lines open one at a
-## time, and which one opens is the player's decision:
+## will ever ask for. It does not all switch on at once:
 ##
-##     fill an order  ->  two offers appear  ->  the player picks one
+##     fill an order  ->  a new order opens, straight away
+##
+## No prompt and no confirmation. An earlier version put two offers on the
+## table and had the player tap one, which bought a deepen-or-expand decision
+## at the cost of stalling the whole region behind a tap that had to be
+## noticed and understood. The region now keeps moving on its own, and the
+## variety the choice used to provide is kept by alternating the two kinds of
+## opening (see _next_line).
 ##
 ## Nothing on the map ever appears or disappears -- all five settlements and
 ## all five sources stand there from day 1, so the whole region is visible to
@@ -46,18 +52,14 @@ class_name OrderBook
 ## Kept free of node references (like DayCycle) so the whole progression can
 ## be stepped and asserted headlessly in the dev checks.
 
-## How many offers a fill puts on the table. Two is the point of the feature:
-## one offer is a notification, three is a menu.
-const OFFER_COUNT := 2
-
-## How many of the easiest remaining lines each side of the choice draws
-## from. Eligibility is deliberately a RANK, not a distance in difficulty
+## How many of the easiest remaining lines each kind of opening draws from.
+## Eligibility is deliberately a RANK, not a distance in difficulty
 ## points: the map's difficulties are unevenly spaced (Village A's grain sits
 ## 3.5 points from the next line and 48 from the hardest), so any absolute
 ## reach is either too tight to offer a pair early or too loose to mean
 ## anything later. Taking the easiest few always yields a real choice, always
-## offers the gentlest options available, and slides upward on its own as the
-## player takes them -- no tuning, and no first pick that is a wall.
+## offers the gentlest options available, and slides upward on its own as they
+## are taken -- no tuning, and no early opening that is a wall.
 const OFFER_POOL_SIZE := 3
 
 ## Seeds the book with the map's opening orders. Fixed lines rather than a
@@ -67,8 +69,7 @@ const OFFER_POOL_SIZE := 3
 static func initialize(state: GameState, map_data: MapData) -> void:
 	state.active_orders.clear()
 	state.filled_lines.clear()
-	state.offers.clear()
-	state.pending_draws = 0
+	state.next_prefers_expand = true
 	if state.run_seed == 0:
 		state.run_seed = randi()
 	state.rng_state = state.run_seed
@@ -80,7 +81,7 @@ static func initialize(state: GameState, map_data: MapData) -> void:
 ##
 ## Iterates the settlement's own demand rather than the open-line record, so
 ## the authored food order is preserved (bubbles stay in a stable position
-## from day to day) and an offer naming a food the settlement never wanted
+## from day to day) and a schedule naming a food the settlement never wanted
 ## cannot conjure demand out of nothing.
 static func active_demand(state: GameState, settlement: NodeData) -> Dictionary:
 	var open_lines: Dictionary = state.active_orders.get(settlement.node_id, {})
@@ -94,13 +95,13 @@ static func has_active_orders(state: GameState, settlement: NodeData) -> bool:
 	return not state.active_orders.get(settlement.node_id, {}).is_empty()
 
 ## Folds the day just simulated into the book: every open line that came in
-## full is latched as filled, and each line filled for the FIRST time earns
-## one draw. Refilling a line the player already proved earns nothing --
-## otherwise a working network would spray offers every single day.
+## full is latched as filled, and each line filled for the FIRST time opens a
+## new one straight away. Refilling a line the player already proved opens
+## nothing -- otherwise a working network would sprout an order every day.
 ##
-## Returns how many new lines were filled, so the caller can say so.
-static func record_day(state: GameState, nodes: Array[NodeData]) -> int:
-	var newly_filled := 0
+## Returns the lines newly opened, so the caller can announce them.
+static func record_day(state: GameState, map_data: MapData, nodes: Array[NodeData]) -> Array[Dictionary]:
+	var opened: Array[Dictionary] = []
 	for node in nodes:
 		if node.node_type != GameEnums.NodeType.SETTLEMENT:
 			continue
@@ -116,69 +117,18 @@ static func record_day(state: GameState, nodes: Array[NodeData]) -> int:
 			if state.filled_lines.has(key):
 				continue
 			state.filled_lines[key] = true
-			state.pending_draws += 1
-			newly_filled += 1
-	return newly_filled
+			var next := _next_line(state, map_data)
+			if not next.is_empty():
+				_open(state, next)
+				opened.append(next)
+	return opened
 
-## Puts the next pair of offers on the table if one is owed and none is
-## outstanding. At most one pair is ever open: a second fill while the player
-## is still deciding queues its draw rather than crowding the map with four
-## plaques.
-##
-## Returns the offers drawn, empty when there was nothing to draw.
-static func draw_offers(state: GameState, map_data: MapData) -> Array[Dictionary]:
-	if state.pending_draws <= 0 or not state.offers.is_empty():
-		return []
-	var drawn := _pick_offers(state, map_data)
-	if drawn.is_empty():
-		# Nothing eligible -- every line is either open or out of reach. Keep
-		# the draw owed rather than burning it: reach grows as the player
-		# fills harder lines, so this can become drawable later.
-		return []
-	state.pending_draws -= 1
-	state.offers = drawn
-	return drawn
-
-## Takes one of the outstanding offers. The other is NOT lost -- it returns to
-## the pool and can be offered again. With only twelve lines on the map,
-## discarding one per choice would mean a run never sees half its content; the
-## choice is about what to do NEXT, not about giving something up. That is
-## also what makes accepting safe as a single tap with no confirmation: the
-## worst a mis-tap costs is ordering.
-static func accept_offer(state: GameState, offer: Dictionary) -> bool:
-	var key := offer_key(offer)
-	var taken := false
-	for candidate in state.offers:
-		if offer_key(candidate) == key:
-			taken = true
-			break
-	if not taken:
-		return false
-	_open(state, offer)
-	state.offers.clear()
-	return true
-
-## The outstanding offer on `settlement`, or {} if it has none. Used both to
-## draw its plaque and to resolve a tap on it.
-static func offer_at(state: GameState, node_id: String) -> Dictionary:
-	for offer in state.offers:
-		if offer.get("node_id", "") == node_id:
-			return offer
-	return {}
-
-## Whether a line has been opened already (or is currently on offer) -- either
-## way it is not a candidate.
+## Whether a line has been opened already, in which case it is not a
+## candidate.
 static func _is_taken(state: GameState, node_id: String, food_id: String) -> bool:
-	if state.active_orders.get(node_id, {}).has(food_id):
-		return true
-	for offer in state.offers:
-		if offer.get("node_id", "") == node_id and offer.get("food_id", "") == food_id:
-			return true
-	return false
+	return state.active_orders.get(node_id, {}).has(food_id)
 
-## Every line still up for grabs, easiest first. A line already open, or
-## already sitting on the table as the other half of the current choice, is
-## not a candidate.
+## Every line still unopened, easiest first.
 static func eligible_lines(state: GameState, map_data: MapData) -> Array[Dictionary]:
 	var pool: Array[Dictionary] = []
 	for line in map_data.demand_lines():
@@ -201,7 +151,8 @@ static func _bucket(state: GameState, pool: Array[Dictionary], want_expand: bool
 			break
 	return out
 
-## Draws the pair, one DEEPEN and one EXPAND where both are available.
+## Picks the single line to open next, alternating between the two kinds of
+## growth so the region develops in both directions on its own:
 ##
 ##   DEEPEN  another food for a settlement already taking orders -- reuses the
 ##           trunk road the player has built, but needs a second source to
@@ -209,41 +160,28 @@ static func _bucket(state: GameState, pool: Array[Dictionary], want_expand: bool
 ##   EXPAND  the first order at a settlement not yet served -- new road, new
 ##           upkeep, new territory.
 ##
-## Two draws from one bucket often produce a hollow choice ("grain here or
-## grain there"); one of each is the standing tension of a logistics game, and
-## it stays meaningful every time it is asked. When a bucket is empty -- late
-## on, once everything is expanded -- the pair falls back to two from the
-## other, which is still a real choice between destinations.
-static func _pick_offers(state: GameState, map_data: MapData) -> Array[Dictionary]:
+## Strict alternation rather than a coin flip: a run of one kind is the thing
+## that makes progression feel arbitrary -- five expansions in a row leaves
+## the player with five half-served towns and no reason for any of them.
+## Alternating guarantees the network both widens and thickens. When the
+## preferred kind has nothing left (early on nothing has a second food worth
+## adding, late on everything is already expanded into) it falls through to
+## the other, and the preference only flips when a line is actually opened,
+## so a starved side never burns its turn.
+static func _next_line(state: GameState, map_data: MapData) -> Dictionary:
 	var pool := eligible_lines(state, map_data)
 	if pool.is_empty():
-		return []
+		return {}
 
-	var picked: Array[Dictionary] = []
-	var deepen := _bucket(state, pool, false)
-	if not deepen.is_empty():
-		picked.append(_take_random(state, deepen))
-	var expand := _bucket(state, pool, true)
-	if not expand.is_empty():
-		picked.append(_take_random(state, expand))
+	var wanted := _bucket(state, pool, state.next_prefers_expand)
+	if wanted.is_empty():
+		wanted = _bucket(state, pool, not state.next_prefers_expand)
+	if wanted.is_empty():
+		return {}
 
-	# One bucket was empty -- early on nothing has a second food worth adding,
-	# late on everything is already expanded into. Top up with the easiest
-	# candidates left over so the player still gets a choice of destination.
-	if picked.size() < OFFER_COUNT:
-		var taken := {}
-		for line in picked:
-			taken[offer_key(line)] = true
-		var leftovers: Array[Dictionary] = []
-		for line in pool:
-			if taken.has(offer_key(line)):
-				continue
-			leftovers.append(line)
-			if leftovers.size() >= OFFER_POOL_SIZE:
-				break
-		while picked.size() < OFFER_COUNT and not leftovers.is_empty():
-			picked.append(_take_random(state, leftovers))
-	return picked
+	var chosen := _take_random(state, wanted)
+	state.next_prefers_expand = not state.next_prefers_expand
+	return chosen
 
 ## Removes and returns one entry, weighted toward the easier end so the ramp
 ## stays gentle while still reaching occasionally. Weight is the line's
@@ -272,9 +210,9 @@ static func _take_random(state: GameState, pool: Array[Dictionary]) -> Dictionar
 	return chosen
 
 ## A seeded xorshift, kept here rather than using randf() so a run is
-## reproducible: same seed and same choices replay the same offers, which is
-## what lets the dev checks assert an exact sequence and a bug report be
-## re-run. GameState.rng_state is the whole of the generator's state.
+## reproducible: the same seed and the same play replay the same openings,
+## which is what lets the dev checks assert an exact sequence and a bug report
+## be re-run. GameState.rng_state is the whole of the generator's state.
 static func _next_randf(state: GameState) -> float:
 	var x: int = state.rng_state
 	if x == 0:
@@ -288,8 +226,8 @@ static func _next_randf(state: GameState) -> float:
 static func line_key(node_id: String, food_id: String) -> String:
 	return "%s|%s" % [node_id, food_id]
 
-static func offer_key(offer: Dictionary) -> String:
-	return line_key(offer.get("node_id", ""), offer.get("food_id", ""))
+static func line_id(line: Dictionary) -> String:
+	return line_key(line.get("node_id", ""), line.get("food_id", ""))
 
 static func _open(state: GameState, line: Dictionary) -> void:
 	state.active_orders.get_or_add(line.get("node_id", ""), {})[line.get("food_id", "")] = state.day

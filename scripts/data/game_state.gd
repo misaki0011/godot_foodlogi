@@ -28,24 +28,21 @@ var active_orders: Dictionary = {}
 
 ## Lines the player has ever delivered in full: "node_id|food_id" -> true.
 ## Latched -- proving a line once proves it for good, so a later bad day can
-## never un-open an order. Filling a line for the first time is what earns a
-## draw. See OrderBook.
+## never un-open an order. Filling a line for the first time is what opens the
+## next one. See OrderBook.
 var filled_lines: Dictionary = {}
 
-## The offers currently on the table (0 or OrderBook.OFFER_COUNT of them), as
-## {node_id, food_id, difficulty}. The player takes one by tapping its
-## settlement; the other goes back in the pool.
-var offers: Array[Dictionary] = []
+## Which kind of growth the next opening prefers: a settlement not yet served
+## (true) or another food for one already being served (false). Strictly
+## alternated, so the region both widens and thickens instead of drifting into
+## a run of one kind. See OrderBook._next_line.
+var next_prefers_expand := true
 
-## Draws owed but not yet dealt. Filling a second line while a pair is still
-## outstanding queues the draw rather than putting four plaques on the map.
-var pending_draws := 0
-
-## The run's offer sequence. Same seed plus the same choices replays the same
-## offers, which is what keeps the game reproducible now that nothing else in
-## the simulation is random. 0 means "not seeded yet" -- OrderBook.initialize
-## rolls a real one. Set it before initialize() to pin a run (the dev checks
-## do exactly that).
+## The run's opening sequence. The same seed plus the same play replays the
+## same openings, which is what keeps the game reproducible now that nothing
+## else in the simulation is random. 0 means "not seeded yet" --
+## OrderBook.initialize rolls a real one. Set it before initialize() to pin a
+## run (the dev checks do exactly that).
 var run_seed := 0
 var rng_state := 0
 
