@@ -12,6 +12,36 @@ const ROUTE_BASE_UPKEEP := 2.0
 const RIVER_BRIDGE_COST := 40.0
 const HUB_CAP_PER_NETWORK := 2
 
+## How many foods a settlement may ever demand, by type (DEV-04). A budget
+## the map is authored against rather than anything computed at runtime: the
+## order book only ever opens lines that already exist in a settlement's
+## demand, so the cap's job is to keep the map honest -- MapData.validate()
+## rejects a settlement authored past it.
+##
+## A City is 5 rather than the 8 the design first asked for, because there
+## are only five foods in the game and a settlement cannot want the same one
+## twice. City E wanting ALL of them is the real late-game objective; 8 would
+## be an unreachable number written down.
+const DEMAND_CAP := {
+	GameEnums.SettlementType.VILLAGE: 2,
+	GameEnums.SettlementType.TOWN: 4,
+	GameEnums.SettlementType.CITY: 5,
+}
+
+## Source upgrade (DEV-03). A one-off purchase that doubles a source's daily
+## output and widens it to 2x1 on the map -- capital, not a subscription, so
+## it carries no upkeep: a per-day charge on a source would bleed the player
+## for owning infrastructure rather than for running it, which is what route
+## upkeep is already for.
+##
+## Priced well above a hub (150) because it is the answer to a harder problem.
+## Vegetables are over-subscribed on region 1 the moment every line opens --
+## Village B 25 + Village C 20 + Town D 30 + City E 35 = 110 against the
+## Garden's 90 -- so the Garden upgrade is not a luxury, it is the only way
+## that demand is ever fully served.
+const SOURCE_UPGRADE_COST := 300.0
+const SOURCE_UPGRADE_SUPPLY_MULT := 2.0
+
 ## ---------- bridges: road-over-road crossings (placed structure) ----------
 ## Built with the Bridge tool onto one existing route tile, turning it into a
 ## crossing: the road already there keeps running underneath, and a raised deck

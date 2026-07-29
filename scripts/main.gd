@@ -70,7 +70,7 @@ const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map 
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
 	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
-	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost).",
+	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it instead: it doubles its daily output.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
@@ -237,11 +237,17 @@ const ARROW_ROTATION_BY_DIR := {
 }
 
 func _ready() -> void:
-	_map_data = load(REGION_MAP_PATH)
+	# Duplicated because upgrading a source mutates its NodeData (DEV-03), and
+	# load() hands back a shared cached resource -- mutating that would leak
+	# one run's upgrades into the next, and into the dev checks.
+	_map_data = load(REGION_MAP_PATH).duplicate(true)
 	_state.balance = GameBalance.STARTING_FUNDS
 	for node in _map_data.node_placements:
-		_nodes_by_pos[node.grid_position] = node
 		_nodes_by_id[node.node_id] = node
+	_rebuild_cell_index()
+	# Seeds the demand lines the map opens with (DEV-01). Must run before the
+	# first _render_grid, since it decides which bubbles exist at all.
+	OrderBook.initialize(_state, _map_data)
 	_terrain.render(_map_data)
 	_node_spawner.spawn(_map_data, _terrain)
 	_grid_visuals = Node3D.new()
@@ -698,13 +704,39 @@ func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
 	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_START_COLOR)
 	_grid_visuals.add_child(mesh_instance)
 
+## Rebuilds the cell -> node lookup. Run at load; footprints are fixed, so
+## nothing during a run invalidates it.
+##
+## `_nodes_by_pos` holds one entry per OCCUPIED cell (DEV-02). Everything that
+## asks "is there a node at this cell" -- hit-testing, build guards, the
+## established-route overlay, the engine's never-transit-a-node rule --
+## resolves through it, so a multi-tile node needs no special case anywhere
+## that works in cells. Anything that iterates NODES must iterate
+## `_nodes_by_id`, or a 2x2 City gets processed four times.
+func _rebuild_cell_index() -> void:
+	_nodes_by_pos.clear()
+	for node_id in _nodes_by_id:
+		var node: NodeData = _nodes_by_id[node_id]
+		for cell in node.cells():
+			_nodes_by_pos[cell] = node
+
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
 		return
 	var n := _node_at(cell)
 	if n:
-		# Sources and settlements are informational, not buildable -- tapping
-		# (mobile has no hover) shows the same info tip a mouse hover would.
+		# The Upgrade tool is the one tool that does anything to a node: it
+		# widens a source and doubles its output (DEV-03). This is not the
+		# discoverability trap the old tap-to-accept offer was -- there the
+		# tap was passive and unprompted, here the player has already picked
+		# a tool that says "upgrade what I touch".
+		if _tool == "upgrade" and n.node_type == GameEnums.NodeType.SOURCE:
+			_do_upgrade_source(n)
+			return
+		# Otherwise sources and settlements are informational, not buildable
+		# -- tapping (mobile has no hover) shows the same info tip a mouse
+		# hover would. Nothing on the map ever needs a tap to advance the
+		# game: orders open themselves as deliveries land (DEV-01).
 		_update_tip(cell, screen_position)
 		return
 	_tip_panel.visible = false
@@ -749,6 +781,35 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 	_state.balance -= cost
 	cell_data.level = lvl.next
 	_show_toast("Upgraded to %s for §%d." % [GameBalance.ROUTE_LEVELS[cell_data.level].label, roundi(cost)])
+
+## Doubles a source's daily output (DEV-03). The footprint does not change --
+## a source already stands on its full 2x1 -- so the only thing this can fail
+## for is money.
+##
+## Mutates the NodeData, which is safe because Main duplicates the map
+## resource at load; the engine reads supply straight off `produces`, so the
+## bigger output is live on the next simulated day with nothing to thread
+## through, and the source's own bubble reads "0/180" instead of "0/90" as
+## soon as the grid re-renders.
+func _do_upgrade_source(n: NodeData) -> void:
+	if not n.can_upgrade():
+		_show_toast("%s is already expanded." % n.display_name, true)
+		return
+	var cost := GameBalance.SOURCE_UPGRADE_COST
+	if _state.balance < cost:
+		_show_toast("Not enough treasury to expand %s (§%d needed)." % [n.display_name, roundi(cost)], true)
+		return
+
+	_state.balance -= cost
+	n.upgraded = true
+	var gained := []
+	for food_id in n.produces:
+		n.produces[food_id] *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
+		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
+
+	_render_grid()
+	_update_ui()
+	_show_toast("%s expanded for §%d — now %s." % [n.display_name, roundi(cost), ", ".join(gained)])
 
 func _do_build_storage(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
@@ -975,10 +1036,16 @@ func _apply_day_cycle() -> void:
 func _run_day() -> void:
 	var report := SimulationEngine.run_day(_state, _map_data.node_placements)
 	_last_report = report
+	# Latches whatever the day just filled and opens the next order for each
+	# one (DEV-01). Deliberately not tied to the calendar rollover below:
+	# delivering is what advances the region, so the new order lands the
+	# moment the delivery does.
+	for order in OrderBook.record_day(_state, _map_data, _map_data.node_placements):
+		_announce_order(order)
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
 	if _state.auto_run:
-		_state.day += 1
+		_advance_day()
 		_show_day_summary(report)
 	else:
 		_report_advances_day = true
@@ -986,11 +1053,28 @@ func _run_day() -> void:
 	_render_grid()
 	_update_ui()
 
+## Rolls the calendar over. Nothing about the order book happens here any
+## more: progression answers to deliveries, not to the date (DEV-01). The day
+## counter still drives the clock, the sun cycle and the report.
+func _advance_day() -> void:
+	_state.day += 1
+
+func _announce_order(order: Dictionary) -> void:
+	var settlement: NodeData = _nodes_by_id.get(order.get("node_id", ""))
+	var food: FoodData = GameBalance.food_types().get(order.get("food_id", ""))
+	if settlement == null or food == null:
+		return
+	_show_toast("New order — %s wants %s, %d/day." % [
+		settlement.display_name,
+		food.display_name,
+		roundi(settlement.demand.get(order.get("food_id", ""), 0.0)),
+	])
+
 func _close_report() -> void:
 	_report_overlay.visible = false
 	if _report_advances_day:
 		_report_advances_day = false
-		_state.day += 1
+		_advance_day()
 	_update_ui()
 
 ## Reopens the last simulated day's full report for review. The day has
@@ -1091,6 +1175,12 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 			for food_id in n.produces:
 				parts.append("%s (%d/day)" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
 			text = "[b]%s[/b]\nProduces: %s" % [n.display_name, ", ".join(parts)]
+			# The upgrade is only reachable through the Upgrade tool, so the
+			# tip is where the player finds out it exists at all (DEV-03).
+			if n.can_upgrade():
+				text += "\n[color=#C9A227]Upgrade §%d with the Upgrade tool — doubles daily output.[/color]" % roundi(GameBalance.SOURCE_UPGRADE_COST)
+			else:
+				text += "\n[color=#8A8375]Already expanded.[/color]"
 		else:
 			text = _settlement_tip_text(n)
 	elif cell_data:
@@ -1153,17 +1243,34 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 ## ---------- settlement tip ----------
 
 func _settlement_tip_text(n: NodeData) -> String:
+	# The tip works from the open orders, not the settlement's eventual
+	# appetite (DEV-01) -- promising a food it will not buy for another ten
+	# days would send the player building a road that earns nothing. What is
+	# still to come is listed separately, as the plan it is.
+	var demand := OrderBook.active_demand(_state, n)
 	var parts := []
+	for food_id in demand:
+		parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(demand[food_id])])
+	var text := "[b]%s[/b] -- %s\n" % [n.display_name, n.kind]
+	if parts.is_empty():
+		text += "[i]Not ordering yet -- this settlement starts buying later.[/i]\n"
+	else:
+		text += "Orders: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
+
+	var later := []
 	for food_id in n.demand:
-		parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(n.demand[food_id])])
-	var text := "[b]%s[/b] -- %s\nWants: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [n.display_name, n.kind, ", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
+		if not demand.has(food_id):
+			later.append(GameBalance.food_types()[food_id].display_name)
+	if not later.is_empty():
+		text += "[color=#8A8375]May order later: %s[/color]\n" % ", ".join(later)
+
 	var status = _state.last_settlement_status.get(n.node_id)
-	if status == null:
+	if status == null or demand.is_empty():
 		text += "\n[i]No deliveries yet -- run a day to see what's getting through.[/i]"
 		return text
 	text += "\n[b]Last delivery:[/b]\n"
-	for food_id in n.demand:
-		var s = status.get(food_id, {"requested": n.demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
+	for food_id in demand:
+		var s = status.get(food_id, {"requested": demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
 		var done: bool = s.delivered >= s.requested - 0.5
 		var partial: bool = not done and s.delivered > 0.0
 		var icon := "✓" if done else ("◐" if partial else "✗")
@@ -1200,7 +1307,13 @@ func _show_report(r: DayReportData) -> void:
 	text += "Waste (unmet + rejected demand): %d%%\n" % roundi(r.waste_pct)
 	if r.capacity_blocked > 0.0:
 		text += "[color=#C4573A]⚠ Blocked by route capacity: %d food[/color]\n" % roundi(r.capacity_blocked)
-	text += "Settlement happiness: %d%%\n" % roundi(r.avg_happiness)
+	# The denominator is printed because it moves: happiness averages only
+	# the settlements actually taking orders (DEV-01), so without it a
+	# perfectly steady network would look like it had swung whenever the
+	# region opened up a new one.
+	text += "Settlement happiness: %d%% (%d of %d settlements taking orders)\n" % [
+		roundi(r.avg_happiness), r.settlements_taking_orders, r.settlements_total,
+	]
 	var grade_color: String = GRADE_COLORS.get(r.grade, Color.WHITE).to_html(false)
 	text += "Network efficiency grade: [b][color=#%s]%s[/color][/b] (score %d/100)\n\n" % [grade_color, r.grade, roundi(r.grade_score)]
 	text += "[b]Per-settlement[/b]\n"
@@ -1363,8 +1476,8 @@ func _shared_source_ids(a: Array, b: Array) -> Array:
 ## other is a dead stub, and the overlay has to show exactly that.
 func _established_sources_by_vertex() -> Dictionary:
 	var result := {}
-	for pos in _nodes_by_pos:
-		var node: NodeData = _nodes_by_pos[pos]
+	for node_id in _nodes_by_id:
+		var node: NodeData = _nodes_by_id[node_id]
 		if node.node_type != GameEnums.NodeType.SOURCE:
 			continue
 		for v in SimulationEngine.established_route_vertices(_state, _nodes_by_pos, node.node_id):
@@ -1389,18 +1502,30 @@ func _established_route_cells() -> Dictionary:
 ## settlements are speech balloons (bubble_canvas.gd).
 func _render_supply_bubbles() -> void:
 	var foods := GameBalance.food_types()
-	for pos in _nodes_by_pos:
-		var n: NodeData = _nodes_by_pos[pos]
+	# By node, not by cell: iterating _nodes_by_pos would draw a 2x1 Town's
+	# bubbles twice and a 2x2 City's four times, stacked on top of each other
+	# (DEV-02).
+	for node_id in _nodes_by_id:
+		var n: NodeData = _nodes_by_id[node_id]
 		if n.node_type == GameEnums.NodeType.SOURCE:
-			_render_source_bubbles(n, pos, foods)
+			_render_source_bubbles(n, foods)
 		elif n.node_type == GameEnums.NodeType.SETTLEMENT:
-			_render_settlement_bubbles(n, pos, foods)
+			_render_settlement_bubbles(n, foods)
 
-func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+## Where a node's bubbles and marker anchor: the middle of its whole
+## footprint, so a 2x2 City speaks from its centre rather than from the corner
+## cell the map author happened to write down.
+func _node_center(n: NodeData) -> Vector3:
+	var near: Vector3 = _terrain.map_to_local(Vector3i(n.grid_position.x, 0, n.grid_position.y))
+	var far_cell := n.far_cell()
+	var far: Vector3 = _terrain.map_to_local(Vector3i(far_cell.x, 0, far_cell.y))
+	return (near + far) * 0.5
+
+func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
 	# The source's crate model is shorter than the settlement pin, so its
 	# bubble sits a little lower than the settlement stack's start height.
-	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 2.5, 0)
+	var base_pos: Vector3 = _node_center(n) + Vector3(0, 2.5, 0)
 	var stack := 0
 	for food_id in n.produces:
 		var produced: float = n.produces[food_id]
@@ -1427,22 +1552,28 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 ## anything under it before it ever counts as delivered, so a bubble can
 ## never see an average below that line and a rule testing for one would
 ## be dead.
-## A settlement whose every demanded food is GREEN has nothing the player
-## can act on, so its whole stack collapses to one "All fresh" bubble --
-## keeping the map's attention on the settlements still in trouble, and
-## taking the 3-food settlements' clutter out of their neighbours' way.
-func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+## Every open order keeps its own bubble whatever its status. A settled
+## settlement used to collapse its whole stack into one "All fresh" summary,
+## which hid the very numbers the player had just worked to earn -- and with
+## orders opening one at a time (DEV-01) the stacks it was decluttering are
+## rare now anyway. Green bubbles already recede on their own: they wash
+## lighter and outline thinner than amber and red (bubble_canvas.gd).
+func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status = _state.last_settlement_status.get(n.node_id, {})
 	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
 	# +1.0 root offset plus node_marker_base.tscn's local offset), so start
 	# above it -- otherwise this billboard sits inside the pin head and the
 	# two fuse into an unreadable blob.
-	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
+	var base_pos: Vector3 = _node_center(n) + Vector3(0, 3.1, 0)
 
 	var entries: Array = []
-	var all_green := true
-	for food_id in n.demand:
-		var requested: float = n.demand[food_id]
+	# Only the orders that have actually opened (DEV-01). A settlement with
+	# none draws nothing at all -- the pin alone. It is not showing a grey
+	# "later" placeholder either: five of those from day 1 would be the same
+	# wall of bubbles this feature exists to remove, in a quieter colour.
+	var demand := OrderBook.active_demand(_state, n)
+	for food_id in demand:
+		var requested: float = demand[food_id]
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
 		var s = status.get(food_id)
@@ -1460,8 +1591,6 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 		else:
 			bubble_status = FoodBubbleMarker.Status.AMBER
 
-		if bubble_status != FoodBubbleMarker.Status.GREEN:
-			all_green = false
 		entries.append({
 			"food_id": food_id,
 			"delivered": delivered,
@@ -1470,24 +1599,16 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 		})
 
-	if entries.is_empty():
-		return
-
-	if all_green:
-		var summary: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-		_grid_visuals.add_child(summary)
-		summary.position = base_pos
-		summary.setup_all_clear()
-		return
-
 	for index in entries.size():
 		var e: Dictionary = entries[index]
 		var row: int = index / 2
-		var col: int = index % 2
-		var col_offset: float = (col - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(col_offset, row * FoodBubbleMarker.STACK_SPACING, 0)
+		bubble.position = base_pos + Vector3(
+			_bubble_column_offset(index, entries.size()),
+			row * FoodBubbleMarker.STACK_SPACING,
+			0,
+		)
 		bubble.setup_settlement(
 			foods[e.food_id],
 			e.delivered,
@@ -1496,6 +1617,16 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			e.freshness_pct,
 			n.bonus_freshness,
 		)
+
+## Where a bubble sits across the 2-column stack. A row holding a single
+## bubble centres it over the settlement instead of leaving it hanging in the
+## left column: with orders opening one at a time (DEV-01), a settlement
+## showing exactly one bubble is now the common case rather than an edge one.
+func _bubble_column_offset(index: int, count: int) -> float:
+	var row_start: int = (index / 2) * 2
+	if count - row_start == 1:
+		return 0.0
+	return ((index % 2) - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
 ## so a route tile always uses the same unrotated scene regardless of its
@@ -1828,7 +1959,7 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "ROUTES")
 	var route_grid := _add_tool_grid(box)
 	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.RIVER_BRIDGE_COST)])
-	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade Route -- Dirt to Paved (§%d), Paved to Main (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost)])
+	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d) or Paved to Main (§%d); a food source to double its output (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), roundi(GameBalance.SOURCE_UPGRADE_COST)])
 
 	_add_section_title(box, "STORAGE")
 	var storage_grid := _add_tool_grid(box)

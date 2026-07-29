@@ -62,6 +62,24 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 35. **Storage gets the same treatment as a hub: drawn on its road, and handed back to it.** Storage was the last structure still replacing the route tile it was built on -- the road vanished under the building, the Dirt/Paved/Main level it covered was forgotten outright, and bulldozing it took the road away with it. A storage cell now records the level it covers at build time, draws that road underneath itself, and hands it back on a bulldoze, exactly as items 33/34 did for hubs. With this, every structure in the game follows one rule -- a building sits **on** a road, and removing the building reveals the road -- so there is no longer a special case to remember. See §4.1, §4.3.
 
+36. **Demand opens one order at a time, instead of the whole region wanting food on day 1.** Every settlement demanded everything from the first day: twelve red bubbles on the opening screen (item 30 already had to rule out pulsing them, because on day one every settlement was red), and a happiness score averaged over five settlements the player could not possibly have connected yet — so the grade measured the calendar, not the network. A settlement's `demand` is now its *eventual* appetite, and `MapData.order_schedule` lists those lines in the order the region learns them; only the lines that have opened are simulated, scored or drawn. Nothing on the map appears or disappears — all five settlements and all five sources stand there from day 1, so the whole region is visible to plan against. What develops is the demand, and the road network the player draws to meet it. Deliberately **not** modelled as settlements growing: a village visibly becoming a city reads as a city-builder, and the thing that should grow in a logistics game is the network. The fiction is that a settlement starts *placing orders*, which is also why an order needs a reason to arrive — it opens only once the player is on top of the ones they already have (every settlement taking orders held 70% happiness for 2 consecutive days), with the schedule's `earliest_day` as a floor rather than a timer, at most one new order per rollover, and the streak spent on each one earned. A settlement with no open order draws no bubble at all; the one next in line gets a quiet countdown plaque two days out, so the player can lay the road before the order lands and its first day is green. A grey "later" plaque over all five settlements from day 1 would just be the same wall in another colour. See §6, §4.8, §10.1.
+
+37. **The same network now gives the same day, and a settled settlement keeps its numbers.** Two changes with one goal: every figure on the map means something the player did. First, settlement demand no longer wobbles ±15-25% per simulated day (item 4's rule, ported from the HTML). That wobble was the only randomness in the whole simulation, and it made every number a moving target — a bubble read 18/20 one day and 23/23 the next off the same untouched road, so an improvement the player had just made was indistinguishable from noise, and the day report's grade drifted on its own. Freshness was already deterministic (`simulate_freshness` reads only the path), so with the wobble gone the guarantee is total: an unchanged network delivers an unchanged result, at an unchanged grade. Note what this costs — §18's endless-chase argument used to lean on the wobble to stop a "solved" network from staying solved; that pull now has to come from the region opening up (§6), which is what the order schedule already does. Second, the collapsed **"All fresh"** summary bubble is gone: a settlement whose every open order is green now keeps one bubble per food like any other. Collapsing hid exactly the numbers the player had worked to earn, and it was decluttering stacks that item 36 already made rare — a settlement usually has one or two open orders now, not three. Green still recedes on its own, washing lighter and outlining thinner than amber and red. See §10.1, §12, §18.
+
+38. **The player chooses what the region asks for next.** Item 36 opened demand one line at a time but decided the order itself, from an authored schedule gated on a day floor plus a happiness streak -- and both gates were clocks, the streak merely a conditional one. Progression now answers only to delivery: **fill an order and two offers appear; pick one.** Idle for a hundred days and nothing opens; fill something and the choice is waiting immediately. `GameState.day` still drives the day clock, the sun and the report, and drives no progression at all. An order counts as filled when the whole requested amount arrives -- exactly the amber bubble, exactly the point the line starts paying -- with freshness beyond that deciding only how well the player is paid; `min_freshness` still bites implicitly, since spoiled cargo is rejected before it counts as delivered. Filled is latched, so a bad day cannot un-open an order. The two offers are drawn one **deepen** (another food for a settlement already served, reusing its road) and one **expand** (a first order somewhere new, a new road and new upkeep), because two draws from one bucket give a hollow choice while one of each is the standing tension of the genre. They ride as violet plaques on the settlements they would land on and are taken by tapping -- the map is what the decision needs (distance to a source, the river, existing roads), so a modal would cover the one thing worth seeing. The offer not taken goes back in the pool: with twelve lines on the map, discarding one per choice would hide half the content, and keeping it makes a mis-tap cost ordering rather than territory. Candidates are the easiest few remaining of each kind, ranked by a difficulty derived from the map itself (`MapData.difficulty_of`: freshness shortfall over distance to the nearest producing source) rather than authored -- which reproduces the old hand-written teaching order for free. The whole authored schedule is replaced by a single `opening_line`. Draws are seeded per run so a game replays identically, since item 37 left nothing else random. See §6, §4.8, §10.1.
+
+39. **Three opening orders, and an offer that cannot be mistaken for a countdown.** Two playtest fixes to item 38. First, the map opened with a single order, which one short road from the Farm finished -- it taught the drag gesture and left nothing to weigh until the first offer arrived. It now opens with the three easiest lines (Village A's grain and bread, Village B's grain), so there is a real decision from the first minute -- which town first, whether one trunk road serves both -- while staying far short of the twelve-bubble wall. Second, an offer plaque read `Bread / 20/day`, and in the exact spot where the previous design printed `Day 3` that scanned as a duration: it was read as "wait 20 days", when nothing about an offer is a wait at all. It now reads the food name over `+20 · tap`. Per-day was never needed -- every quantity on this map is already per-day, a settlement bubble says `0/20` -- and the shorter lines also fix legibility, since more than about ten characters shrinks to the font floor at map zoom and turns to mush. See §6, §10.1.
+
+40. **A new order opens itself; nothing waits on a tap.** Item 38 put two offers on the map when an order filled and had the player tap one, trading a deepen-or-expand decision for a hard stop: the whole region stalled behind a tap that had to be noticed and understood, and in play it was not -- the plaques were read as something to wait out rather than something to press. Filling an order now simply opens the next one, immediately and silently, announced by the same toast as before. The variety the choice provided is kept by alternating the two kinds of growth strictly (deepen, expand, deepen, ...) rather than rolling for them, since a run of one kind is exactly what makes progression feel arbitrary -- five expansions running leaves five half-served towns and no reason for any of them. `GameState.offers` and `pending_draws` are gone, along with the violet offer bubble, `Kind.SETTLEMENT_OFFER` and the tap handler; nothing on the map now needs pressing to advance the game. Note what this gives up: the deepen-or-expand call is the game's, not the player's. See §6, §10.1.
+
+41. **A place takes up as much of the map as it is big.** Every source and settlement stood on exactly one tile, so a City and a hamlet were the same size on screen and cost the player the same room to route around. A node now carries a `size` footprint: villages and sources stay 1x1, **Town D is 2x1 and City E 2x2**. The whole footprint is unbuildable and a road may connect to any of its cells. The invariant that keeps this from touching the rest of the game is that `Main._nodes_by_pos` (and the engine's `nodes_by_pos`) hold **an entry per occupied cell**, so every cell-based rule -- hit-testing, build guards, the established-route overlay, the never-transit-a-node rule -- keeps working untouched. Two things genuinely had to change. Delivery pathfinding now leaves from ANY cell of its source and arrives at ANY cell of its destination, seeded with every origin cell at zero, since otherwise a 2x2 City's reachability would depend on which corner the map author wrote down; and the transit rule compares the NODE rather than the cell, so a delivery can cross between its own source's tiles without that counting as routing through somebody. Anything that iterates nodes now iterates node IDs: the bubble renderer walked cells, which would have drawn City E's whole stack four times, exactly on top of itself. Markers spawn per cell rather than per node, which is both the cheapest way to make a Town read as bigger and the honest way to show which tiles are taken -- bespoke Town/City meshes are the follow-up. Town D and City E were re-anchored one tile west (to 12,6 and 14,9) so their footprints do not sprawl toward Dairy and Harbor: growing toward a source would have quietly made those lines easier and re-ordered the progression, and this phase is meant to change what the map looks like, not how it plays. `MapData.validate()` now rejects overlapping and off-map footprints, since two nodes sharing a cell would make it resolve to whichever was placed last and hide the other from every build guard. See §12, §16.
+
+42. **Sources can be upgraded, onto ground reserved for it from the start.** Supply was fixed forever, which left region 1 with a food it could never fully serve: vegetables are over-subscribed the moment every line opens -- Village B 25 + Village C 20 + Town D 30 + City E 35 = 110 against the Garden's 90 -- so no network however good could satisfy that demand. The **Upgrade tool** now works on a food source as well as a route: §300 doubles its daily output and widens it from 1x1 to 2x1 on the map. No upkeep, because it is capital rather than a subscription -- a per-day charge for *owning* a source would bleed the player for infrastructure rather than for running it, which is what route upkeep is already for. Reusing the existing Upgrade tool costs no new button and reads as what it is; and unlike the tap-to-accept offer that item 40 removed, this tap is not passive and unprompted, since the player has already chosen a tool that says "upgrade what I touch". **The ground each source would grow onto is reserved from day 1 and permanently unbuildable.** It is deliberately not a "keep it clear or lose the upgrade" rule: a player who paved over it on day 2 and discovered the cost on day 20 would have no way back. Because the cell is blocked rather than merely watched, it is drawn -- a flat translucent patch, since an invisible wall that eats a drag with an error reads as a bug. Each source's growth direction is authored (`NodeData.upgraded_origin`/`upgraded_size`) so the reserved cell sits AWAY from the map's interior, off the obvious lane between that source and its customers: expanding every source blindly east would have put Farm's reserved cell squarely on the road to Village A. `Main` now duplicates the map resource at load, since upgrading mutates NodeData and `load()` hands back a shared cached resource -- without the copy one run's upgrades would leak into the next and into the dev checks. `MapData.validate()` rejects reservations that overlap a node, run off the grid, or are claimed twice. See §4.7, §12.
+
+43. **Sources are two tiles from the start, and nothing is "reserved" any more.** Item 42 held a cell beside each source for its upgrade to grow into, drew it as a translucent ghost, and refused to build on it. In play the ghost read as a strange empty square nobody could identify -- land the player cannot use is far clearer when it is visibly the building itself. Every source now simply **stands on its full 2x1 from day 1**, so the second tile is part of the source rather than ground held back for it, and the whole reservation apparatus is gone: `upgraded_origin`/`upgraded_size`, `reserved_cells()`, `Main._reserved_by_cell`, the special drag refusal and the ghost renderer all removed, along with the validation that policed them. The upgrade itself is unchanged in price and effect but no longer resizes anything -- it just doubles output, which the source's own bubble reports as "0/180" where it read "0/90". Sources are anchored so the footprint extends AWAY from the middle of the map, keeping the cell nearest each source's customers exactly where it was, so wider buildings cost the player no distance. The Garden is the one exception: extending it west put it on column 1 where its speech bubble ran off the edge of the view (TERR-02 keeps sources two tiles clear of the border for exactly that reason), so it extends east instead, which brings vegetables one tile closer to every customer. See §4.7, §12.
+
+44. **A settlement's type now decides how much it can ever want.** Village/Town/City were a free-text `kind` label with no mechanical weight, so a "City" was a village that happened to be spelled differently. Each type now carries a **demand cap** -- Village 2, Town 4, City 5 -- alongside the footprint it already had from item 41, so size on the map and appetite on the ledger say the same thing. The cap is 5 rather than the 8 first proposed because there are only five foods in the game and a settlement cannot want the same one twice; City E wanting **all five** is what "the late objective" can actually mean. `GameEnums.SettlementType` and `NodeData.settlement_type` carry the rule, with `kind` demoted to a display label -- a cap keyed off free text is no rule at all. Nothing enforces the cap at runtime: the order book only ever opens lines that are already authored, so `MapData.validate()` is the whole enforcement, and it now rejects a settlement written past its type. Town D and City E were filled to their budgets, which is what makes the cap mean anything: **Town D gains grain (20) and City E gains grain (30) and bread (30)**, taking the region from 12 demand lines to 15. That is what turns source upgrades (item 42) from a single-purpose fix into an economy: grain goes to 85 against the Farm's 80 and bread to 95 against the Bakery's 80, so three of the five sources -- Farm, Bakery, Garden -- now have demand they cannot meet un-upgraded. Milk and seafood keep their slack; reaching them would mean raising an authored amount rather than adding a line, which is a balance decision rather than a structural one. See §4.8, §12.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1081,6 +1099,103 @@ satisfaction = demand_fulfillment_score
 
 The game should introduce systems gradually.
 
+### Gradual demand: orders open as deliveries earn them (added in v0.6, revised in items 38-40)
+
+The chapter list below is the full-game shape. On the single MVP region the
+same intent is delivered by the order book, which paces one map instead of
+six levels:
+
+```text
+fill an order  ->  a new order opens, straight away
+```
+
+No prompt, no confirmation, nothing to press. **The model.** A settlement's
+`NodeData.demand` is what it will *eventually* want; lines open one at a time
+as deliveries earn them. An unopened line is not simulated, not scored and
+not drawn.
+
+**Nothing on the map ever appears or disappears.** All five settlements and
+all five sources stand there from day 1, so the player can see the whole
+region and plan long routes against it. A settlement is never founded,
+upgraded or resized: it simply starts placing orders. Settlements *growing*
+was considered and rejected -- a village visibly becoming a city reads as a
+city-builder, and in a logistics game the thing that should visibly develop
+is the network the player drew.
+
+**Progress, not days.** Nothing in `OrderBook` consults the calendar. An
+early design gated on an `earliest_day` floor plus a "held 70% happiness for
+2 consecutive days" streak, and both were clocks -- the streak counted days
+too, just conditionally. Now: idle for a hundred days and nothing opens; fill
+an order and the next is there immediately. `GameState.day` still drives the
+day clock, the sun cycle and the report, and drives no progression at all.
+
+**What counts as filled.** The whole requested amount arriving -- exactly the
+**amber** speech bubble, and exactly the point at which a line starts paying
+(§9: red pays nothing, amber pays the line, green pays it plus the bonus).
+Freshness above that does one job only: deciding how well the player is paid.
+`min_freshness` still bites implicitly and correctly, because `run_day`
+rejects anything under it before it counts as delivered, so a line can never
+fill on cargo too spoiled to accept. 99% delivered is a red bubble, earns
+nothing, and does not advance the player -- a short order is not a partial
+sale.
+
+Filled is **latched**: proving a line once proves it for good, so a later bad
+day can never un-open an order, and refilling one already proved opens
+nothing (or a working network would sprout an order every day).
+
+**Growth alternates between two kinds.**
+
+| Kind | Meaning | Cost shape |
+| --- | --- | --- |
+| **Deepen** | another food for a settlement already served | reuses the trunk road, low marginal upkeep, needs a second source reaching the same place |
+| **Expand** | the first order at a settlement not yet served | new road, new upkeep, new territory |
+
+Strictly alternated rather than rolled, because a run of one kind is what
+makes progression feel arbitrary -- five expansions running leaves the player
+with five half-served towns and no reason for any of them. Alternating
+guarantees the network both widens and thickens. When the preferred kind has
+nothing left, it falls through to the other, and the preference only flips
+when a line actually opens, so a starved side never burns its turn.
+
+An earlier revision (item 38) instead put **two offers** on the map, one of
+each kind, and had the player tap one. It bought a genuine deepen-or-expand
+decision at the price of stalling the whole region behind a tap that had to
+be noticed and understood, and in play it was not (item 40). The variety it
+provided is what the alternation now supplies automatically.
+
+**Eligibility is a rank, not a distance.** Each kind draws from the easiest
+`OFFER_POOL_SIZE` remaining candidates of its sort. Difficulty is derived
+from the map rather than authored (`MapData.difficulty_of`): how far the
+freshness falls short of what the settlement rewards, over the straight-line
+distance to the nearest source producing that food. Ranking region 1 this way
+puts Village A's grain easiest (-18) and City E's vegetables hardest (+30),
+reproducing the hand-written teaching order for free and re-deriving it if a
+source ever moves. An absolute difficulty reach was tried first and is wrong:
+the difficulties are unevenly spaced, so any fixed reach is either too tight
+to offer anything early or meaningless later.
+
+**Seeded.** Openings are drawn from a per-run seed on `GameState`, so a run
+replays identically given the same seed and the same play. Nothing else in
+the simulation is random any more (item 37), so a run that could not be
+reproduced could not be debugged.
+
+**Scoring follows.** `avg_happiness` averages only settlements taking orders
+-- scoring one nobody may deliver to yet would make the grade a measure of
+the calendar. The report prints the denominator ("82% (2 of 5 settlements
+taking orders)").
+
+**The map authors one thing.** `MapData.opening_lines` -- the three easiest
+lines on the board (Village A's grain and bread, Village B's grain).
+Everything after them is earned. Fixed first beats rather than anything
+chosen, because on day 1 nothing is built.
+
+Three rather than one: a single opening order is solved by one short road
+from the nearest source and teaches only the drag gesture, so the player has
+nothing to weigh at the start. Three gives an actual decision from the first
+minute -- which town to reach first, whether one trunk road serves both --
+while staying far short of the twelve-bubble wall this whole feature exists
+to remove.
+
 ### Chapter 1: Fresh Beginnings
 
 Introduces:
@@ -1556,7 +1671,7 @@ One region with:
 - Freshness decay
 - Storage preservation
 - Hub discount
-- Settlement demand, with ±15–20% daily wobble
+- Settlement demand, fixed per food (the ±15–20% daily wobble was removed in v0.6 item 37)
 - Congestion markers and invalid-placement feedback on the map (see §10.5)
 - Hub last-delivery split tooltip on hover
 - Per-settlement delivery popup on hover and fulfillment checklist on click
@@ -1580,7 +1695,14 @@ This was replaced with an **endless efficiency-score chase**. Each day produces 
 - Best-ever grade and score
 - Rolling 7-day average score
 
-There is no finish line. The daily demand wobble (§0.4) means a network that scored well once isn't guaranteed to score well again, so there is always a "can I make this cleaner" pull, which is a closer match to §18's Core Fun Test than a checklist that, once cleared, has nothing left to optimize.
+There is no finish line. What keeps the chase live is the region opening up
+(§6): every new order changes the problem the network has to solve, so a
+layout that scored well over three orders is not guaranteed to over six, and
+there is always a "can I make this cleaner" pull. That is a closer match to
+§18's Core Fun Test than a checklist that, once cleared, has nothing left to
+optimize. Note this used to lean on the daily demand wobble instead, which
+v0.6 item 37 removed: re-scoring a *static* network now returns exactly the
+same grade, so the pull has to come from new orders rather than from noise.
 
 ### MVP implementation values
 
@@ -1595,7 +1717,8 @@ blocked as intermediate path vertices.
 Source supply per day is Farm (80 grain), Garden (90 vegetables), Bakery (80
 bread), Dairy (75 milk), and Harbor (55 seafood). Food value/decay per tile is
 Grain (3/0.5), Bread (5/1.5), Vegetables (6/2.5), Milk (8/4), and Seafood
-(10/6). Settlement demand for each food wobbles ±15–20% per day.
+(10/6). Settlement demand for each food is fixed -- a settlement asks for the
+same amount every day (v0.6 item 37).
 
 Route construction costs 8 per tile before terrain modifiers. Dirt route upkeep
 is 2 per tile/day before terrain, route-level, and hub modifiers. Route

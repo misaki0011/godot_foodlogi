@@ -54,18 +54,53 @@ func _build_region_map() -> void:
 	map.grid_size = GameBalance.GRID_SIZE
 	map.river_col = GameBalance.RIVER_COL
 	map.node_placements = [
-		_source("farm", Vector2i(3, 4), "Farm", {"grain": 80.0}),
+		# Every source stands on 2x1 from the start (DEV-03), anchored so the
+		# footprint extends AWAY from the middle of the map -- that keeps the
+		# cell nearest each source's customers where it always was, so the
+		# wider buildings cost the player no distance.
+		#
+		# The Garden is the exception: extending it west put it on column 1,
+		# where its speech bubble ran off the left edge of the view (TERR-02
+		# keeps sources two tiles clear of the border for exactly this). It
+		# extends east instead, which brings vegetables one tile closer to
+		# every customer.
+		_source("farm", Vector2i(2, 4), "Farm", {"grain": 80.0}),
 		_source("garden", Vector2i(2, 6), "Garden", {"vegetables": 90.0}),
-		_source("bakery", Vector2i(3, 9), "Bakery", {"bread": 80.0}),
+		_source("bakery", Vector2i(2, 9), "Bakery", {"bread": 80.0}),
 		_source("dairy", Vector2i(17, 4), "Dairy", {"milk": 75.0}),
 		_source("harbor", Vector2i(17, 9), "Harbor", {"seafood": 55.0}),
 
-		_settlement("villageA", Vector2i(6, 3), "Village A", "Village", {"bread": 20.0, "grain": 20.0}, 35.0, 80.0),
-		_settlement("villageB", Vector2i(6, 10), "Village B", "Village", {"vegetables": 25.0, "grain": 15.0}, 35.0, 80.0),
-		_settlement("villageC", Vector2i(13, 3), "Village C", "Village", {"bread": 20.0, "vegetables": 20.0}, 35.0, 80.0),
-		_settlement("townD", Vector2i(13, 6), "Town D", "Town", {"bread": 25.0, "vegetables": 30.0, "milk": 25.0}, 45.0, 85.0),
-		_settlement("cityE", Vector2i(15, 9), "City E", "City (late objective)", {"milk": 30.0, "seafood": 25.0, "vegetables": 35.0}, 55.0, 90.0),
+		# Size on the map and appetite on the ledger go together (DEV-02,
+		# DEV-04): a Village is 1x1 and may hold 2 demand lines, a Town 2x1
+		# and 4, a City 2x2 and 5. City E holds ALL FIVE foods -- with only
+		# five in the game that is what "the late objective" can mean.
+		_settlement("villageA", Vector2i(6, 3), "Village A", "Village", GameEnums.SettlementType.VILLAGE,
+			{"bread": 20.0, "grain": 20.0}, 35.0, 80.0, Vector2i.ONE),
+		_settlement("villageB", Vector2i(6, 10), "Village B", "Village", GameEnums.SettlementType.VILLAGE,
+			{"vegetables": 25.0, "grain": 15.0}, 35.0, 80.0, Vector2i.ONE),
+		_settlement("villageC", Vector2i(13, 3), "Village C", "Village", GameEnums.SettlementType.VILLAGE,
+			{"bread": 20.0, "vegetables": 20.0}, 35.0, 80.0, Vector2i.ONE),
+		_settlement("townD", Vector2i(12, 6), "Town D", "Town", GameEnums.SettlementType.TOWN,
+			{"bread": 25.0, "vegetables": 30.0, "milk": 25.0, "grain": 20.0}, 45.0, 85.0, Vector2i(2, 1)),
+		_settlement("cityE", Vector2i(14, 9), "City E", "City (late objective)", GameEnums.SettlementType.CITY,
+			{"milk": 30.0, "seafood": 25.0, "vegetables": 35.0, "grain": 30.0, "bread": 30.0}, 55.0, 90.0, Vector2i(2, 2)),
 	]
+
+	# The lines the map opens with (DEV-01). Everything after them is chosen by
+	# the player from the offers a filled order puts on the table, so this is
+	# the only progression the map authors. Three, because one is solved by a
+	# single short road and teaches only the drag gesture; these are the three
+	# easiest on the board, so the opening still ramps gently while giving the
+	# player something to weigh from the first minute.
+	map.opening_lines = [
+		{"node_id": "villageA", "food_id": "grain"},    # 4 steps from the Farm
+		{"node_id": "villageB", "food_id": "grain"},    # same source, second town
+		{"node_id": "villageA", "food_id": "bread"},    # same town, second source
+	]
+
+	var problems := map.validate()
+	for problem in problems:
+		push_error("build_resources: %s" % problem)
 
 	var err := ResourceSaver.save(map, REGION_MAP_OUT)
 	if err != OK:
@@ -75,6 +110,7 @@ func _build_region_map() -> void:
 
 func _source(id: String, pos: Vector2i, display_name: String, produces: Dictionary) -> NodeData:
 	var data := NodeData.new()
+	data.size = Vector2i(2, 1)
 	data.node_id = id
 	data.node_type = GameEnums.NodeType.SOURCE
 	data.grid_position = pos
@@ -82,8 +118,10 @@ func _source(id: String, pos: Vector2i, display_name: String, produces: Dictiona
 	data.produces = produces
 	return data
 
-func _settlement(id: String, pos: Vector2i, display_name: String, kind: String, demand: Dictionary, min_freshness: float, bonus_freshness: float) -> NodeData:
+func _settlement(id: String, pos: Vector2i, display_name: String, kind: String, settlement_type: GameEnums.SettlementType, demand: Dictionary, min_freshness: float, bonus_freshness: float, size := Vector2i.ONE) -> NodeData:
 	var data := NodeData.new()
+	data.size = size
+	data.settlement_type = settlement_type
 	data.node_id = id
 	data.node_type = GameEnums.NodeType.SETTLEMENT
 	data.grid_position = pos

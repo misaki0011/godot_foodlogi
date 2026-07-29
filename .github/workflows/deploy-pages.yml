@@ -36,6 +36,14 @@ jobs:
           mkdir -p build/web
           godot --headless --export-release Web build/web/index.html
 
+      # Every branch deploys to the same Pages URL with the same file names, so
+      # without this a browser or CDN edge holding a previous build's index.pck
+      # runs that build's game code against the new HTML -- the page looks
+      # updated and the game is not. Gives the pck a per-commit URL; the 36 MB
+      # engine wasm is deliberately left cacheable.
+      - name: Cache-bust game data
+        run: python3 tools/cache_bust_web_build.py build/web "${GITHUB_SHA::7}"
+
       - name: Upload review artifact
         uses: actions/upload-artifact@v4
         with:

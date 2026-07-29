@@ -33,11 +33,21 @@ func _report() -> void:
 	var expected_cells: int = map_data.grid_size.x * map_data.grid_size.y
 	print("Terrain cells populated: %d (expected %d for %dx%d)" % [used_cells.size(), expected_cells, map_data.grid_size.x, map_data.grid_size.y])
 	assert(used_cells.size() == expected_cells)
-	print("Node markers spawned: %d (expected %d)" % [markers.get_child_count(), map_data.node_placements.size()])
-	assert(markers.get_child_count() == map_data.node_placements.size())
+	# One marker per occupied CELL, not per node (DEV-02): a 2x1 Town and a
+	# 2x2 City each stand on several tiles, and the markers are what show the
+	# player which tiles those are.
+	var expected_markers := 0
+	for node in map_data.node_placements:
+		expected_markers += node.cells().size()
+	print("Node markers spawned: %d (expected %d for %d nodes)" % [
+		markers.get_child_count(), expected_markers, map_data.node_placements.size(),
+	])
+	assert(markers.get_child_count() == expected_markers)
 	assert(_main.get_node_or_null("GridVisuals") != null)
 	var ui_root: Control = _main.get_node("UILayer/GameUI")
 	assert(ui_root.mouse_filter == Control.MOUSE_FILTER_IGNORE)
+
+	_test_multi_tile_settlement_draws_one_stack(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
 	var farm: NodeData = _node_by_id(map_data, "farm")
@@ -52,7 +62,10 @@ func _report() -> void:
 	_main.call("_set_tool", "route")
 	var state: GameState = _main.get("_state")
 	var starting_balance: float = state.balance
-	var mid_cell: Vector2i = farm.grid_position + Vector2i(1, 0)
+	# Sources stand on 2x1 (DEV-03), so a route leaves from the far end of the
+	# building -- grid_position + (1,0) is the Farm's own second tile.
+	var farm_exit: Vector2i = farm.far_cell()
+	var mid_cell: Vector2i = farm_exit + Vector2i(1, 0)
 	_main.call("_handle_click", mid_cell)
 	assert(state.grid.is_empty(), "A plain tap on empty ground must never place a tile")
 	assert(is_equal_approx(state.balance, starting_balance), "A plain tap must never charge the player")
@@ -60,7 +73,7 @@ func _report() -> void:
 	# A drag that stops short of a hub or a settlement is invalid and builds
 	# nothing at all (v0.5 item 19) -- even though the anchor (farm, a source)
 	# is perfectly valid, farm -> mid_cell alone doesn't reach a hub/settlement.
-	var short_path: Array[Vector2i] = [farm.grid_position, mid_cell]
+	var short_path: Array[Vector2i] = [farm_exit, mid_cell]
 	_main.set("_drag_path", short_path)
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag that doesn't end at a hub or a settlement must be invalid")
@@ -72,16 +85,16 @@ func _report() -> void:
 	# builds every empty cell it crosses as a new route tile AND records an
 	# explicit connection for every consecutive pair, including the final
 	# tile-to-node link -- mere adjacency is never enough (see GameState.connections).
-	var second_cell: Vector2i = farm.grid_position + Vector2i(2, 0)
-	var third_cell: Vector2i = Vector2i(village_a.grid_position.x, farm.grid_position.y)
-	var full_path: Array[Vector2i] = [farm.grid_position, mid_cell, second_cell, third_cell, village_a.grid_position]
+	var second_cell: Vector2i = farm_exit + Vector2i(2, 0)
+	var third_cell: Vector2i = Vector2i(village_a.grid_position.x, farm_exit.y)
+	var full_path: Array[Vector2i] = [farm_exit, mid_cell, second_cell, third_cell, village_a.grid_position]
 	_main.set("_drag_path", full_path)
 	_main.call("_recompute_drag_validity")
 	assert(_main.get("_drag_valid"), "A drag that ends at a settlement must be valid")
 	_main.call("_commit_drag")
 	assert(state.grid.size() == 3, "A drag from source to settlement must place exactly the 3 empty tiles it crosses")
 	assert(state.grid[mid_cell].kind == "route")
-	assert(state.has_connection(farm.grid_position, mid_cell), "Dragging from a node must record an explicit connection to the new tile")
+	assert(state.has_connection(farm_exit, mid_cell), "Dragging from a node must record an explicit connection to the new tile")
 	assert(state.has_connection(third_cell, village_a.grid_position), "Dragging onto a settlement must record an explicit connection to it")
 	assert(is_equal_approx(state.balance, starting_balance - 3 * GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted for each new tile")
 
@@ -118,7 +131,7 @@ func _report() -> void:
 	# A new route can never cross or reuse an already-built tile in its
 	# interior (v0.5 item 20) -- even though mid_cell is a perfectly real,
 	# already-built route tile, a fresh drag can't pass through it partway.
-	var reuse_path: Array[Vector2i] = [farm.grid_position, mid_cell, village_a.grid_position]
+	var reuse_path: Array[Vector2i] = [farm_exit, mid_cell, village_a.grid_position]
 	_main.set("_drag_path", reuse_path)
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag that crosses an already-built tile in its interior must be invalid")
@@ -229,6 +242,9 @@ func _report() -> void:
 		var item_name: String = terrain.mesh_library.get_item_name(item_id)
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
+	# Last, because it spends the treasury and permanently doubles the
+	# Garden: everything above still expects the map it started with.
+	_test_source_upgrade()
 	print("verify_main checks passed.")
 
 ## ROUTE-16: every route tile is attributed to the source(s) its network is
@@ -590,6 +606,72 @@ func _check_day_cycle(state: GameState) -> void:
 	state.day_time_left = GameBalance.DAY_LENGTH_SEC * 0.5
 	assert(is_equal_approx(_main.call("_day_phase"), 0.5), "Half the clock left means half the day gone")
 	print("Day cycle lighting (LOOP-08) checks passed.")
+
+## A multi-tile settlement speaks once, not once per tile (DEV-02).
+##
+## The bubble renderer used to walk Main._nodes_by_pos, which holds an entry
+## per OCCUPIED CELL -- so the moment City E became 2x2 that loop would have
+## drawn its whole stack four times, stacked exactly on top of itself. It is
+## invisible in a screenshot and doubles the bubble count on the busiest node
+## on the map, so it gets a check rather than an eyeball.
+func _test_multi_tile_settlement_draws_one_stack(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	assert(city.cells().size() == 4, "This check is only meaningful while City E is 2x2")
+
+	# Open exactly one order at City E and re-render.
+	state.active_orders[city.node_id] = {"seafood": 1}
+	_main.call("_render_grid")
+
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	var centre: Vector3 = _main.call("_node_center", city)
+	var stacks := 0
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < 1.0:
+			stacks += 1
+	assert(stacks == 1, "A 2x2 City with one open order must draw one bubble, got %d" % stacks)
+
+	state.active_orders.erase(city.node_id)
+	_main.call("_render_grid")
+	print("Multi-tile bubbles (DEV-02): City E draws 1 stack across 4 cells.")
+
+## The Upgrade tool spends money to double a source's output (DEV-03). The
+## footprint does not change -- a source already stands on 2x1 -- so nothing
+## about the map moves.
+func _test_source_upgrade() -> void:
+	var state: GameState = _main.get("_state")
+	var map_data: MapData = _main.get("_map_data")
+	var garden: NodeData = _node_by_id(map_data, "garden")
+	var saved_balance: float = state.balance
+	var footprint := garden.cells()
+	assert(footprint.size() == 2, "A source should stand on 2 tiles, got %d" % footprint.size())
+
+	var supply_before: float = garden.produces.vegetables
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_set_tool", "upgrade")
+	_main.call("_handle_click", garden.grid_position)
+	assert(is_equal_approx(garden.produces.vegetables, supply_before * GameBalance.SOURCE_UPGRADE_SUPPLY_MULT), "Upgrading must double output")
+	assert(is_equal_approx(state.balance, 0.0), "The upgrade must cost SOURCE_UPGRADE_COST")
+	assert(garden.cells() == footprint, "Upgrading must not move or resize a source")
+	assert(not garden.can_upgrade(), "An expanded source must not offer another upgrade")
+
+	# Tapping the source's OTHER cell must work too -- every cell of a
+	# footprint resolves to the same node (DEV-02).
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_handle_click", garden.far_cell())
+	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "A second upgrade must not charge")
+
+	# The Upgrade tool must still refuse a settlement.
+	var village: NodeData = _node_by_id(map_data, "villageA")
+	assert(not village.can_upgrade(), "A settlement is never upgradeable")
+	_main.call("_handle_click", village.grid_position)
+	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "Tapping a settlement with Upgrade must not charge")
+
+	print("Source upgrade (DEV-03): Garden %d -> %d, footprint %s unchanged." % [
+		roundi(supply_before), roundi(garden.produces.vegetables), garden.size,
+	])
+	state.balance = saved_balance
+	_main.call("_set_tool", "route")
 
 ## Screen position of a grid cell's centre, for driving real press/drag
 ## gestures through Main's input entry points.

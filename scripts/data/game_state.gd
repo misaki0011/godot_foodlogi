@@ -18,6 +18,34 @@ var clock_paused := false
 var speed_index := 0
 var day_time_left := GameBalance.DAY_LENGTH_SEC
 
+## ---------- order book (DEV-01) ----------
+## Which demand lines have opened so far: node_id -> {food_id: day_opened}.
+## A settlement's NodeData.demand is what it will EVENTUALLY want; only the
+## lines recorded here are simulated, scored or drawn. Seeded with the map's
+## opening line and extended one at a time by the player accepting an offer,
+## so the region's demand develops instead of landing whole on day 1.
+var active_orders: Dictionary = {}
+
+## Lines the player has ever delivered in full: "node_id|food_id" -> true.
+## Latched -- proving a line once proves it for good, so a later bad day can
+## never un-open an order. Filling a line for the first time is what opens the
+## next one. See OrderBook.
+var filled_lines: Dictionary = {}
+
+## Which kind of growth the next opening prefers: a settlement not yet served
+## (true) or another food for one already being served (false). Strictly
+## alternated, so the region both widens and thickens instead of drifting into
+## a run of one kind. See OrderBook._next_line.
+var next_prefers_expand := true
+
+## The run's opening sequence. The same seed plus the same play replays the
+## same openings, which is what keeps the game reproducible now that nothing
+## else in the simulation is random. 0 means "not seeded yet" --
+## OrderBook.initialize rolls a real one. Set it before initialize() to pin a
+## run (the dev checks do exactly that).
+var run_seed := 0
+var rng_state := 0
+
 var best_score := -INF
 var best_grade := ""
 var score_history: Array[Dictionary] = [] # {day, score, grade, profit}

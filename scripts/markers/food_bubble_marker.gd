@@ -49,10 +49,8 @@ const STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION + 0.1
 const SOURCE_STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION * SOURCE_SCALE + 0.1
 const COLUMN_SPACING := WORLD_WIDTH + 0.1
 
-## Which silhouette bubble_canvas.gd draws. SETTLEMENT_CLEAR is the single
-## summary bubble that replaces a settlement's whole stack once every food
-## it demands is green.
-enum Kind { SOURCE, SETTLEMENT, SETTLEMENT_CLEAR }
+## Which silhouette bubble_canvas.gd draws.
+enum Kind { SOURCE, SETTLEMENT }
 
 ## DEFAULT is a source's plain food-on-beige look; MUTED grays a source
 ## out once it has given away its whole daily produce. RED/AMBER/GREEN are
@@ -81,14 +79,6 @@ func setup_source(food: FoodData, used: float, produced: float, status: Status =
 func setup_settlement(food: FoodData, delivered: float, requested: float, status: Status, freshness_pct: int = -1, bonus_freshness_pct: float = 0.0) -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE
 	_canvas.set_settlement(food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
-	_bake()
-
-## The collapsed stand-in for a settlement whose every demanded food came
-## in full and fresh: there is nothing to act on, so it says so once
-## instead of repeating a green bubble per food.
-func setup_all_clear() -> void:
-	_sprite.pixel_size = BASE_PIXEL_SIZE
-	_canvas.set_all_clear("All fresh")
 	_bake()
 
 func _ratio_text(current: float, max_amount: float) -> String:
