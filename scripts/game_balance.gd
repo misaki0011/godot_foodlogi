@@ -12,6 +12,22 @@ const ROUTE_BASE_UPKEEP := 2.0
 const RIVER_BRIDGE_COST := 40.0
 const HUB_CAP_PER_NETWORK := 2
 
+## How many foods a settlement may ever demand, by type (DEV-04). A budget
+## the map is authored against rather than anything computed at runtime: the
+## order book only ever opens lines that already exist in a settlement's
+## demand, so the cap's job is to keep the map honest -- MapData.validate()
+## rejects a settlement authored past it.
+##
+## A City is 5 rather than the 8 the design first asked for, because there
+## are only five foods in the game and a settlement cannot want the same one
+## twice. City E wanting ALL of them is the real late-game objective; 8 would
+## be an unreachable number written down.
+const DEMAND_CAP := {
+	GameEnums.SettlementType.VILLAGE: 2,
+	GameEnums.SettlementType.TOWN: 4,
+	GameEnums.SettlementType.CITY: 5,
+}
+
 ## Source upgrade (DEV-03). A one-off purchase that doubles a source's daily
 ## output and widens it to 2x1 on the map -- capital, not a subscription, so
 ## it carries no upkeep: a per-day charge on a source would bleed the player

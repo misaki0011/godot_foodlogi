@@ -33,8 +33,14 @@ extends Resource
 @export var upgraded: bool = false
 
 @export var display_name: String
-## Settlement-only descriptive label, e.g. "Village", "Town", "City (late objective)".
+## Settlement-only descriptive label, e.g. "Village", "Town", "City (late
+## objective)". Display only -- rules key off `settlement_type`, because a
+## free-text label is no basis for a cap.
 @export var kind: String = ""
+## Settlement-only (DEV-04): how many demand lines this place may ever hold,
+## via GameBalance.DEMAND_CAP. Authored alongside `size`, which it matches in
+## spirit: a City is bigger on the map and hungrier on the ledger.
+@export var settlement_type: GameEnums.SettlementType = GameEnums.SettlementType.VILLAGE
 ## Source-only: food_id -> daily supply.
 @export var produces: Dictionary = {}
 ## Settlement-only: food_id -> daily demand, asked for in full every day.
@@ -77,3 +83,9 @@ func grid_distance_to(other: NodeData) -> int:
 ## can be expanded exactly once; settlements never can.
 func can_upgrade() -> bool:
 	return node_type == GameEnums.NodeType.SOURCE and not upgraded
+
+## How many demand lines this settlement may hold (DEV-04). Sources have none.
+func demand_cap() -> int:
+	if node_type != GameEnums.NodeType.SETTLEMENT:
+		return 0
+	return GameBalance.DEMAND_CAP.get(settlement_type, 0)

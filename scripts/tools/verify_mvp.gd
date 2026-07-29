@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_map_is_sound()
 	_test_multi_tile_nodes()
 	_test_sources_are_two_tiles()
+	_test_demand_caps()
 	_test_source_upgrade_doubles_supply()
 	_test_delivery_reaches_any_footprint_cell()
 	_test_days_alone_open_nothing()
@@ -388,11 +389,26 @@ func _test_growth_alternates() -> void:
 		"Filling everything repeatedly must eventually open every line, got %d of %d" % [
 			_open_line_count(state, map), map.demand_lines().size(),
 		])
-	var deepens := kinds.count("deepen")
-	var expands := kinds.count("expand")
-	assert(absi(deepens - expands) <= 2,
-		"Growth must stay balanced between deepen and expand, got %d/%d" % [deepens, expands])
-	print("Growth over a full run: %d deepen, %d expand." % [deepens, expands])
+	# Balance is not the invariant -- there are only five settlements and
+	# fifteen lines, so once every place is served every remaining opening
+	# MUST be a deepen. What matters is that the region widens EARLY rather
+	# than pouring everything into one town first, which is what alternation
+	# buys. Every settlement that is not in the opening should be reached
+	# within the first few openings.
+	var expands_early := 0
+	for i in mini(4, kinds.size()):
+		if kinds[i] == "expand":
+			expands_early += 1
+	assert(expands_early >= 2,
+		"The region must widen early: only %d of the first 4 openings were expands (%s)" % [expands_early, kinds])
+	var serving := 0
+	for node in map.node_placements:
+		if node.node_type == GameEnums.NodeType.SETTLEMENT and OrderBook.has_active_orders(state, node):
+			serving += 1
+	assert(serving == 5, "Every settlement should end up taking orders, got %d" % serving)
+	print("Growth over a full run: %d deepen, %d expand, all %d settlements served." % [
+		kinds.count("deepen"), kinds.count("expand"), serving,
+	])
 
 ## Nothing the player has to press. An order opens itself the moment a
 ## delivery earns it -- there is no pending state to sit unnoticed.
@@ -491,6 +507,38 @@ func _test_source_upgrade_doubles_supply() -> void:
 	assert(garden.produces.vegetables >= demanded,
 		"An upgraded Garden should cover the region's %.0f vegetables, supplies %.0f" % [demanded, garden.produces.vegetables])
 	print("Garden upgrade: %.0f -> %.0f vegetables against %.0f demanded." % [before, garden.produces.vegetables, demanded])
+
+## Demand caps by settlement type (DEV-04). Nothing enforces them at runtime,
+## so validate() is the only thing keeping the map honest.
+func _test_demand_caps() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	assert(map.validate().is_empty(), "The shipped map must be within its demand caps")
+
+	var expected := {
+		"villageA": [GameEnums.SettlementType.VILLAGE, 2],
+		"villageB": [GameEnums.SettlementType.VILLAGE, 2],
+		"villageC": [GameEnums.SettlementType.VILLAGE, 2],
+		"townD": [GameEnums.SettlementType.TOWN, 4],
+		"cityE": [GameEnums.SettlementType.CITY, 5],
+	}
+	for node_id in expected:
+		var settlement := _node(map, node_id)
+		assert(settlement.settlement_type == expected[node_id][0], "%s has the wrong settlement type" % node_id)
+		assert(settlement.demand_cap() == expected[node_id][1],
+			"%s should cap at %d, got %d" % [node_id, expected[node_id][1], settlement.demand_cap()])
+		assert(settlement.demand.size() <= settlement.demand_cap(),
+			"%s holds %d lines over a cap of %d" % [node_id, settlement.demand.size(), settlement.demand_cap()])
+
+	# City E is the late objective, which with five foods in the game means
+	# it wants all of them.
+	assert(_node(map, "cityE").demand.size() == 5, "City E should demand every food")
+	assert(_node(map, "townD").demand.size() == 4, "Town D should be at its Town cap of 4")
+
+	# And validate() must actually bite.
+	var over: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	_node(over, "villageA").demand["milk"] = 10.0
+	assert(not over.validate().is_empty(), "A Village authored past its cap must be reported")
+	print("Demand caps: %d lines total across 5 settlements." % map.demand_lines().size())
 
 ## A delivery may leave from any cell of its source and arrive at any cell of
 ## its destination -- otherwise a 2x2 City's reachability would depend on

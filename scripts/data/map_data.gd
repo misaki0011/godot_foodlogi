@@ -106,6 +106,15 @@ func validate() -> Array[String]:
 		for food_id in settlement.demand:
 			if is_inf(difficulty_of(settlement, food_id)):
 				problems.append("%s demands '%s' but no source produces it" % [node_id, food_id])
+		# The demand budget for this settlement's type (DEV-04). Nothing
+		# enforces it at runtime -- the order book only opens lines that are
+		# already authored -- so this is the only thing keeping a Village
+		# from being written with a City's appetite.
+		var cap := settlement.demand_cap()
+		if settlement.demand.size() > cap:
+			problems.append("%s is a %s and may hold %d demand lines, but %d are authored" % [
+				node_id, GameEnums.SettlementType.keys()[settlement.settlement_type], cap, settlement.demand.size(),
+			])
 
 	# Footprints (DEV-02) must stay on the map and must not overlap: two nodes
 	# sharing a cell would make Main._nodes_by_pos resolve that cell to

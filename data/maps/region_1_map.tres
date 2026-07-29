@@ -103,8 +103,10 @@ grid_position = Vector2i(12, 6)
 size = Vector2i(2, 1)
 display_name = "Town D"
 kind = "Town"
+settlement_type = 1
 demand = {
 "bread": 25.0,
+"grain": 20.0,
 "milk": 25.0,
 "vegetables": 30.0
 }
@@ -119,7 +121,10 @@ grid_position = Vector2i(14, 9)
 size = Vector2i(2, 2)
 display_name = "City E"
 kind = "City (late objective)"
+settlement_type = 2
 demand = {
+"bread": 30.0,
+"grain": 30.0,
 "milk": 30.0,
 "seafood": 25.0,
 "vegetables": 35.0
