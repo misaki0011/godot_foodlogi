@@ -20,22 +20,17 @@ extends Resource
 ## or it will process a City four times.
 @export var size: Vector2i = Vector2i.ONE
 
-## Source-only (DEV-03): the footprint this source takes once upgraded, and
-## the cell that footprint is anchored at. A zero size means "cannot be
-## upgraded".
+## Source-only (DEV-03): whether this source has been expanded, doubling its
+## daily output. Authored false and set at runtime on Main's private copy of
+## the map.
 ##
-## The origin is authored rather than derived because a source has to be able
-## to grow in a chosen direction: every one of them expands AWAY from the
-## middle of the map, so the reserved ground never sits on the obvious road
-## between that source and its customers. Expanding blindly east would put
-## Farm's reserved cell squarely on the lane to Village A.
-##
-## The cells the upgrade would add are reserved from day 1 and permanently
-## unbuildable -- see Main._reserved_by_cell. That is deliberately not a
-## "keep it clear or lose the upgrade" rule: a player who paved it on day 2
-## and found out on day 20 would have no way back.
-@export var upgraded_origin: Vector2i = Vector2i.ZERO
-@export var upgraded_size: Vector2i = Vector2i.ZERO
+## The upgrade does NOT change the footprint. Sources stand on their full 2x1
+## from day 1, so the second tile is simply part of the source rather than
+## ground held back for it. Reserving a cell and drawing it as a ghost was
+## tried first and read as a strange empty square nobody could identify --
+## land the player cannot use is much clearer when it is visibly the building
+## itself.
+@export var upgraded: bool = false
 
 @export var display_name: String
 ## Settlement-only descriptive label, e.g. "Village", "Town", "City (late objective)".
@@ -78,28 +73,7 @@ func grid_distance_to(other: NodeData) -> int:
 			best = mini(best, absi(a.x - b.x) + absi(a.y - b.y))
 	return best
 
-## Whether this node still has an upgrade available (DEV-03).
+## Whether this node still has an upgrade available (DEV-03). Every source
+## can be expanded exactly once; settlements never can.
 func can_upgrade() -> bool:
-	return upgraded_size.x > 0 and upgraded_size.y > 0 and (upgraded_size != size or upgraded_origin != grid_position)
-
-## The footprint this node would occupy after upgrading.
-func upgraded_cells() -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
-	if upgraded_size.x <= 0 or upgraded_size.y <= 0:
-		return out
-	for dx in upgraded_size.x:
-		for dy in upgraded_size.y:
-			out.append(upgraded_origin + Vector2i(dx, dy))
-	return out
-
-## The ground held for this node's upgrade: the cells it would gain, which it
-## does not stand on yet. Permanently unbuildable, so the upgrade can never be
-## locked out by the player's own road.
-func reserved_cells() -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
-	if not can_upgrade():
-		return out
-	for cell in upgraded_cells():
-		if not occupies(cell):
-			out.append(cell)
-	return out
+	return node_type == GameEnums.NodeType.SOURCE and not upgraded

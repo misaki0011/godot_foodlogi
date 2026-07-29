@@ -17,7 +17,7 @@ func _initialize() -> void:
 	_test_bridge_deck_costs_extra_freshness()
 	_test_map_is_sound()
 	_test_multi_tile_nodes()
-	_test_source_upgrade_reservations()
+	_test_sources_are_two_tiles()
 	_test_source_upgrade_doubles_supply()
 	_test_delivery_reaches_any_footprint_cell()
 	_test_days_alone_open_nothing()
@@ -437,54 +437,47 @@ func _test_multi_tile_nodes() -> void:
 	assert(harbor.grid_distance_to(city) == 3,
 		"Harbor (18,9) to City E's nearest cell (15,9) is 3 tiles, got %d" % harbor.grid_distance_to(city))
 
-## Reserved upgrade ground (DEV-03) has to be real, legal, and clear of
-## everything else -- a reservation that overlaps a node or runs off the map
-## would block a cell for growth that can never happen.
-func _test_source_upgrade_reservations() -> void:
+## Every source stands on 2x1 from the start (DEV-03), and is anchored so the
+## wider building costs the player no distance -- the cell nearest its
+## customers is the one it always had.
+func _test_sources_are_two_tiles() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
-	assert(map.validate().is_empty(), "The shipped map's reservations must be legal")
-
-	var occupied := {}
-	for node in map.node_placements:
-		for cell in node.cells():
-			occupied[cell] = node.node_id
-
-	var reserved_total := 0
+	assert(map.validate().is_empty(), "The shipped map must be legal")
 	for node in map.node_placements:
 		if node.node_type != GameEnums.NodeType.SOURCE:
-			assert(not node.can_upgrade(), "%s is not a source and must not upgrade" % node.node_id)
 			continue
-		assert(node.can_upgrade(), "Every source should be upgradeable, %s is not" % node.node_id)
-		var reserved := node.reserved_cells()
-		assert(reserved.size() == 1, "A 1x1 source widening to 2x1 reserves one cell, %s reserves %d" % [node.node_id, reserved.size()])
-		for cell in reserved:
-			assert(not occupied.has(cell), "%s reserves %s, which %s stands on" % [node.node_id, cell, occupied.get(cell)])
-			assert(cell.x >= 0 and cell.y >= 0 and cell.x < map.grid_size.x and cell.y < map.grid_size.y,
-				"%s reserves %s, off the map" % [node.node_id, cell])
-		reserved_total += reserved.size()
-	print("Reserved upgrade ground: %d cells across %d sources." % [reserved_total, 5])
+		assert(node.size == Vector2i(2, 1), "%s should be 2x1, got %s" % [node.node_id, node.size])
+		assert(node.cells().size() == 2)
+		assert(node.can_upgrade(), "Every source starts un-upgraded")
 
-	# validate() must catch a reservation that lands on another node.
-	var clash: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
-	var farm := _node(clash, "farm")
-	farm.upgraded_origin = _node(clash, "villageA").grid_position
-	assert(not clash.validate().is_empty(), "A reservation overlapping another node must be reported")
+	# The distances the difficulty ranking is built on are unchanged by the
+	# wider footprints: each source's nearest cell to its customers is where
+	# it always stood. The Garden is the one exception -- it had to extend
+	# east to keep its bubble on screen, which brings vegetables a tile
+	# closer to everyone (8 -> 7 here).
+	var expected := {
+		"farm|villageA": 4, "garden|villageB": 7, "bakery|villageA": 11,
+		"dairy|townD": 6, "harbor|cityE": 3,
+	}
+	for key in expected:
+		var parts: PackedStringArray = key.split("|")
+		var got: int = _node(map, parts[0]).grid_distance_to(_node(map, parts[1]))
+		assert(got == expected[key], "%s should stay %d tiles apart, got %d" % [key, expected[key], got])
+	print("Sources: all 2x1, customer distances unchanged.")
 
-## Upgrading widens the footprint onto the reserved ground and doubles output.
+## Upgrading doubles output. The footprint does not change -- a source is
+## already 2x1 -- so the only thing it costs is money.
 func _test_source_upgrade_doubles_supply() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
 	var garden := _node(map, "garden")
 	var before: float = garden.produces.vegetables
-	var reserved := garden.reserved_cells()
-	assert(reserved.size() == 1)
+	var footprint := garden.cells()
 
-	garden.grid_position = garden.upgraded_origin
-	garden.size = garden.upgraded_size
+	garden.upgraded = true
 	garden.produces.vegetables *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
 
-	assert(garden.cells().size() == 2, "An upgraded source stands on 2 cells")
-	assert(garden.occupies(reserved[0]), "The upgraded footprint must cover the ground it reserved")
-	assert(not garden.can_upgrade(), "A fully expanded source must not offer another upgrade")
+	assert(garden.cells() == footprint, "Upgrading must not move or resize a source")
+	assert(not garden.can_upgrade(), "An expanded source must not offer another upgrade")
 	assert(is_equal_approx(garden.produces.vegetables, before * 2.0),
 		"Upgrading must double output, got %.0f from %.0f" % [garden.produces.vegetables, before])
 

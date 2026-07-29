@@ -54,16 +54,21 @@ func _build_region_map() -> void:
 	map.grid_size = GameBalance.GRID_SIZE
 	map.river_col = GameBalance.RIVER_COL
 	map.node_placements = [
-		# Each source can be upgraded once to 2x1 (DEV-03). The direction is
-		# authored so the reserved ground sits AWAY from the map's interior,
-		# off the obvious lane between that source and its customers --
-		# expanding blindly east would put Farm's reserved cell squarely on
-		# the road to Village A.
-		_source("farm", Vector2i(3, 4), "Farm", {"grain": 80.0}, Vector2i(2, 4)),
-		_source("garden", Vector2i(2, 6), "Garden", {"vegetables": 90.0}, Vector2i(1, 6)),
-		_source("bakery", Vector2i(3, 9), "Bakery", {"bread": 80.0}, Vector2i(2, 9)),
-		_source("dairy", Vector2i(17, 4), "Dairy", {"milk": 75.0}, Vector2i(17, 4)),
-		_source("harbor", Vector2i(17, 9), "Harbor", {"seafood": 55.0}, Vector2i(17, 9)),
+		# Every source stands on 2x1 from the start (DEV-03), anchored so the
+		# footprint extends AWAY from the middle of the map -- that keeps the
+		# cell nearest each source's customers where it always was, so the
+		# wider buildings cost the player no distance.
+		#
+		# The Garden is the exception: extending it west put it on column 1,
+		# where its speech bubble ran off the left edge of the view (TERR-02
+		# keeps sources two tiles clear of the border for exactly this). It
+		# extends east instead, which brings vegetables one tile closer to
+		# every customer.
+		_source("farm", Vector2i(2, 4), "Farm", {"grain": 80.0}),
+		_source("garden", Vector2i(2, 6), "Garden", {"vegetables": 90.0}),
+		_source("bakery", Vector2i(2, 9), "Bakery", {"bread": 80.0}),
+		_source("dairy", Vector2i(17, 4), "Dairy", {"milk": 75.0}),
+		_source("harbor", Vector2i(17, 9), "Harbor", {"seafood": 55.0}),
 
 		_settlement("villageA", Vector2i(6, 3), "Village A", "Village", {"bread": 20.0, "grain": 20.0}, 35.0, 80.0),
 		_settlement("villageB", Vector2i(6, 10), "Village B", "Village", {"vegetables": 25.0, "grain": 15.0}, 35.0, 80.0),
@@ -97,11 +102,9 @@ func _build_region_map() -> void:
 	else:
 		print("build_resources: saved region_1_map.tres with %d node placements" % map.node_placements.size())
 
-func _source(id: String, pos: Vector2i, display_name: String, produces: Dictionary, upgraded_origin := Vector2i.ZERO) -> NodeData:
+func _source(id: String, pos: Vector2i, display_name: String, produces: Dictionary) -> NodeData:
 	var data := NodeData.new()
-	if upgraded_origin != Vector2i.ZERO:
-		data.upgraded_origin = upgraded_origin
-		data.upgraded_size = Vector2i(2, 1)
+	data.size = Vector2i(2, 1)
 	data.node_id = id
 	data.node_type = GameEnums.NodeType.SOURCE
 	data.grid_position = pos

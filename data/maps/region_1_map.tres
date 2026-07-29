@@ -6,10 +6,9 @@
 [sub_resource type="Resource" id="Resource_vxexi"]
 script = ExtResource("1_ycuoh")
 node_id = "farm"
-grid_position = Vector2i(3, 2)
+grid_position = Vector2i(2, 2)
+size = Vector2i(2, 1)
 display_name = "Farm"
-upgraded_origin = Vector2i(2, 2)
-upgraded_size = Vector2i(2, 1)
 produces = {
 "grain": 80.0
 }
@@ -18,9 +17,8 @@ produces = {
 script = ExtResource("1_ycuoh")
 node_id = "garden"
 grid_position = Vector2i(2, 6)
+size = Vector2i(2, 1)
 display_name = "Garden"
-upgraded_origin = Vector2i(1, 6)
-upgraded_size = Vector2i(2, 1)
 produces = {
 "vegetables": 90.0
 }
@@ -28,10 +26,9 @@ produces = {
 [sub_resource type="Resource" id="Resource_d5ptm"]
 script = ExtResource("1_ycuoh")
 node_id = "bakery"
-grid_position = Vector2i(3, 11)
+grid_position = Vector2i(2, 11)
+size = Vector2i(2, 1)
 display_name = "Bakery"
-upgraded_origin = Vector2i(2, 11)
-upgraded_size = Vector2i(2, 1)
 produces = {
 "bread": 80.0
 }
@@ -40,9 +37,8 @@ produces = {
 script = ExtResource("1_ycuoh")
 node_id = "dairy"
 grid_position = Vector2i(17, 4)
+size = Vector2i(2, 1)
 display_name = "Dairy"
-upgraded_origin = Vector2i(17, 4)
-upgraded_size = Vector2i(2, 1)
 produces = {
 "milk": 75.0
 }
@@ -51,9 +47,8 @@ produces = {
 script = ExtResource("1_ycuoh")
 node_id = "harbor"
 grid_position = Vector2i(18, 9)
+size = Vector2i(2, 1)
 display_name = "Harbor"
-upgraded_origin = Vector2i(18, 9)
-upgraded_size = Vector2i(2, 1)
 produces = {
 "seafood": 55.0
 }
