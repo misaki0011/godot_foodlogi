@@ -240,7 +240,14 @@ func _ready() -> void:
 	_map_data = load(REGION_MAP_PATH)
 	_state.balance = GameBalance.STARTING_FUNDS
 	for node in _map_data.node_placements:
-		_nodes_by_pos[node.grid_position] = node
+		# One entry per occupied cell (DEV-02). Everything that asks "is there
+		# a node at this cell" -- hit-testing, build guards, the established
+		# route overlay, the engine's never-transit-a-node rule -- resolves
+		# through here, so a multi-tile node needs no special case anywhere
+		# that works in cells. Anything that iterates NODES must iterate
+		# _nodes_by_id instead, or a 2x2 City gets processed four times.
+		for cell in node.cells():
+			_nodes_by_pos[cell] = node
 		_nodes_by_id[node.node_id] = node
 	# Seeds the demand lines the map opens with (DEV-01). Must run before the
 	# first _render_grid, since it decides which bubbles exist at all.
@@ -1414,8 +1421,8 @@ func _shared_source_ids(a: Array, b: Array) -> Array:
 ## other is a dead stub, and the overlay has to show exactly that.
 func _established_sources_by_vertex() -> Dictionary:
 	var result := {}
-	for pos in _nodes_by_pos:
-		var node: NodeData = _nodes_by_pos[pos]
+	for node_id in _nodes_by_id:
+		var node: NodeData = _nodes_by_id[node_id]
 		if node.node_type != GameEnums.NodeType.SOURCE:
 			continue
 		for v in SimulationEngine.established_route_vertices(_state, _nodes_by_pos, node.node_id):
@@ -1440,18 +1447,30 @@ func _established_route_cells() -> Dictionary:
 ## settlements are speech balloons (bubble_canvas.gd).
 func _render_supply_bubbles() -> void:
 	var foods := GameBalance.food_types()
-	for pos in _nodes_by_pos:
-		var n: NodeData = _nodes_by_pos[pos]
+	# By node, not by cell: iterating _nodes_by_pos would draw a 2x1 Town's
+	# bubbles twice and a 2x2 City's four times, stacked on top of each other
+	# (DEV-02).
+	for node_id in _nodes_by_id:
+		var n: NodeData = _nodes_by_id[node_id]
 		if n.node_type == GameEnums.NodeType.SOURCE:
-			_render_source_bubbles(n, pos, foods)
+			_render_source_bubbles(n, foods)
 		elif n.node_type == GameEnums.NodeType.SETTLEMENT:
-			_render_settlement_bubbles(n, pos, foods)
+			_render_settlement_bubbles(n, foods)
 
-func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+## Where a node's bubbles and marker anchor: the middle of its whole
+## footprint, so a 2x2 City speaks from its centre rather than from the corner
+## cell the map author happened to write down.
+func _node_center(n: NodeData) -> Vector3:
+	var near: Vector3 = _terrain.map_to_local(Vector3i(n.grid_position.x, 0, n.grid_position.y))
+	var far_cell := n.far_cell()
+	var far: Vector3 = _terrain.map_to_local(Vector3i(far_cell.x, 0, far_cell.y))
+	return (near + far) * 0.5
+
+func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
 	# The source's crate model is shorter than the settlement pin, so its
 	# bubble sits a little lower than the settlement stack's start height.
-	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 2.5, 0)
+	var base_pos: Vector3 = _node_center(n) + Vector3(0, 2.5, 0)
 	var stack := 0
 	for food_id in n.produces:
 		var produced: float = n.produces[food_id]
@@ -1484,13 +1503,13 @@ func _render_source_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> vo
 ## orders opening one at a time (DEV-01) the stacks it was decluttering are
 ## rare now anyway. Green bubbles already recede on their own: they wash
 ## lighter and outline thinner than amber and red (bubble_canvas.gd).
-func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -> void:
+func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status = _state.last_settlement_status.get(n.node_id, {})
 	# NodeMarker puts the settlement pin's head at +2.1 (node_spawner.gd's
 	# +1.0 root offset plus node_marker_base.tscn's local offset), so start
 	# above it -- otherwise this billboard sits inside the pin head and the
 	# two fuse into an unreadable blob.
-	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
+	var base_pos: Vector3 = _node_center(n) + Vector3(0, 3.1, 0)
 
 	var entries: Array = []
 	# Only the orders that have actually opened (DEV-01). A settlement with

@@ -23,8 +23,15 @@ func spawn(map_data: MapData, gridmap: GridMap) -> void:
 		if scene == null:
 			push_warning("NodeSpawner: no marker scene for node_type %s" % node_data.node_type)
 			continue
-		var marker: NodeMarker = scene.instantiate()
-		add_child(marker)
-		var cell := Vector3i(node_data.grid_position.x, 0, node_data.grid_position.y)
-		marker.position = gridmap.map_to_local(cell) + Vector3(0, 1.0, 0)
-		marker.setup(node_data, MarkerColors.node_color(node_data))
+		# One marker per occupied cell (DEV-02), so a 2x1 Town and a 2x2 City
+		# read as bigger places AND show exactly which tiles they take up --
+		# which the player needs, since those tiles cannot be built on. A
+		# single stretched marker would look like one building while quietly
+		# blocking four cells. Bespoke Town/City meshes are the follow-up;
+		# this is the footprint made honest with the art that exists.
+		for cell_2d in node_data.cells():
+			var marker: NodeMarker = scene.instantiate()
+			add_child(marker)
+			var cell := Vector3i(cell_2d.x, 0, cell_2d.y)
+			marker.position = gridmap.map_to_local(cell) + Vector3(0, 1.0, 0)
+			marker.setup(node_data, MarkerColors.node_color(node_data))

@@ -16,6 +16,8 @@ func _initialize() -> void:
 	_test_bridge_cap_per_network()
 	_test_bridge_deck_costs_extra_freshness()
 	_test_map_is_sound()
+	_test_multi_tile_nodes()
+	_test_delivery_reaches_any_footprint_cell()
 	_test_days_alone_open_nothing()
 	_test_filling_opens_the_next_order()
 	_test_growth_alternates()
@@ -107,11 +109,11 @@ func _test_established_route_cells() -> void:
 	# settlement-to-settlement road (B..C) with no source anywhere on it; and a
 	# source-fed road (from D) that reaches no settlement.
 	var nodes_by_pos := {}
-	nodes_by_pos[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S
-	nodes_by_pos[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # A
-	nodes_by_pos[Vector2i(5, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # B
-	nodes_by_pos[Vector2i(5, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # C
-	nodes_by_pos[Vector2i(8, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # D
+	nodes_by_pos[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE, Vector2i(0, 0))      # S
+	nodes_by_pos[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT, Vector2i(0, 4))  # A
+	nodes_by_pos[Vector2i(5, 0)] = _make_node(GameEnums.NodeType.SETTLEMENT, Vector2i(5, 0))  # B
+	nodes_by_pos[Vector2i(5, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT, Vector2i(5, 4))  # C
+	nodes_by_pos[Vector2i(8, 0)] = _make_node(GameEnums.NodeType.SOURCE, Vector2i(8, 0))      # D
 
 	var state := GameState.new()
 	var s_to_a: Array[Vector2i] = [Vector2i(0, 1), Vector2i(0, 2), Vector2i(0, 3)] # S -> A path
@@ -166,9 +168,9 @@ func _test_delivery_does_not_transit_nodes() -> void:
 	# shortcut), so D is unreachable from S.
 	var grain: FoodData = GameBalance.food_types().grain
 	var nodes := {}
-	nodes[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S
-	nodes[Vector2i(0, 2)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # M, in the middle
-	nodes[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # D, the target
+	nodes[Vector2i(0, 0)] = _make_node(GameEnums.NodeType.SOURCE, Vector2i(0, 0))      # S
+	nodes[Vector2i(0, 2)] = _make_node(GameEnums.NodeType.SETTLEMENT, Vector2i(0, 2))  # M, in the middle
+	nodes[Vector2i(0, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT, Vector2i(0, 4))  # D, the target
 	var state := GameState.new()
 	state.grid[Vector2i(0, 1)] = {"kind": "route", "level": "dirt"}
 	state.grid[Vector2i(0, 3)] = {"kind": "route", "level": "dirt"}
@@ -194,10 +196,10 @@ func _test_bridge_keeps_crossing_routes_separate() -> void:
 	var grain: FoodData = GameBalance.food_types().grain
 	var bridge := Vector2i(2, 2)
 	var nodes := {}
-	nodes[Vector2i(2, 0)] = _make_node(GameEnums.NodeType.SOURCE)      # S, north
-	nodes[Vector2i(2, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # A, south
-	nodes[Vector2i(4, 2)] = _make_node(GameEnums.NodeType.SOURCE)      # E, east
-	nodes[Vector2i(0, 2)] = _make_node(GameEnums.NodeType.SETTLEMENT)  # W, west
+	nodes[Vector2i(2, 0)] = _make_node(GameEnums.NodeType.SOURCE, Vector2i(2, 0))      # S, north
+	nodes[Vector2i(2, 4)] = _make_node(GameEnums.NodeType.SETTLEMENT, Vector2i(2, 4))  # A, south
+	nodes[Vector2i(4, 2)] = _make_node(GameEnums.NodeType.SOURCE, Vector2i(4, 2))      # E, east
+	nodes[Vector2i(0, 2)] = _make_node(GameEnums.NodeType.SETTLEMENT, Vector2i(0, 2))  # W, west
 
 	var state := GameState.new()
 	for cell in [Vector2i(2, 1), Vector2i(2, 3), Vector2i(1, 2), Vector2i(3, 2)]:
@@ -403,6 +405,64 @@ func _test_no_tap_is_needed() -> void:
 			live += OrderBook.active_demand(state, node).size()
 	assert(live == map.opening_lines.size() + 1, "The opened line must be live at once, got %d" % live)
 
+## Multi-tile footprints (DEV-02). The invariant that keeps every cell-based
+## rule in the game working untouched is that a node resolves from ANY of its
+## cells, so this checks the fan-out and the things that depend on it.
+func _test_multi_tile_nodes() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var town := _node(map, "townD")
+	var city := _node(map, "cityE")
+	assert(town.size == Vector2i(2, 1), "Town D should be 2x1, got %s" % town.size)
+	assert(city.size == Vector2i(2, 2), "City E should be 2x2, got %s" % city.size)
+	assert(town.cells().size() == 2 and city.cells().size() == 4)
+	assert(city.occupies(Vector2i(15, 10)), "A City must own its far corner")
+	assert(not city.occupies(Vector2i(16, 10)), "A City must not own the cell past it")
+
+	# validate() catches overlapping and off-map footprints -- either would
+	# make a cell resolve to whichever node was placed last, hiding the other
+	# from every build guard and every path.
+	assert(map.validate().is_empty(), "The shipped map's footprints must be legal")
+	var clash: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	_node(clash, "cityE").grid_position = _node(clash, "townD").grid_position
+	assert(not clash.validate().is_empty(), "Overlapping footprints must be reported")
+	var offmap: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	_node(offmap, "cityE").grid_position = Vector2i(map.grid_size.x - 1, 0)
+	assert(not offmap.validate().is_empty(), "A footprint running off the grid must be reported")
+
+	# Distance is measured footprint to footprint, so a big place is as close
+	# as its nearest cell.
+	var harbor := _node(map, "harbor")
+	assert(harbor.grid_distance_to(city) == 3,
+		"Harbor (18,9) to City E's nearest cell (15,9) is 3 tiles, got %d" % harbor.grid_distance_to(city))
+
+## A delivery may leave from any cell of its source and arrive at any cell of
+## its destination -- otherwise a 2x2 City's reachability would depend on
+## which corner the map author wrote down.
+func _test_delivery_reaches_any_footprint_cell() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var city := _node(map, "cityE")
+	var harbor := _node(map, "harbor")
+	var nodes_by_pos := {}
+	for node in map.node_placements:
+		for cell in node.cells():
+			nodes_by_pos[cell] = node
+
+	var state := GameState.new()
+	# Road from Harbor (18,9) to City E's (15,9) cell.
+	var link: Array[Vector2i] = [Vector2i(17, 9), Vector2i(16, 9)]
+	for cell in link:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.add_connection(harbor.grid_position, link[0])
+	state.add_connection(link[0], link[1])
+	state.add_connection(link[1], Vector2i(15, 9))
+
+	var seafood: FoodData = GameBalance.food_types().seafood
+	var path := SimulationEngine.find_path(state, nodes_by_pos, harbor.grid_position, city.grid_position, seafood)
+	assert(not path.is_empty(), "A road to any City cell must deliver to the City")
+	assert(path[0] == harbor.grid_position, "The path must start at the source")
+	assert(city.occupies(path[-1]), "The path must end on a City cell, got %s" % path[-1])
+	print("Footprint delivery: Harbor -> City E, %d tiles, ends on %s." % [path.size(), path[-1]])
+
 ## An opening must stay near the gentle end of what is left, so the line after
 ## the tutorial can never be City E's vegetables -- a 16-step haul at 2.5
 ## decay into a 90% bonus line, which is a wall.
@@ -535,9 +595,15 @@ func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:
 	for i in range(1, cells.size()):
 		state.add_connection(cells[i - 1], cells[i])
 
-func _make_node(type: GameEnums.NodeType) -> NodeData:
+## A stand-in node for the synthetic layouts above. `pos` must match the cell
+## it is filed under: a NodeData carries its own grid_position and footprint
+## (DEV-02), and find_path derives a delivery's origin and destination cells
+## from those rather than from the dictionary key -- so a fixture whose
+## position disagrees with its key silently reroutes the search.
+func _make_node(type: GameEnums.NodeType, pos: Vector2i) -> NodeData:
 	var n := NodeData.new()
 	n.node_type = type
+	n.grid_position = pos
 	return n
 
 func _node(map: MapData, node_id: String) -> NodeData:

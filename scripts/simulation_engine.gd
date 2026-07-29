@@ -249,12 +249,32 @@ static func network_at_bridge_cap(state: GameState, pos: Vector2i) -> bool:
 ## actually charge, so Dijkstra prefers a short detour over a needless climb.
 ## The returned path is flattened back to tiles, which stays lossless for every
 ## caller: the lane of each step is re-derivable from the step's own direction.
+## A multi-tile node is one place, not several (DEV-02): a delivery may leave
+## from ANY cell of its source's footprint and arrive at ANY cell of the
+## settlement's, so the search is seeded with every origin cell at zero and
+## stops at the first destination cell it reaches. Picking a corner for each
+## would otherwise make a 2x2 City's reachability depend on which corner the
+## map author happened to write down.
 static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vector2i, to_pos: Vector2i, food: FoodData) -> Array[Vector2i]:
-	var start := vertex(from_pos, LANE_GROUND)
-	var dist := {start: 0.0}
+	var from_node: NodeData = nodes_by_pos.get(from_pos)
+	var to_node: NodeData = nodes_by_pos.get(to_pos)
+	var goals := {}
+	if to_node == null:
+		goals[to_pos] = true
+	else:
+		for cell in to_node.cells():
+			goals[cell] = true
+
+	var dist := {}
 	var prev := {}
 	var visited := {}
-	var frontier: Array = [[0.0, start]]
+	var frontier: Array = []
+	var origins: Array[Vector2i] = [from_pos] if from_node == null else from_node.cells()
+	for cell in origins:
+		var v := vertex(cell, LANE_GROUND)
+		dist[v] = 0.0
+		frontier.append([0.0, v])
+
 	var goal := Vector3i(-1, -1, -1)
 	while not frontier.is_empty():
 		frontier.sort_custom(func(a, b): return a[0] < b[0])
@@ -265,13 +285,16 @@ static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vect
 			continue
 		visited[u] = true
 		var u_pos := vertex_pos(u)
-		if u_pos == to_pos:
+		if goals.has(u_pos):
 			goal = u
 			break
 		# A node other than the delivery's own source is an endpoint, not a
 		# through-route: reach it if it's the destination, but never route past
-		# it into its other adjacent roads.
-		if nodes_by_pos.has(u_pos) and u_pos != from_pos:
+		# it into its other adjacent roads. Compared by NODE, not by cell, so
+		# a delivery can still cross between the cells of its own source
+		# without that counting as routing through somebody.
+		var u_node: NodeData = nodes_by_pos.get(u_pos)
+		if u_node != null and u_node != from_node:
 			continue
 		for v in exits(state, u):
 			if visited.has(v):
@@ -290,7 +313,9 @@ static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vect
 	var cur := goal
 	while true:
 		path.append(vertex_pos(cur))
-		if cur == start:
+		# Origin vertices are the ones with no predecessor, which is what
+		# terminates the walk now that a search can have several of them.
+		if not prev.has(cur):
 			break
 		cur = prev[cur]
 	path.reverse()
@@ -373,7 +398,10 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	var sources: Array[NodeData] = []
 	var settlements: Array[NodeData] = []
 	for n in nodes:
-		nodes_by_pos[n.grid_position] = n
+		# One entry per occupied cell (DEV-02), so every "is there a node
+		# here" test in the engine keeps working unchanged on a 2x2 City.
+		for cell in n.cells():
+			nodes_by_pos[cell] = n
 		if n.node_type == GameEnums.NodeType.SOURCE:
 			sources.append(n)
 		else:

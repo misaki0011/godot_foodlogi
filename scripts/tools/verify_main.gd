@@ -33,11 +33,21 @@ func _report() -> void:
 	var expected_cells: int = map_data.grid_size.x * map_data.grid_size.y
 	print("Terrain cells populated: %d (expected %d for %dx%d)" % [used_cells.size(), expected_cells, map_data.grid_size.x, map_data.grid_size.y])
 	assert(used_cells.size() == expected_cells)
-	print("Node markers spawned: %d (expected %d)" % [markers.get_child_count(), map_data.node_placements.size()])
-	assert(markers.get_child_count() == map_data.node_placements.size())
+	# One marker per occupied CELL, not per node (DEV-02): a 2x1 Town and a
+	# 2x2 City each stand on several tiles, and the markers are what show the
+	# player which tiles those are.
+	var expected_markers := 0
+	for node in map_data.node_placements:
+		expected_markers += node.cells().size()
+	print("Node markers spawned: %d (expected %d for %d nodes)" % [
+		markers.get_child_count(), expected_markers, map_data.node_placements.size(),
+	])
+	assert(markers.get_child_count() == expected_markers)
 	assert(_main.get_node_or_null("GridVisuals") != null)
 	var ui_root: Control = _main.get_node("UILayer/GameUI")
 	assert(ui_root.mouse_filter == Control.MOUSE_FILTER_IGNORE)
+
+	_test_multi_tile_settlement_draws_one_stack(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
 	var farm: NodeData = _node_by_id(map_data, "farm")
@@ -590,6 +600,34 @@ func _check_day_cycle(state: GameState) -> void:
 	state.day_time_left = GameBalance.DAY_LENGTH_SEC * 0.5
 	assert(is_equal_approx(_main.call("_day_phase"), 0.5), "Half the clock left means half the day gone")
 	print("Day cycle lighting (LOOP-08) checks passed.")
+
+## A multi-tile settlement speaks once, not once per tile (DEV-02).
+##
+## The bubble renderer used to walk Main._nodes_by_pos, which holds an entry
+## per OCCUPIED CELL -- so the moment City E became 2x2 that loop would have
+## drawn its whole stack four times, stacked exactly on top of itself. It is
+## invisible in a screenshot and doubles the bubble count on the busiest node
+## on the map, so it gets a check rather than an eyeball.
+func _test_multi_tile_settlement_draws_one_stack(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	assert(city.cells().size() == 4, "This check is only meaningful while City E is 2x2")
+
+	# Open exactly one order at City E and re-render.
+	state.active_orders[city.node_id] = {"seafood": 1}
+	_main.call("_render_grid")
+
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	var centre: Vector3 = _main.call("_node_center", city)
+	var stacks := 0
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < 1.0:
+			stacks += 1
+	assert(stacks == 1, "A 2x2 City with one open order must draw one bubble, got %d" % stacks)
+
+	state.active_orders.erase(city.node_id)
+	_main.call("_render_grid")
+	print("Multi-tile bubbles (DEV-02): City E draws 1 stack across 4 cells.")
 
 ## Screen position of a grid cell's centre, for driving real press/drag
 ## gestures through Main's input entry points.

@@ -63,8 +63,11 @@ func _build_region_map() -> void:
 		_settlement("villageA", Vector2i(6, 3), "Village A", "Village", {"bread": 20.0, "grain": 20.0}, 35.0, 80.0),
 		_settlement("villageB", Vector2i(6, 10), "Village B", "Village", {"vegetables": 25.0, "grain": 15.0}, 35.0, 80.0),
 		_settlement("villageC", Vector2i(13, 3), "Village C", "Village", {"bread": 20.0, "vegetables": 20.0}, 35.0, 80.0),
-		_settlement("townD", Vector2i(13, 6), "Town D", "Town", {"bread": 25.0, "vegetables": 30.0, "milk": 25.0}, 45.0, 85.0),
-		_settlement("cityE", Vector2i(15, 9), "City E", "City (late objective)", {"milk": 30.0, "seafood": 25.0, "vegetables": 35.0}, 55.0, 90.0),
+		# Town D is 2x1 and City E is 2x2 (DEV-02): the bigger a place, the
+		# more of the map it takes up, and the fewer tiles are left to route
+		# around it.
+		_settlement("townD", Vector2i(12, 6), "Town D", "Town", {"bread": 25.0, "vegetables": 30.0, "milk": 25.0}, 45.0, 85.0, Vector2i(2, 1)),
+		_settlement("cityE", Vector2i(14, 9), "City E", "City (late objective)", {"milk": 30.0, "seafood": 25.0, "vegetables": 35.0}, 55.0, 90.0, Vector2i(2, 2)),
 	]
 
 	# The lines the map opens with (DEV-01). Everything after them is chosen by
@@ -98,8 +101,9 @@ func _source(id: String, pos: Vector2i, display_name: String, produces: Dictiona
 	data.produces = produces
 	return data
 
-func _settlement(id: String, pos: Vector2i, display_name: String, kind: String, demand: Dictionary, min_freshness: float, bonus_freshness: float) -> NodeData:
+func _settlement(id: String, pos: Vector2i, display_name: String, kind: String, demand: Dictionary, min_freshness: float, bonus_freshness: float, size := Vector2i.ONE) -> NodeData:
 	var data := NodeData.new()
+	data.size = size
 	data.node_id = id
 	data.node_type = GameEnums.NodeType.SETTLEMENT
 	data.grid_position = pos

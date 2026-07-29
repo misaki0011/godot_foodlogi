@@ -61,8 +61,9 @@ func difficulty_of(settlement: NodeData, food_id: String) -> float:
 	var nearest := INF
 	for node in node_placements:
 		if node.node_type == GameEnums.NodeType.SOURCE and node.produces.has(food_id):
-			var delta: Vector2i = node.grid_position - settlement.grid_position
-			nearest = minf(nearest, float(absi(delta.x) + absi(delta.y)))
+			# Footprint to footprint (DEV-02): a 2x2 City is a tile closer to
+			# everything than its top-left corner suggests.
+			nearest = minf(nearest, float(node.grid_distance_to(settlement)))
 	if nearest == INF:
 		# No source makes this food, so the line can never be filled at all.
 		# validate() reports it; rank it hardest so it is never offered.
@@ -105,6 +106,22 @@ func validate() -> Array[String]:
 		for food_id in settlement.demand:
 			if is_inf(difficulty_of(settlement, food_id)):
 				problems.append("%s demands '%s' but no source produces it" % [node_id, food_id])
+
+	# Footprints (DEV-02) must stay on the map and must not overlap: two nodes
+	# sharing a cell would make Main._nodes_by_pos resolve that cell to
+	# whichever was placed last, silently hiding one of them from every build
+	# guard and every path.
+	var owner_of := {}
+	for node in node_placements:
+		if node.size.x < 1 or node.size.y < 1:
+			problems.append("%s has a non-positive size %s" % [node.node_id, node.size])
+			continue
+		for cell in node.cells():
+			if cell.x < 0 or cell.y < 0 or cell.x >= grid_size.x or cell.y >= grid_size.y:
+				problems.append("%s occupies %s, which is off the %s grid" % [node.node_id, cell, grid_size])
+			if owner_of.has(cell):
+				problems.append("%s and %s both occupy %s" % [owner_of[cell], node.node_id, cell])
+			owner_of[cell] = node.node_id
 	return problems
 
 func get_terrain(x: int, _y: int) -> GameEnums.TerrainType:
