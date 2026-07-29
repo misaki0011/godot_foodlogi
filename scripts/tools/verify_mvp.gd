@@ -15,8 +15,12 @@ func _initialize() -> void:
 	_test_bridge_keeps_crossing_routes_separate()
 	_test_bridge_cap_per_network()
 	_test_bridge_deck_costs_extra_freshness()
-	_test_order_schedule_is_sound()
-	_test_orders_open_one_at_a_time()
+	_test_map_is_sound()
+	_test_days_alone_open_nothing()
+	_test_filling_offers_a_choice()
+	_test_accepting_returns_the_other_to_the_pool()
+	_test_offers_stay_within_reach()
+	_test_offers_are_seeded()
 	_test_dormant_settlements_are_not_scored()
 	_test_demand_and_freshness_are_stable()
 	print("MVP simulation checks passed.")
@@ -272,63 +276,161 @@ func _test_bridge_deck_costs_extra_freshness() -> void:
 ## Connects each consecutive pair in `cells` -- mirrors what a real drag
 ## gesture would link, since state.grid[cell] = ... no longer implies
 ## connectivity on its own (v0.5).
-## ---------- gradual demand (DEV-01) ----------
+## ---------- gradual demand: offers (DEV-01) ----------
 
-func _test_order_schedule_is_sound() -> void:
+func _test_map_is_sound() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
 	var problems := map.validate()
 	for problem in problems:
 		push_error("region_1_map: %s" % problem)
-	assert(problems.is_empty(), "region_1_map's order schedule must be internally consistent")
+	assert(problems.is_empty(), "region_1_map must be internally consistent")
 
-	# Every demand line in the region has to open eventually, and the map has
-	# to open with exactly one -- a second opening bubble on day 1 is the
-	# wall this feature removes, in miniature.
+	# The map opens with exactly one order. A second opening bubble is the
+	# day-1 wall this feature exists to remove, in miniature.
 	var state := GameState.new()
 	OrderBook.initialize(state, map)
-	var open_on_day_one := 0
+	var open_lines := 0
 	for node in map.node_placements:
 		if node.node_type == GameEnums.NodeType.SETTLEMENT:
-			open_on_day_one += OrderBook.active_demand(state, node).size()
-	assert(open_on_day_one == 1, "The map must open with a single order, got %d" % open_on_day_one)
-	print("Order schedule: %d lines, %d open on day 1." % [map.order_schedule.size(), open_on_day_one])
+			open_lines += OrderBook.active_demand(state, node).size()
+	assert(open_lines == 1, "The map must open with a single order, got %d" % open_lines)
+	assert(state.offers.is_empty(), "No offer is on the table before anything is filled")
 
-func _test_orders_open_one_at_a_time() -> void:
+	# Difficulty has to rank the region, or the eligibility pool is noise.
+	# Grain at Village A is four steps from the Farm at 0.5 decay; City E's
+	# vegetables are a 16-step haul at 2.5 into a 90% bonus line.
+	var lines := map.demand_lines()
+	lines.sort_custom(func(a, b): return a.difficulty < b.difficulty)
+	assert(lines[0].node_id == "villageA" and lines[0].food_id == "grain",
+		"Village A grain must rank easiest, got %s/%s" % [lines[0].node_id, lines[0].food_id])
+	assert(lines[-1].node_id == "cityE" and lines[-1].food_id == "vegetables",
+		"City E vegetables must rank hardest, got %s/%s" % [lines[-1].node_id, lines[-1].food_id])
+	print("Difficulty ranking: easiest %s/%s (%.1f), hardest %s/%s (%.1f)." % [
+		lines[0].node_id, lines[0].food_id, lines[0].difficulty,
+		lines[-1].node_id, lines[-1].food_id, lines[-1].difficulty,
+	])
+
+## The whole point of the rewrite: the calendar no longer moves progression.
+func _test_days_alone_open_nothing() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")
 	var state := GameState.new()
 	OrderBook.initialize(state, map)
+	# Fifty days pass with nothing delivered -- no roads, no fills.
+	for _day in range(50):
+		state.day += 1
+		OrderBook.record_day(state, map.node_placements)
+		OrderBook.draw_offers(state, map)
+	assert(state.offers.is_empty(), "Idle days must not put an offer on the table")
+	assert(state.pending_draws == 0, "Idle days must not owe a draw")
+	var open_lines := 0
+	for node in map.node_placements:
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			open_lines += OrderBook.active_demand(state, node).size()
+	assert(open_lines == 1, "After 50 idle days the map must still hold only its opening order, got %d" % open_lines)
+	print("50 idle days opened nothing.")
 
-	# A player who is behind gets no new orders, however long they wait: the
-	# schedule's day floor is a floor, not a timer.
-	state.day = 40
-	state.ready_streak = 0
-	assert(OrderBook.open_due_orders(state, map).is_empty(), "A short streak must hold the schedule back")
+func _test_filling_offers_a_choice() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var state := _state_with_villageA_grain_filled(map)
 
-	# Meeting the streak opens exactly one line, and spends the streak, so
-	# the next one is another READY_STREAK good days away.
-	state.ready_streak = OrderBook.READY_STREAK
-	var opened := OrderBook.open_due_orders(state, map)
-	assert(opened.size() == 1, "At most one order may open per rollover, got %d" % opened.size())
-	assert(state.ready_streak == 0, "Earning an order must spend the readiness streak")
-	assert(OrderBook.open_due_orders(state, map).is_empty(), "The next order must wait for a fresh streak")
+	assert(state.pending_draws == 1, "Filling a line must earn exactly one draw")
+	var offers := OrderBook.draw_offers(state, map)
+	assert(offers.size() == 2, "A draw must put two offers on the table, got %d" % offers.size())
+	assert(state.offers.size() == 2)
 
-	# The countdown plaque only appears once the next order is nearly due,
-	# so distant settlements stay bare rather than carrying a grey label.
-	var far := GameState.new()
-	OrderBook.initialize(far, map)
-	far.day = 1
-	far.ready_streak = 0
-	var preview := OrderBook.preview_order(far, map)
-	assert(not preview.is_empty(), "The next order should be previewed once it is within PREVIEW_DAYS")
-	assert(OrderBook.projected_day(far, preview) - far.day <= OrderBook.PREVIEW_DAYS, "A previewed order must be within the preview window")
+	# One deepen (Village A already takes orders), one expand (a settlement
+	# that takes none yet) -- the choice has to be between two different
+	# KINDS of move, not two flavours of the same one.
+	var deepen := 0
+	var expand := 0
+	for offer in offers:
+		if offer.node_id == "villageA":
+			deepen += 1
+		else:
+			expand += 1
+	assert(deepen == 1 and expand == 1, "The pair must be one deepen and one expand, got %d/%d" % [deepen, expand])
 
-	# A bad day resets the streak, which pushes the forecast further out --
-	# the plaque is a forecast, not a promise.
-	var report := DayReportData.new()
-	report.settlement_scores = [{"sat": OrderBook.READY_SAT - 1.0}]
-	far.ready_streak = OrderBook.READY_STREAK
-	OrderBook.record_day(far, report)
-	assert(far.ready_streak == 0, "A settlement below READY_SAT must reset the streak")
+	# Filling again while the player is still deciding queues the draw rather
+	# than crowding the map.
+	state.pending_draws += 1
+	assert(OrderBook.draw_offers(state, map).is_empty(), "A second pair must not deal while one is outstanding")
+	assert(state.offers.size() == 2, "The table still holds exactly one pair")
+
+func _test_accepting_returns_the_other_to_the_pool() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var state := _state_with_villageA_grain_filled(map)
+	var offers := OrderBook.draw_offers(state, map)
+	var taken: Dictionary = offers[0]
+	var passed_over: Dictionary = offers[1]
+
+	assert(OrderBook.accept_offer(state, taken), "Accepting an offer on the table must succeed")
+	assert(state.offers.is_empty(), "Accepting clears the table")
+	assert(state.active_orders.get(taken.node_id, {}).has(taken.food_id), "The accepted line must be open")
+	assert(not state.active_orders.get(passed_over.node_id, {}).has(passed_over.food_id),
+		"The offer not taken must NOT open")
+
+	# The one passed over is not gone -- with only twelve lines on the map,
+	# discarding one per choice would mean a run never sees half its content.
+	var pool := OrderBook.eligible_lines(state, map)
+	var found := false
+	for line in pool:
+		if line.node_id == passed_over.node_id and line.food_id == passed_over.food_id:
+			found = true
+	assert(found, "The offer not taken must return to the pool")
+
+	assert(not OrderBook.accept_offer(state, passed_over), "An offer no longer on the table cannot be accepted")
+
+## Offers must stay near the gentle end of what is left, so a first choice can
+## never be City E's vegetables -- a 16-step haul at 2.5 decay into a 90%
+## bonus line, which is a wall, not a decision.
+func _test_offers_stay_within_reach() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var state := _state_with_villageA_grain_filled(map)
+
+	var remaining := OrderBook.eligible_lines(state, map)
+	var median: float = remaining[remaining.size() / 2].difficulty
+	for offer in OrderBook.draw_offers(state, map):
+		assert(offer.difficulty <= median,
+			"%s/%s at difficulty %.1f is harder than the median of what is left (%.1f)" % [
+				offer.node_id, offer.food_id, offer.difficulty, median,
+			])
+
+## Same seed and same choices replay the same offers -- the simulation has no
+## other randomness left, and a run that cannot be reproduced cannot be
+## debugged.
+func _test_offers_are_seeded() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var first: Array[String] = []
+	var second: Array[String] = []
+	for run in [first, second]:
+		var state := _state_with_villageA_grain_filled(map, 12345)
+		for offer in OrderBook.draw_offers(state, map):
+			run.append(OrderBook.offer_key(offer))
+	assert(first == second, "The same seed must deal the same pair: %s vs %s" % [first, second])
+
+	var other := _state_with_villageA_grain_filled(map, 999)
+	var differs: Array[String] = []
+	for offer in OrderBook.draw_offers(other, map):
+		differs.append(OrderBook.offer_key(offer))
+	print("Seeded offers: seed 12345 -> %s, seed 999 -> %s." % [first, differs])
+
+## A GameState with Village A's grain line delivered in full, which is what
+## earns the first draw.
+func _state_with_villageA_grain_filled(map: MapData, seed_value := 4242) -> GameState:
+	var state := GameState.new()
+	state.run_seed = seed_value
+	OrderBook.initialize(state, map)
+	# Amber is the bar: the full amount arrived, freshness is irrelevant
+	# beyond the settlement's own minimum (which run_day already enforces by
+	# rejecting anything under it before it counts as delivered).
+	state.last_settlement_status = {
+		"villageA": {"grain": {"requested": 20.0, "delivered": 20.0, "rejected": 0.0, "fresh_sum": 20.0 * 40.0}},
+	}
+	var filled := OrderBook.record_day(state, map.node_placements)
+	assert(filled == 1, "The fixture must fill exactly one line, got %d" % filled)
+	# Latched: refilling the same line must not earn a second draw.
+	assert(OrderBook.record_day(state, map.node_placements) == 0, "A refilled line must not earn another draw")
+	return state
 
 func _test_dormant_settlements_are_not_scored() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres")

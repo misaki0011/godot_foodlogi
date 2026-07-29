@@ -67,25 +67,12 @@ func _build_region_map() -> void:
 		_settlement("cityE", Vector2i(15, 9), "City E", "City (late objective)", {"milk": 30.0, "seafood": 25.0, "vegetables": 35.0}, 55.0, 90.0),
 	]
 
-	# The order in which those demand lines open (DEV-01). Each beat is one
-	# new thing to learn: a new customer, or a new food from a new source.
-	# Sources gate the foods, settlements gate the demand, and the two are
-	# paired so a beat never introduces both at once without a reason --
-	# roughly SPEC.md §6's chapters, played out on one map instead of six.
-	map.order_schedule = [
-		_order(1, "villageA", "grain"),       # one road, Farm -> customer
-		_order(3, "villageA", "bread"),       # a second source onto the same trunk
-		_order(5, "villageB", "grain"),       # one source, two customers: hubs start paying
-		_order(7, "villageB", "vegetables"),  # decay pressure, Normal Storage
-		_order(9, "villageC", "bread"),       # across the river
-		_order(10, "villageC", "vegetables"),
-		_order(12, "townD", "milk"),          # Cool Chain, and a fussier 85% bonus line
-		_order(14, "townD", "bread"),
-		_order(15, "townD", "vegetables"),
-		_order(17, "cityE", "seafood"),       # long haul at a 55% minimum
-		_order(19, "cityE", "milk"),
-		_order(20, "cityE", "vegetables"),
-	]
+	# The one line the map opens with (DEV-01). Everything after it is chosen
+	# by the player from the offers a filled order puts on the table, so this
+	# is the only progression the map authors -- and it is deliberately the
+	# easiest line on the board: four steps from the Farm, and grain barely
+	# decays.
+	map.opening_line = {"node_id": "villageA", "food_id": "grain"}
 
 	var problems := map.validate()
 	for problem in problems:
@@ -96,12 +83,6 @@ func _build_region_map() -> void:
 		push_error("build_resources: failed to save region_1_map.tres (%s)" % err)
 	else:
 		print("build_resources: saved region_1_map.tres with %d node placements" % map.node_placements.size())
-
-## One entry in MapData.order_schedule. The amount is deliberately absent --
-## it lives in the settlement's own demand, so pacing and balance stay in one
-## place each.
-func _order(earliest_day: int, node_id: String, food_id: String) -> Dictionary:
-	return {"earliest_day": earliest_day, "node_id": node_id, "food_id": food_id}
 
 func _source(id: String, pos: Vector2i, display_name: String, produces: Dictionary) -> NodeData:
 	var data := NodeData.new()

@@ -19,10 +19,9 @@ extends Control
 ##   SETTLEMENT        a cream speech balloon: dark text, big corner
 ##                     radius, triangular tail, a status-coloured border,
 ##                     and a freshness bar along the bottom.
-##   SETTLEMENT_PENDING
-##                     the countdown for an order that has not opened yet
-##                     (DEV-01): the same balloon drawn quiet, saying which
-##                     food is coming and roughly when.
+##   SETTLEMENT_OFFER  one of the two orders on the table (DEV-01): the same
+##                     balloon in a colour no status uses, asking to be
+##                     picked.
 ##
 ## A settlement's status is deliberately kept off the bubble *body*: a
 ## saturated tint behind the text both fights the food-coloured icon dot
@@ -90,20 +89,22 @@ const MUTED_BORDER_COLOR := Color(0.62, 0.63, 0.65, 0.4)
 const MUTED_TEXT_COLOR := Color(0.62, 0.63, 0.64)
 const MUTED_ICON_COLOR := Color(0.46, 0.47, 0.49)
 
-## An order that has not opened yet (OrderBook.preview_order). It keeps the
-## settlement's balloon silhouette -- it is that settlement speaking -- but
-## gives up everything that marks a task: no status colour, no freshness
-## bar, no glyph, a washed-out body, and a smaller sprite
-## (FoodBubbleMarker.PENDING_SCALE). It is a heads-up that lets the player
-## lay the road before the order lands, and it must never compete with the
-## bubbles that are actually asking for something today.
-const PENDING_BUBBLE_COLOR := Color(0.97, 0.94, 0.87, 0.72)
-const PENDING_BORDER_COLOR := Color(0.36, 0.33, 0.29, 0.55)
-const PENDING_TEXT_COLOR := Color(0.30, 0.27, 0.23)
-const PENDING_BORDER_WIDTH := 2
-## The food dot is dimmed rather than greyed: which food is coming is the
-## one thing the player can act on ahead of time, so it stays identifiable.
-const PENDING_ICON_ALPHA := 0.65
+## An order being offered to the player (OrderBook.draw_offers). It keeps the
+## settlement balloon -- it is that settlement asking -- and stays at full
+## size and full contrast, because it is not a heads-up, it is the one thing
+## on the map waiting on a decision.
+##
+## The accent is violet, which is the point: red/amber/green are spoken for
+## by delivery status and grey by sources, so a fourth meaning needed a hue
+## that cannot be mistaken for any of them. Nothing else on this map is
+## purple, so "these two bubbles are a different kind of thing" reads before
+## any of the text does. It carries no freshness bar and no status glyph --
+## there is no delivery to report yet -- and instead ends on a plus, for the
+## order it would add.
+const OFFER_BUBBLE_COLOR := Color(0.96, 0.94, 0.99, 0.97)
+const OFFER_ACCENT_COLOR := Color("6E5FB8")
+const OFFER_TEXT_COLOR := Color(0.20, 0.17, 0.30)
+const OFFER_BORDER_WIDTH := 3
 
 ## Status accents. These are fully saturated -- they are only ever used
 ## for borders, tails, bars and glyphs, never as a background under text.
@@ -194,11 +195,10 @@ func set_settlement(icon_color: Color, amount_text: String, status: FoodBubbleMa
 	_threshold = threshold
 	queue_redraw()
 
-## `text` names the food that is coming, `subtext` when it is expected --
-## the projected day slides while the player is behind (see
-## OrderBook.projected_day), so this is a forecast, not a promise.
-func set_pending(icon_color: Color, text: String, subtext: String) -> void:
-	_kind = FoodBubbleMarker.Kind.SETTLEMENT_PENDING
+## `text` names the food on offer and `subtext` the amount it would ask for
+## each day -- the two things the player weighs before tapping.
+func set_offer(icon_color: Color, text: String, subtext: String) -> void:
+	_kind = FoodBubbleMarker.Kind.SETTLEMENT_OFFER
 	_icon_color = icon_color
 	_amount_text = text
 	_subtext = subtext
@@ -209,8 +209,8 @@ func _draw() -> void:
 	match _kind:
 		FoodBubbleMarker.Kind.SETTLEMENT:
 			_draw_settlement()
-		FoodBubbleMarker.Kind.SETTLEMENT_PENDING:
-			_draw_settlement_pending()
+		FoodBubbleMarker.Kind.SETTLEMENT_OFFER:
+			_draw_settlement_offer()
 		_:
 			_draw_source()
 
@@ -295,30 +295,33 @@ func _draw_settlement() -> void:
 
 	_draw_freshness_bar(rect, accent)
 
-func _draw_settlement_pending() -> void:
+func _draw_settlement_offer() -> void:
 	var rect := _body_rect()
 	var radius := int(rect.size.y * SETTLEMENT_CORNER_RATIO)
 
-	# Tail in the border's own grey rather than a status colour: there is no
-	# status to report yet, and a coloured tail is the first thing that reads
-	# as "act on me" at map distance.
-	_draw_tail(rect, PENDING_BORDER_COLOR)
-	_draw_body(rect, radius, PENDING_BUBBLE_COLOR, PENDING_BORDER_COLOR, PENDING_BORDER_WIDTH)
+	# The same halo red uses for urgency, in violet: an offer is the only
+	# thing on this map that waits on the player, so it should be what the eye
+	# lands on -- and unlike red, there are never more than two of them.
+	_draw_halo(rect, radius, OFFER_ACCENT_COLOR)
+	_draw_tail(rect, OFFER_ACCENT_COLOR)
+	_draw_body(rect, radius, OFFER_BUBBLE_COLOR, OFFER_ACCENT_COLOR, OFFER_BORDER_WIDTH)
 
 	var cy := rect.position.y + rect.size.y * 0.5
-	var icon_r := rect.size.y * 0.22
+	var icon_r := rect.size.y * 0.24
 	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, cy)
-	draw_circle(icon_center, icon_r, Color(_icon_color, PENDING_ICON_ALPHA))
-	draw_arc(icon_center, icon_r, 0, TAU, 32, PENDING_BORDER_COLOR, 2.0, true)
+	draw_circle(icon_center, icon_r, _icon_color)
+	draw_arc(icon_center, icon_r, 0, TAU, 32, OFFER_ACCENT_COLOR, 2.0, true)
 
-	# No status glyph, so the text runs the full remaining width.
+	# A plus where a settlement bubble carries its status glyph: this is an
+	# order that would be ADDED, not one reporting how it went.
+	var glyph_r := rect.size.y * STATUS_GLYPH_RATIO
+	var glyph_center := Vector2(rect.end.x - STATUS_GLYPH_MARGIN - glyph_r, cy)
+	_draw_plus(glyph_center, glyph_r, OFFER_ACCENT_COLOR)
+
 	var text_x := icon_center.x + icon_r + 12.0
-	var text_w := rect.end.x - 14.0 - text_x
-	# The day is the actionable half -- it is what tells the player how long
-	# they have to get a road there -- so it is sized as a near-peer of the
-	# food name rather than as a caption under it.
-	_draw_fitted(_amount_text, text_x, text_w, cy - 12.0, int(rect.size.y * 0.30), PENDING_TEXT_COLOR)
-	_draw_fitted(_subtext, text_x, text_w, cy + 20.0, int(rect.size.y * 0.26), PENDING_TEXT_COLOR)
+	var text_w := glyph_center.x - glyph_r - 10.0 - text_x
+	_draw_fitted(_amount_text, text_x, text_w, cy - 12.0, int(rect.size.y * 0.30), OFFER_TEXT_COLOR)
+	_draw_fitted(_subtext, text_x, text_w, cy + 20.0, int(rect.size.y * 0.24), SUBTEXT_COLOR)
 
 # --- shared pieces ----------------------------------------------------
 
@@ -426,6 +429,12 @@ func _draw_cross(center: Vector2, r: float, color: Color) -> void:
 func _draw_bang(center: Vector2, r: float, color: Color) -> void:
 	draw_line(center + Vector2(0, -r * 0.72), center + Vector2(0, r * 0.16), color, r * 0.34, true)
 	draw_circle(center + Vector2(0, r * 0.66), r * 0.19, color)
+
+## An order this settlement would add if the player picks it.
+func _draw_plus(center: Vector2, r: float, color: Color) -> void:
+	var a := r * 0.62
+	draw_line(center + Vector2(-a, 0), center + Vector2(a, 0), color, r * 0.30, true)
+	draw_line(center + Vector2(0, -a), center + Vector2(0, a), color, r * 0.30, true)
 
 ## Outgoing supply: what this node hands out, as opposed to a
 ## settlement's incoming demand.

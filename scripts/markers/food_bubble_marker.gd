@@ -30,11 +30,6 @@ const BASE_PIXEL_SIZE := 0.01
 ## offset with it, keeping the bubble anchored the same way.
 const SOURCE_SCALE := 0.85
 
-## An order that hasn't opened yet renders smaller again -- it is a heads-up
-## sitting next to bubbles that are asking for food today, and it has to lose
-## that comparison at a glance.
-const PENDING_SCALE := 0.8
-
 ## Main.tscn's Camera3D is pitched -60 deg (rotation.x = -1.047198) and
 ## looks straight down that axis with no yaw/roll, so its "right" vector
 ## is exactly world +X (unrotated) but its "up" vector is
@@ -54,9 +49,9 @@ const STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION + 0.1
 const SOURCE_STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION * SOURCE_SCALE + 0.1
 const COLUMN_SPACING := WORLD_WIDTH + 0.1
 
-## Which silhouette bubble_canvas.gd draws. SETTLEMENT_PENDING is the
-## countdown for an order that has not opened yet (DEV-01, see OrderBook).
-enum Kind { SOURCE, SETTLEMENT, SETTLEMENT_PENDING }
+## Which silhouette bubble_canvas.gd draws. SETTLEMENT_OFFER is one of the
+## two orders on the table waiting to be picked (DEV-01, see OrderBook).
+enum Kind { SOURCE, SETTLEMENT, SETTLEMENT_OFFER }
 
 ## DEFAULT is a source's plain food-on-beige look; MUTED grays a source
 ## out once it has given away its whole daily produce. RED/AMBER/GREEN are
@@ -87,12 +82,12 @@ func setup_settlement(food: FoodData, delivered: float, requested: float, status
 	_canvas.set_settlement(food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
 	_bake()
 
-## The countdown for an order that has not opened yet: which food is coming,
-## and the day it is currently on track to arrive (OrderBook.projected_day --
-## a forecast that slides if the player falls behind, not a fixed date).
-func setup_pending(food: FoodData, expected_day: int) -> void:
-	_sprite.pixel_size = BASE_PIXEL_SIZE * PENDING_SCALE
-	_canvas.set_pending(food.color, food.display_name, "Day %d" % expected_day)
+## One of the two orders on offer: the food it wants and how much of it per
+## day. Full size, unlike the rest of the map's supporting information -- it
+## is the one thing waiting on a decision.
+func setup_offer(food: FoodData, amount: float) -> void:
+	_sprite.pixel_size = BASE_PIXEL_SIZE
+	_canvas.set_offer(food.color, food.display_name, "%d/day" % roundi(amount))
 	_bake()
 
 func _ratio_text(current: float, max_amount: float) -> String:

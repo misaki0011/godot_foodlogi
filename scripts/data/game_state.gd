@@ -21,17 +21,33 @@ var day_time_left := GameBalance.DAY_LENGTH_SEC
 ## ---------- order book (DEV-01) ----------
 ## Which demand lines have opened so far: node_id -> {food_id: day_opened}.
 ## A settlement's NodeData.demand is what it will EVENTUALLY want; only the
-## lines recorded here are simulated, scored or drawn. Seeded by
-## OrderBook.initialize and extended one line at a time at each day rollover
-## (OrderBook.open_due_orders), so the region's demand develops instead of
-## landing whole on day 1.
+## lines recorded here are simulated, scored or drawn. Seeded with the map's
+## opening line and extended one at a time by the player accepting an offer,
+## so the region's demand develops instead of landing whole on day 1.
 var active_orders: Dictionary = {}
 
-## Consecutive simulated days on which every settlement taking orders held at
-## least OrderBook.READY_SAT happiness -- the schedule's second gate, and
-## what makes the pacing answer to how the player is actually doing. Reset
-## both by a bad day and by earning an order. See OrderBook.
-var ready_streak := 0
+## Lines the player has ever delivered in full: "node_id|food_id" -> true.
+## Latched -- proving a line once proves it for good, so a later bad day can
+## never un-open an order. Filling a line for the first time is what earns a
+## draw. See OrderBook.
+var filled_lines: Dictionary = {}
+
+## The offers currently on the table (0 or OrderBook.OFFER_COUNT of them), as
+## {node_id, food_id, difficulty}. The player takes one by tapping its
+## settlement; the other goes back in the pool.
+var offers: Array[Dictionary] = []
+
+## Draws owed but not yet dealt. Filling a second line while a pair is still
+## outstanding queues the draw rather than putting four plaques on the map.
+var pending_draws := 0
+
+## The run's offer sequence. Same seed plus the same choices replays the same
+## offers, which is what keeps the game reproducible now that nothing else in
+## the simulation is random. 0 means "not seeded yet" -- OrderBook.initialize
+## rolls a real one. Set it before initialize() to pin a run (the dev checks
+## do exactly that).
+var run_seed := 0
+var rng_state := 0
 
 var best_score := -INF
 var best_grade := ""

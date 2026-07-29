@@ -706,8 +706,15 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 		return
 	var n := _node_at(cell)
 	if n:
-		# Sources and settlements are informational, not buildable -- tapping
-		# (mobile has no hover) shows the same info tip a mouse hover would.
+		# A settlement holding one of the two outstanding offers (DEV-01) is
+		# the one place on the map where tapping a node DOES something: it
+		# takes that order. Checked before the tip, so the tap that accepts
+		# doesn't also raise a panel over the thing it just changed.
+		if _accept_offer_at(n):
+			return
+		# Otherwise sources and settlements are informational, not buildable
+		# -- tapping (mobile has no hover) shows the same info tip a mouse
+		# hover would.
 		_update_tip(cell, screen_position)
 		return
 	_tip_panel.visible = false
@@ -978,10 +985,13 @@ func _apply_day_cycle() -> void:
 func _run_day() -> void:
 	var report := SimulationEngine.run_day(_state, _map_data.node_placements)
 	_last_report = report
-	# Folded in before the calendar moves: the streak is about the day that
-	# was just simulated, and it is what decides whether the rollover below
-	# is allowed to open the next order (DEV-01).
-	OrderBook.record_day(_state, report)
+	# Latches whatever the day just filled, and puts the resulting offers on
+	# the table (DEV-01). Deliberately not tied to the calendar rollover
+	# below: filling an order is what earns the choice, so it lands the
+	# moment the delivery lands.
+	var filled := OrderBook.record_day(_state, _map_data.node_placements)
+	if filled > 0:
+		_present_offers()
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
 	if _state.auto_run:
@@ -993,20 +1003,50 @@ func _run_day() -> void:
 	_render_grid()
 	_update_ui()
 
-## Rolls the calendar over, and with it the order book: a rollover is the
-## only moment a settlement's next demand line can open. Both paths through
-## the report -- the auto-run summary card and the manual report's "Continue
-## to next day" -- come through here, so the schedule advances identically in
-## either mode.
+## Rolls the calendar over. Nothing about the order book happens here any
+## more: progression answers to deliveries, not to the date (DEV-01). The day
+## counter still drives the clock, the sun cycle and the report.
 func _advance_day() -> void:
 	_state.day += 1
-	for order in OrderBook.open_due_orders(_state, _map_data):
-		_announce_order(order)
 
-## A new order is the game's one scheduled beat, so it gets the toast to
-## itself. The player was not ambushed by it: the countdown plaque over that
-## settlement (see _render_settlement_bubbles) has been up for a couple of
-## days, which is the whole point of announcing orders ahead.
+## Deals the next pair of offers, if one is owed and the player is not still
+## deciding on the last pair. The two settlements sprout choosable plaques
+## (see _render_settlement_bubbles); tapping one takes that order.
+func _present_offers() -> void:
+	var offers := OrderBook.draw_offers(_state, _map_data)
+	if offers.size() < 2:
+		# One offer, or none left to draw, needs no decision -- but a lone
+		# offer is still a real order, so hand it over rather than stranding
+		# it behind a choice that cannot be made.
+		if offers.size() == 1:
+			OrderBook.accept_offer(_state, offers[0])
+			_announce_order(offers[0])
+		return
+	var names := []
+	for offer in offers:
+		var settlement: NodeData = _nodes_by_id.get(offer.get("node_id", ""))
+		if settlement != null:
+			names.append(settlement.display_name)
+	_show_toast("Two towns are asking (%s) — tap one to take its order." % " or ".join(names))
+
+## Takes the offer sitting on `n`, if there is one. Accepting is a plain tap
+## with no confirmation on purpose: the offer not taken goes back in the pool
+## and can come round again, so the worst a mis-tap costs is the order of the
+## next two beats, never a piece of the map.
+func _accept_offer_at(n: NodeData) -> bool:
+	var offer := OrderBook.offer_at(_state, n.node_id)
+	if offer.is_empty():
+		return false
+	if not OrderBook.accept_offer(_state, offer):
+		return false
+	_announce_order(offer)
+	# A queued draw (the player filled a second line while deciding) deals
+	# immediately, so the table is never empty while a draw is owed.
+	_present_offers()
+	_render_grid()
+	_update_ui()
+	return true
+
 func _announce_order(order: Dictionary) -> void:
 	var settlement: NodeData = _nodes_by_id.get(order.get("node_id", ""))
 	var food: FoodData = GameBalance.food_types().get(order.get("food_id", ""))
@@ -1015,7 +1055,7 @@ func _announce_order(order: Dictionary) -> void:
 	_show_toast("New order — %s wants %s, %d/day." % [
 		settlement.display_name,
 		food.display_name,
-		roundi(settlement.demand.get(order.food_id, 0.0)),
+		roundi(settlement.demand.get(order.get("food_id", ""), 0.0)),
 	])
 
 func _close_report() -> void:
@@ -1023,10 +1063,6 @@ func _close_report() -> void:
 	if _report_advances_day:
 		_report_advances_day = false
 		_advance_day()
-		# The rollover may have opened an order, which changes the bubbles;
-		# the auto-run path re-renders in _run_day, this one has to do it
-		# itself.
-		_render_grid()
 	_update_ui()
 
 ## Reopens the last simulated day's full report for review. The day has
@@ -1203,12 +1239,12 @@ func _settlement_tip_text(n: NodeData) -> String:
 	else:
 		text += "Orders: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
 
-	var later := []
-	for food_id in n.demand:
-		if not demand.has(food_id):
-			later.append(GameBalance.food_types()[food_id].display_name)
-	if not later.is_empty():
-		text += "[color=#8A8375]Still to come: %s[/color]\n" % ", ".join(later)
+	var offer := OrderBook.offer_at(_state, n.node_id)
+	if not offer.is_empty():
+		var offered: FoodData = GameBalance.food_types()[offer.food_id]
+		text += "[color=#8C7BD8]On offer: %s %d/day — tap to take it[/color]\n" % [
+			offered.display_name, roundi(n.demand.get(offer.food_id, 0.0)),
+		]
 
 	var status = _state.last_settlement_status.get(n.node_id)
 	if status == null or demand.is_empty():
@@ -1501,12 +1537,11 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 	var base_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 3.1, 0)
 
 	var entries: Array = []
-	# Only the orders that have actually opened (DEV-01). A settlement whose
-	# first order is still days away draws nothing at all -- the pin alone.
-	# It is not showing a grey "later" placeholder either: five of those from
-	# day 1 would be the same wall of bubbles this feature exists to remove,
-	# in a quieter colour. Only the settlement next in line gets a plaque,
-	# and only once it is nearly due (OrderBook.preview_order).
+	# Only the orders that have actually opened (DEV-01). A settlement with
+	# none draws nothing at all -- the pin alone. It is not showing a grey
+	# "later" placeholder either: five of those from day 1 would be the same
+	# wall of bubbles this feature exists to remove, in a quieter colour.
+	# The only extra plaques on the map are the two live offers.
 	var demand := OrderBook.active_demand(_state, n)
 	for food_id in demand:
 		var requested: float = demand[food_id]
@@ -1536,12 +1571,17 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 		})
 
-	var preview := OrderBook.preview_order(_state, _map_data)
-	if not preview.is_empty() and preview.get("node_id", "") == n.node_id:
+	# An outstanding offer rides as an extra plaque over the settlement it
+	# would land on. Putting the choice on the map rather than in a dialog is
+	# the whole point: what the player needs in order to decide -- how far
+	# each town is from a source, whether the river is in the way, where their
+	# roads already run -- is the map, and a modal would cover it.
+	var offer := OrderBook.offer_at(_state, n.node_id)
+	if not offer.is_empty():
 		entries.append({
-			"kind": "pending",
-			"food_id": preview.get("food_id", ""),
-			"expected_day": OrderBook.projected_day(_state, preview),
+			"kind": "offer",
+			"food_id": offer.get("food_id", ""),
+			"amount": n.demand.get(offer.get("food_id", ""), 0.0),
 		})
 
 	for index in entries.size():
@@ -1555,8 +1595,8 @@ func _render_settlement_bubbles(n: NodeData, pos: Vector2i, foods: Dictionary) -
 			0,
 		)
 		match e.kind:
-			"pending":
-				bubble.setup_pending(foods[e.food_id], e.expected_day)
+			"offer":
+				bubble.setup_offer(foods[e.food_id], e.amount)
 			_:
 				bubble.setup_settlement(
 					foods[e.food_id],

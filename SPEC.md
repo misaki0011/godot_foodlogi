@@ -66,6 +66,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 37. **The same network now gives the same day, and a settled settlement keeps its numbers.** Two changes with one goal: every figure on the map means something the player did. First, settlement demand no longer wobbles ±15-25% per simulated day (item 4's rule, ported from the HTML). That wobble was the only randomness in the whole simulation, and it made every number a moving target — a bubble read 18/20 one day and 23/23 the next off the same untouched road, so an improvement the player had just made was indistinguishable from noise, and the day report's grade drifted on its own. Freshness was already deterministic (`simulate_freshness` reads only the path), so with the wobble gone the guarantee is total: an unchanged network delivers an unchanged result, at an unchanged grade. Note what this costs — §18's endless-chase argument used to lean on the wobble to stop a "solved" network from staying solved; that pull now has to come from the region opening up (§6), which is what the order schedule already does. Second, the collapsed **"All fresh"** summary bubble is gone: a settlement whose every open order is green now keeps one bubble per food like any other. Collapsing hid exactly the numbers the player had worked to earn, and it was decluttering stacks that item 36 already made rare — a settlement usually has one or two open orders now, not three. Green still recedes on its own, washing lighter and outlining thinner than amber and red. See §10.1, §12, §18.
 
+38. **The player chooses what the region asks for next.** Item 36 opened demand one line at a time but decided the order itself, from an authored schedule gated on a day floor plus a happiness streak -- and both gates were clocks, the streak merely a conditional one. Progression now answers only to delivery: **fill an order and two offers appear; pick one.** Idle for a hundred days and nothing opens; fill something and the choice is waiting immediately. `GameState.day` still drives the day clock, the sun and the report, and drives no progression at all. An order counts as filled when the whole requested amount arrives -- exactly the amber bubble, exactly the point the line starts paying -- with freshness beyond that deciding only how well the player is paid; `min_freshness` still bites implicitly, since spoiled cargo is rejected before it counts as delivered. Filled is latched, so a bad day cannot un-open an order. The two offers are drawn one **deepen** (another food for a settlement already served, reusing its road) and one **expand** (a first order somewhere new, a new road and new upkeep), because two draws from one bucket give a hollow choice while one of each is the standing tension of the genre. They ride as violet plaques on the settlements they would land on and are taken by tapping -- the map is what the decision needs (distance to a source, the river, existing roads), so a modal would cover the one thing worth seeing. The offer not taken goes back in the pool: with twelve lines on the map, discarding one per choice would hide half the content, and keeping it makes a mis-tap cost ordering rather than territory. Candidates are the easiest few remaining of each kind, ranked by a difficulty derived from the map itself (`MapData.difficulty_of`: freshness shortfall over distance to the nearest producing source) rather than authored -- which reproduces the old hand-written teaching order for free. The whole authored schedule is replaced by a single `opening_line`. Draws are seeded per run so a game replays identically, since item 37 left nothing else random. See §6, §4.8, §10.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1085,77 +1087,107 @@ satisfaction = demand_fulfillment_score
 
 The game should introduce systems gradually.
 
-### Gradual demand: orders open one at a time (added in v0.6 item 36)
+### Gradual demand: the player chooses the next order (added in v0.6, revised in item 38)
 
 The chapter list below is the full-game shape. On the single MVP region the
-same intent is delivered by the **order schedule**, which paces one map
-instead of six levels.
+same intent is delivered by **offers**, which pace one map instead of six
+levels:
+
+```text
+fill an order  ->  two offers appear  ->  the player picks one
+```
 
 **The model.** A settlement's `NodeData.demand` is what it will *eventually*
-want. `MapData.order_schedule` lists those demand lines in the order the
-region should learn them, earliest first; `OrderBook` decides which have
-opened. An unopened line is not simulated, not scored and not drawn — it
-costs nothing and asks for nothing.
+want. Lines open one at a time, and which one is the player's decision. An
+unopened line is not simulated, not scored and not drawn.
 
 **Nothing on the map ever appears or disappears.** All five settlements and
 all five sources stand there from day 1, so the player can see the whole
 region and plan long routes against it. A settlement is never founded,
 upgraded or resized: it simply starts placing orders. Settlements *growing*
-was considered and rejected — a village visibly becoming a city reads as a
+was considered and rejected -- a village visibly becoming a city reads as a
 city-builder, and in a logistics game the thing that should visibly develop
 is the network the player drew.
 
-**Two gates, and the second one matters more.** An order opens when both
-hold:
+**Progress, not days.** Nothing in `OrderBook` consults the calendar. The
+earlier design gated on an `earliest_day` floor plus a "held 70% happiness
+for 2 consecutive days" streak, and both were clocks -- the streak counted
+days too, just conditionally. Now: idle for a hundred days and nothing opens;
+fill an order and the choice is waiting immediately. `GameState.day` still
+drives the day clock, the sun cycle and the report, and drives no progression
+at all.
 
-- the day has reached its `earliest_day` in the schedule, and
-- every settlement currently taking orders has held `READY_SAT` (70%)
-  happiness for `READY_STREAK` (2) consecutive days.
+**What counts as filled.** The whole requested amount arriving -- exactly the
+**amber** speech bubble, and exactly the point at which a line starts paying
+(§9: red pays nothing, amber pays the line, green pays it plus the bonus).
+Freshness above that does one job only: deciding how well the player is paid.
+`min_freshness` still bites implicitly and correctly, because `run_day`
+rejects anything under it before it counts as delivered, so a line can never
+fill on cargo too spoiled to accept. 99% delivered is a red bubble, earns
+nothing, and does not advance the player -- a short order is not a partial
+sale.
 
-A day gate alone is wrong in both directions: it drops a new order on a
-player who is already drowning, and it makes a player who has solved the map
-wait out the calendar. `earliest_day` is therefore a floor on the pacing, not
-a timer. At most one order opens per day rollover, and earning one *spends*
-the streak — otherwise a good run would open the whole region in a week, one
-order per day, which is the day-1 wall again.
+Filled is **latched**: proving a line once proves it for good, so a later bad
+day can never un-open an order.
 
-**Orders are announced before they land.** An order that arrives unannounced
-is red on its first day, which is the exact problem this replaces. The
-settlement next in line carries a quiet countdown plaque from two days out
-(`PREVIEW_DAYS`), naming the food and the day it is on track to arrive, so
-the player can lay the road first. The date is a forecast, not a promise: it
-slides while the player is behind and settles as they recover.
+**The pair is deepen vs expand.**
 
-Only that one settlement gets a plaque. A grey "later" plaque over all five
-from day 1 would be the same wall of bubbles in a quieter colour; a
-settlement with nothing open shows nothing at all.
-
-**Scoring follows.** `avg_happiness` averages only the settlements taking
-orders — scoring one nobody is allowed to deliver to yet would make the grade
-a measure of the calendar. The report prints the denominator ("82% (2 of 5
-settlements taking orders)") so a steady network doesn't look like it swung
-whenever the region opens up.
-
-**Region 1's schedule.** Sources gate the foods and settlements gate the
-demand, paired so each beat is one new thing:
-
-| Not before | Order | Introduces |
+| Offer | Meaning | Cost shape |
 | --- | --- | --- |
-| 1 | Village A · grain | one road, Farm → customer |
-| 3 | Village A · bread | a second source onto the same trunk |
-| 5 | Village B · grain | one source, two customers: hubs start paying |
-| 7 | Village B · vegetables | decay pressure, Normal Storage |
-| 9, 10 | Village C · bread, vegetables | across the river |
-| 12, 14, 15 | Town D · milk, bread, vegetables | Cool Chain, a fussier 85% bonus line |
-| 17, 19, 20 | City E · seafood, milk, vegetables | long haul at a 55% minimum |
+| **Deepen** | another food for a settlement already served | reuses the trunk road, low marginal upkeep, needs a second source reaching the same place |
+| **Expand** | the first order at a settlement not yet served | new road, new upkeep, new territory |
 
-Because earning an order spends the streak, the fastest possible cadence is
-one order every two days. Under perfect play the floors bind for the first
-five beats and the readiness gate binds from there on, opening the whole
-region by about day 23 — the later floors are deliberately set below that
-line, so the back half of the region is paced by how the player is doing
-rather than by the calendar. Widen the floors only to slow a *good* player
-down; to slow a struggling one, the readiness gate is already doing it.
+Two draws from one bucket often produce a hollow choice ("grain here or grain
+there"); one of each is the standing tension of a logistics game and stays
+meaningful every time it is asked. When a bucket is empty -- early on nothing
+has a second food worth adding, late on everything is already expanded into
+-- the pair falls back to the easiest remaining candidates, still a real
+choice of destination.
+
+**The choice lives on the map, not in a dialog.** Each offer rides as a
+violet plaque over the settlement it would land on, and tapping that
+settlement takes it. What the player needs in order to decide -- how far each
+town is from a source, whether the river is in the way, where their roads
+already run -- *is* the map, and a modal would cover exactly that. Violet
+because red/amber/green are spoken for by delivery status and grey by
+sources; nothing else on this map is purple.
+
+**The offer not taken returns to the pool.** With only twelve lines on the
+map, discarding one per choice would mean a run never sees half its content.
+The choice is about what to do *next*, not about giving something up -- which
+is also what lets accepting be a single tap with no confirmation, since the
+worst a mis-tap costs is ordering.
+
+**Eligibility is a rank, not a distance.** Each side draws from the easiest
+`OFFER_POOL_SIZE` remaining candidates of its kind. Difficulty is derived
+from the map rather than authored (`MapData.difficulty_of`): how far the
+freshness falls short of what the settlement rewards, over the straight-line
+distance to the nearest source producing that food. Ranking region 1 this way
+puts Village A's grain easiest (-18) and City E's vegetables hardest (+30),
+reproducing the hand-written teaching order for free and re-deriving it if a
+source ever moves. An absolute difficulty reach was tried first and is wrong:
+the difficulties are unevenly spaced, so any fixed reach is either too tight
+to offer a pair early or meaningless later.
+
+**One pair outstanding at a time.** Filling a second line while the player is
+still deciding queues the draw rather than putting four plaques on the map.
+There is no timer on the decision: days keep running and scoring, and the
+plaques wait.
+
+**Seeded.** The pair is drawn from a per-run seed on `GameState`, so a run
+replays identically given the same seed and the same choices. Nothing else in
+the simulation is random any more (item 37), so a run that could not be
+reproduced could not be debugged.
+
+**Scoring follows.** `avg_happiness` averages only settlements taking orders
+-- scoring one nobody may deliver to yet would make the grade a measure of
+the calendar. The report prints the denominator ("82% (2 of 5 settlements
+taking orders)").
+
+**The map authors one thing.** `MapData.opening_line` -- Village A's grain,
+the easiest line on the board. Everything after it is chosen by the player. A
+fixed first beat is worth a great deal for teaching, and a choice on day 1
+with nothing built yet is noise.
 
 ### Chapter 1: Fresh Beginnings
 
