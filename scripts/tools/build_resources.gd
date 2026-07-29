@@ -67,12 +67,17 @@ func _build_region_map() -> void:
 		_settlement("cityE", Vector2i(15, 9), "City E", "City (late objective)", {"milk": 30.0, "seafood": 25.0, "vegetables": 35.0}, 55.0, 90.0),
 	]
 
-	# The one line the map opens with (DEV-01). Everything after it is chosen
-	# by the player from the offers a filled order puts on the table, so this
-	# is the only progression the map authors -- and it is deliberately the
-	# easiest line on the board: four steps from the Farm, and grain barely
-	# decays.
-	map.opening_line = {"node_id": "villageA", "food_id": "grain"}
+	# The lines the map opens with (DEV-01). Everything after them is chosen by
+	# the player from the offers a filled order puts on the table, so this is
+	# the only progression the map authors. Three, because one is solved by a
+	# single short road and teaches only the drag gesture; these are the three
+	# easiest on the board, so the opening still ramps gently while giving the
+	# player something to weigh from the first minute.
+	map.opening_lines = [
+		{"node_id": "villageA", "food_id": "grain"},    # 4 steps from the Farm
+		{"node_id": "villageB", "food_id": "grain"},    # same source, second town
+		{"node_id": "villageA", "food_id": "bread"},    # same town, second source
+	]
 
 	var problems := map.validate()
 	for problem in problems:

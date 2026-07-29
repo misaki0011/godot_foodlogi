@@ -63,8 +63,8 @@ func _test_daily_simulation() -> void:
 	state.add_connection(farm.grid_position, route_path[0])
 	_connect_chain(state, route_path)
 	state.add_connection(route_path[-1], village_a.grid_position)
-	# Grain at Village A is the map's opening order (DEV-01), so this is the
-	# one delivery available on day 1 -- which is the point of the schedule.
+	# Grain at Village A is one of the map's opening orders (DEV-01); this test
+	# only lays road to Village A, so grain is the only line that can arrive.
 	OrderBook.initialize(state, map)
 	var report := SimulationEngine.run_day(state, map.node_placements)
 	var grain_status: Dictionary = state.last_settlement_status[village_a.node_id].grain
@@ -285,16 +285,30 @@ func _test_map_is_sound() -> void:
 		push_error("region_1_map: %s" % problem)
 	assert(problems.is_empty(), "region_1_map must be internally consistent")
 
-	# The map opens with exactly one order. A second opening bubble is the
-	# day-1 wall this feature exists to remove, in miniature.
+	# The map opens with its authored lines and nothing else -- far short of
+	# the twelve-bubble wall this feature exists to remove, but more than the
+	# single order that was over in one short road.
 	var state := GameState.new()
 	OrderBook.initialize(state, map)
 	var open_lines := 0
 	for node in map.node_placements:
 		if node.node_type == GameEnums.NodeType.SETTLEMENT:
 			open_lines += OrderBook.active_demand(state, node).size()
-	assert(open_lines == 1, "The map must open with a single order, got %d" % open_lines)
+	assert(open_lines == map.opening_lines.size(),
+		"The map must open with exactly its opening_lines, got %d of %d" % [open_lines, map.opening_lines.size()])
+	assert(open_lines == 3, "The opening is meant to be three orders, got %d" % open_lines)
 	assert(state.offers.is_empty(), "No offer is on the table before anything is filled")
+
+	# The opening must stay gentle: nothing in it may be harder than the
+	# median line on the map.
+	var ranked := map.demand_lines()
+	ranked.sort_custom(func(a, b): return a.difficulty < b.difficulty)
+	var median: float = ranked[ranked.size() / 2].difficulty
+	for line in map.opening_lines:
+		for ranked_line in ranked:
+			if ranked_line.node_id == line.node_id and ranked_line.food_id == line.food_id:
+				assert(ranked_line.difficulty <= median,
+					"Opening line %s/%s is harder than the map's median" % [line.node_id, line.food_id])
 
 	# Difficulty has to rank the region, or the eligibility pool is noise.
 	# Grain at Village A is four steps from the Farm at 0.5 decay; City E's
@@ -326,7 +340,8 @@ func _test_days_alone_open_nothing() -> void:
 	for node in map.node_placements:
 		if node.node_type == GameEnums.NodeType.SETTLEMENT:
 			open_lines += OrderBook.active_demand(state, node).size()
-	assert(open_lines == 1, "After 50 idle days the map must still hold only its opening order, got %d" % open_lines)
+	assert(open_lines == map.opening_lines.size(),
+		"After 50 idle days the map must still hold only its opening orders, got %d" % open_lines)
 	print("50 idle days opened nothing.")
 
 func _test_filling_offers_a_choice() -> void:
@@ -338,17 +353,24 @@ func _test_filling_offers_a_choice() -> void:
 	assert(offers.size() == 2, "A draw must put two offers on the table, got %d" % offers.size())
 	assert(state.offers.size() == 2)
 
-	# One deepen (Village A already takes orders), one expand (a settlement
-	# that takes none yet) -- the choice has to be between two different
-	# KINDS of move, not two flavours of the same one.
+	# One deepen (another food for a settlement already taking orders), one
+	# expand (a settlement taking none yet) -- the choice has to be between
+	# two different KINDS of move, not two flavours of the same one. Which
+	# settlements count as "already served" has to be read BEFORE the offers
+	# are accepted, so classify against a snapshot.
+	var served := {}
+	for node_id in state.active_orders:
+		if not state.active_orders[node_id].is_empty():
+			served[node_id] = true
 	var deepen := 0
 	var expand := 0
 	for offer in offers:
-		if offer.node_id == "villageA":
+		if served.has(offer.node_id):
 			deepen += 1
 		else:
 			expand += 1
-	assert(deepen == 1 and expand == 1, "The pair must be one deepen and one expand, got %d/%d" % [deepen, expand])
+	assert(deepen == 1 and expand == 1,
+		"The pair must be one deepen and one expand, got %d/%d (%s)" % [deepen, expand, offers])
 
 	# Filling again while the player is still deciding queues the draw rather
 	# than crowding the map.
@@ -437,12 +459,12 @@ func _test_dormant_settlements_are_not_scored() -> void:
 	var state := GameState.new()
 	OrderBook.initialize(state, map)
 	var report := SimulationEngine.run_day(state, map.node_placements)
-	# Four of the five settlements are not taking orders on day 1. Scoring
+	# Three of the five settlements are not taking orders on day 1. Scoring
 	# them would make happiness a measure of the calendar rather than of the
 	# network the player built.
 	assert(report.settlements_total == 5, "Every settlement stays on the map from day 1")
-	assert(report.settlements_taking_orders == 1, "Only settlements with an open order may be scored, got %d" % report.settlements_taking_orders)
-	assert(report.settlement_scores.size() == 1, "Dormant settlements must not appear in the per-settlement scores")
+	assert(report.settlements_taking_orders == 2, "Only settlements with an open order may be scored, got %d" % report.settlements_taking_orders)
+	assert(report.settlement_scores.size() == 2, "Dormant settlements must not appear in the per-settlement scores")
 	print("Day 1 scores %d of %d settlements." % [report.settlements_taking_orders, report.settlements_total])
 
 ## An unchanged network must produce an unchanged day. Demand no longer

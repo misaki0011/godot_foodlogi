@@ -320,8 +320,8 @@ func _draw_settlement_offer() -> void:
 
 	var text_x := icon_center.x + icon_r + 12.0
 	var text_w := glyph_center.x - glyph_r - 10.0 - text_x
-	_draw_fitted(_amount_text, text_x, text_w, cy - 12.0, int(rect.size.y * 0.30), OFFER_TEXT_COLOR)
-	_draw_fitted(_subtext, text_x, text_w, cy + 20.0, int(rect.size.y * 0.24), SUBTEXT_COLOR)
+	_draw_fitted(_amount_text, text_x, text_w, cy - 13.0, int(rect.size.y * 0.34), OFFER_TEXT_COLOR)
+	_draw_fitted(_subtext, text_x, text_w, cy + 22.0, int(rect.size.y * 0.26), OFFER_TEXT_COLOR)
 
 # --- shared pieces ----------------------------------------------------
 

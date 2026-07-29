@@ -11,11 +11,18 @@ extends Resource
 @export var river_col: int = -1
 @export var node_placements: Array[NodeData] = []
 
-## The one demand line the map opens with (DEV-01), as {node_id, food_id}.
+## The demand lines the map opens with (DEV-01), each {node_id, food_id}.
 ## Every other line is opened by the player choosing it from an offer, so this
-## is the only piece of progression the map authors: a known, gentle first
-## beat, at a moment when nothing is built and a choice would be noise.
-@export var opening_line: Dictionary = {}
+## is the only piece of progression the map authors.
+##
+## Three of them, not one. A single opening order is over in a day -- one
+## short road from the nearest source and the map is solved -- which teaches
+## the drag gesture and nothing else. Three gives the player something to
+## weigh from the first minute (which town first, is one trunk road enough)
+## while still being far from the twelve-bubble wall this feature exists to
+## remove. They are the three easiest lines on the board, so the opening is
+## still gentle.
+@export var opening_lines: Array[Dictionary] = []
 
 ## Every settlement demand line on the map, as {node_id, food_id, difficulty}.
 ## This is the pool OrderBook draws offers from -- there is no authored order
@@ -62,7 +69,7 @@ func difficulty_of(settlement: NodeData, food_id: String) -> float:
 		return INF
 	return settlement.bonus_freshness - (100.0 - nearest * decay)
 
-## Checks the map can actually run: the opening line must be a real demand
+## Checks the map can actually run: every opening line must be a real demand
 ## line, and every demand line must have some source producing its food (one
 ## that does not could be offered, accepted and then never filled, stalling
 ## the run for good).
@@ -77,13 +84,21 @@ func validate() -> Array[String]:
 		if node.node_type == GameEnums.NodeType.SETTLEMENT:
 			settlements[node.node_id] = node
 
-	var opening_node: NodeData = settlements.get(opening_line.get("node_id", ""))
-	if opening_node == null:
-		problems.append("opening_line names unknown settlement '%s'" % opening_line.get("node_id", ""))
-	elif not opening_node.demand.has(opening_line.get("food_id", "")):
-		problems.append("opening_line opens '%s' at %s, which demands no such food" % [
-			opening_line.get("food_id", ""), opening_line.get("node_id", ""),
-		])
+	if opening_lines.is_empty():
+		problems.append("opening_lines is empty -- the map would open with nothing to deliver")
+	var seen := {}
+	for line in opening_lines:
+		var node_id: String = line.get("node_id", "")
+		var food_id: String = line.get("food_id", "")
+		var opening_node: NodeData = settlements.get(node_id)
+		if opening_node == null:
+			problems.append("opening_lines names unknown settlement '%s'" % node_id)
+		elif not opening_node.demand.has(food_id):
+			problems.append("opening_lines opens '%s' at %s, which demands no such food" % [food_id, node_id])
+		var key := "%s|%s" % [node_id, food_id]
+		if seen.has(key):
+			problems.append("opening_lines opens %s twice" % key)
+		seen[key] = true
 
 	for node_id in settlements:
 		var settlement: NodeData = settlements[node_id]

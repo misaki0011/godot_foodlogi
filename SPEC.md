@@ -68,6 +68,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 38. **The player chooses what the region asks for next.** Item 36 opened demand one line at a time but decided the order itself, from an authored schedule gated on a day floor plus a happiness streak -- and both gates were clocks, the streak merely a conditional one. Progression now answers only to delivery: **fill an order and two offers appear; pick one.** Idle for a hundred days and nothing opens; fill something and the choice is waiting immediately. `GameState.day` still drives the day clock, the sun and the report, and drives no progression at all. An order counts as filled when the whole requested amount arrives -- exactly the amber bubble, exactly the point the line starts paying -- with freshness beyond that deciding only how well the player is paid; `min_freshness` still bites implicitly, since spoiled cargo is rejected before it counts as delivered. Filled is latched, so a bad day cannot un-open an order. The two offers are drawn one **deepen** (another food for a settlement already served, reusing its road) and one **expand** (a first order somewhere new, a new road and new upkeep), because two draws from one bucket give a hollow choice while one of each is the standing tension of the genre. They ride as violet plaques on the settlements they would land on and are taken by tapping -- the map is what the decision needs (distance to a source, the river, existing roads), so a modal would cover the one thing worth seeing. The offer not taken goes back in the pool: with twelve lines on the map, discarding one per choice would hide half the content, and keeping it makes a mis-tap cost ordering rather than territory. Candidates are the easiest few remaining of each kind, ranked by a difficulty derived from the map itself (`MapData.difficulty_of`: freshness shortfall over distance to the nearest producing source) rather than authored -- which reproduces the old hand-written teaching order for free. The whole authored schedule is replaced by a single `opening_line`. Draws are seeded per run so a game replays identically, since item 37 left nothing else random. See §6, §4.8, §10.1.
 
+39. **Three opening orders, and an offer that cannot be mistaken for a countdown.** Two playtest fixes to item 38. First, the map opened with a single order, which one short road from the Farm finished -- it taught the drag gesture and left nothing to weigh until the first offer arrived. It now opens with the three easiest lines (Village A's grain and bread, Village B's grain), so there is a real decision from the first minute -- which town first, whether one trunk road serves both -- while staying far short of the twelve-bubble wall. Second, an offer plaque read `Bread / 20/day`, and in the exact spot where the previous design printed `Day 3` that scanned as a duration: it was read as "wait 20 days", when nothing about an offer is a wait at all. It now reads the food name over `+20 · tap`. Per-day was never needed -- every quantity on this map is already per-day, a settlement bubble says `0/20` -- and the shorter lines also fix legibility, since more than about ten characters shrinks to the font floor at map zoom and turns to mush. See §6, §10.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1184,10 +1186,27 @@ reproduced could not be debugged.
 the calendar. The report prints the denominator ("82% (2 of 5 settlements
 taking orders)").
 
-**The map authors one thing.** `MapData.opening_line` -- Village A's grain,
-the easiest line on the board. Everything after it is chosen by the player. A
-fixed first beat is worth a great deal for teaching, and a choice on day 1
-with nothing built yet is noise.
+**The map authors one thing.** `MapData.opening_lines` -- the three easiest
+lines on the board (Village A's grain and bread, Village B's grain).
+Everything after them is chosen by the player. Fixed first beats rather than
+a choice, because on day 1 nothing is built and offers would be noise.
+
+Three rather than one: a single opening order is solved by one short road
+from the nearest source and teaches only the drag gesture, so the player has
+nothing to weigh until the first offer lands. Three gives an actual decision
+from the first minute -- which town to reach first, whether one trunk road
+serves both -- while staying far short of the twelve-bubble wall this whole
+feature exists to remove.
+
+**An offer never displays a duration.** Its two lines are the food name and
+`+25 · tap`. The amount was written `25/day` at first and had to be changed:
+per-day is how every quantity on this map already reads (a settlement bubble
+says `0/20`, not `0/20 a day`), and sitting exactly where the older countdown
+plaque printed `Day 3`, it scanned as a waiting period -- it got read as
+"wait 25 days". Nothing about an offer is a wait, so nothing on it may look
+like one. The text also has to survive map zoom: more than about ten
+characters a line shrinks to the font floor and turns to mush, which is why
+the amount and the call to action share the small line.
 
 ### Chapter 1: Fresh Beginnings
 

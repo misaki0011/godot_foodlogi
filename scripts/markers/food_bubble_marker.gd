@@ -82,12 +82,25 @@ func setup_settlement(food: FoodData, delivered: float, requested: float, status
 	_canvas.set_settlement(food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
 	_bake()
 
-## One of the two orders on offer: the food it wants and how much of it per
-## day. Full size, unlike the rest of the map's supporting information -- it
-## is the one thing waiting on a decision.
+## One of the two orders on offer: the food it wants, how much, and what to do
+## about it. Full size, unlike the rest of the map's supporting information --
+## it is the one thing waiting on a decision.
+##
+## Laid out like a settlement bubble -- one big line, one small line under it
+## -- because the text has to survive being read at map zoom. Anything longer
+## than about ten characters shrinks to the font floor and turns to mush:
+## "Vegetables x25 / Tap to accept" was unreadable, which is why the amount
+## and the call to action share the small line.
+##
+## The amount is written "+25", never "25/day". Per-day is how every quantity
+## on this map already reads (a settlement bubble says "0/20", not "0/20 a
+## day"), so the suffix bought nothing -- and sitting where the old countdown
+## plaque used to print "Day 3", it scanned as a duration rather than a
+## quantity: it got read as "wait 25 days". Nothing on an offer may look like
+## a number of days, because nothing about it is a wait.
 func setup_offer(food: FoodData, amount: float) -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE
-	_canvas.set_offer(food.color, food.display_name, "%d/day" % roundi(amount))
+	_canvas.set_offer(food.color, food.display_name, "+%d · tap" % roundi(amount))
 	_bake()
 
 func _ratio_text(current: float, max_amount: float) -> String:

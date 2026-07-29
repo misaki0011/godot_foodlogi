@@ -60,9 +60,10 @@ const OFFER_COUNT := 2
 ## player takes them -- no tuning, and no first pick that is a wall.
 const OFFER_POOL_SIZE := 3
 
-## Seeds the book with the map's opening order. One fixed line rather than a
-## choice: on day 1 nothing is built and the two options would be noise, and a
-## known first beat is worth a great deal for teaching.
+## Seeds the book with the map's opening orders. Fixed lines rather than a
+## choice: on day 1 nothing is built and offers would be noise, and a known
+## first beat is worth a great deal for teaching. See MapData.opening_lines
+## for why there are three of them rather than one.
 static func initialize(state: GameState, map_data: MapData) -> void:
 	state.active_orders.clear()
 	state.filled_lines.clear()
@@ -71,9 +72,8 @@ static func initialize(state: GameState, map_data: MapData) -> void:
 	if state.run_seed == 0:
 		state.run_seed = randi()
 	state.rng_state = state.run_seed
-	var opening := map_data.opening_line
-	if not opening.is_empty():
-		_open(state, opening)
+	for line in map_data.opening_lines:
+		_open(state, line)
 
 ## The subset of `settlement.demand` whose orders have opened -- what the
 ## simulation, the bubbles and the tip all work from.

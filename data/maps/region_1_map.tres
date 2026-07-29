@@ -124,8 +124,14 @@ bonus_freshness = 90.0
 script = ExtResource("2_p2e7a")
 grid_size = Vector2i(21, 14)
 river_col = 10
-opening_line = {
+opening_lines = Array[Dictionary]([{
 "food_id": "grain",
 "node_id": "villageA"
-}
+}, {
+"food_id": "grain",
+"node_id": "villageB"
+}, {
+"food_id": "bread",
+"node_id": "villageA"
+}])
 node_placements = Array[ExtResource("1_ycuoh")]([SubResource("Resource_vxexi"), SubResource("Resource_xovoy"), SubResource("Resource_d5ptm"), SubResource("Resource_aljhd"), SubResource("Resource_lq88y"), SubResource("Resource_pp5np"), SubResource("Resource_i5j61"), SubResource("Resource_1oktl"), SubResource("Resource_kwn02"), SubResource("Resource_q7vhy")])
