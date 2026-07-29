@@ -19,6 +19,24 @@ extends Resource
 ## anything that iterates nodes, which must iterate node IDs rather than cells
 ## or it will process a City four times.
 @export var size: Vector2i = Vector2i.ONE
+
+## Source-only (DEV-03): the footprint this source takes once upgraded, and
+## the cell that footprint is anchored at. A zero size means "cannot be
+## upgraded".
+##
+## The origin is authored rather than derived because a source has to be able
+## to grow in a chosen direction: every one of them expands AWAY from the
+## middle of the map, so the reserved ground never sits on the obvious road
+## between that source and its customers. Expanding blindly east would put
+## Farm's reserved cell squarely on the lane to Village A.
+##
+## The cells the upgrade would add are reserved from day 1 and permanently
+## unbuildable -- see Main._reserved_by_cell. That is deliberately not a
+## "keep it clear or lose the upgrade" rule: a player who paved it on day 2
+## and found out on day 20 would have no way back.
+@export var upgraded_origin: Vector2i = Vector2i.ZERO
+@export var upgraded_size: Vector2i = Vector2i.ZERO
+
 @export var display_name: String
 ## Settlement-only descriptive label, e.g. "Village", "Town", "City (late objective)".
 @export var kind: String = ""
@@ -59,3 +77,29 @@ func grid_distance_to(other: NodeData) -> int:
 		for b in other.cells():
 			best = mini(best, absi(a.x - b.x) + absi(a.y - b.y))
 	return best
+
+## Whether this node still has an upgrade available (DEV-03).
+func can_upgrade() -> bool:
+	return upgraded_size.x > 0 and upgraded_size.y > 0 and (upgraded_size != size or upgraded_origin != grid_position)
+
+## The footprint this node would occupy after upgrading.
+func upgraded_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if upgraded_size.x <= 0 or upgraded_size.y <= 0:
+		return out
+	for dx in upgraded_size.x:
+		for dy in upgraded_size.y:
+			out.append(upgraded_origin + Vector2i(dx, dy))
+	return out
+
+## The ground held for this node's upgrade: the cells it would gain, which it
+## does not stand on yet. Permanently unbuildable, so the upgrade can never be
+## locked out by the player's own road.
+func reserved_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if not can_upgrade():
+		return out
+	for cell in upgraded_cells():
+		if not occupies(cell):
+			out.append(cell)
+	return out

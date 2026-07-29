@@ -12,6 +12,20 @@ const ROUTE_BASE_UPKEEP := 2.0
 const RIVER_BRIDGE_COST := 40.0
 const HUB_CAP_PER_NETWORK := 2
 
+## Source upgrade (DEV-03). A one-off purchase that doubles a source's daily
+## output and widens it to 2x1 on the map -- capital, not a subscription, so
+## it carries no upkeep: a per-day charge on a source would bleed the player
+## for owning infrastructure rather than for running it, which is what route
+## upkeep is already for.
+##
+## Priced well above a hub (150) because it is the answer to a harder problem.
+## Vegetables are over-subscribed on region 1 the moment every line opens --
+## Village B 25 + Village C 20 + Town D 30 + City E 35 = 110 against the
+## Garden's 90 -- so the Garden upgrade is not a luxury, it is the only way
+## that demand is ever fully served.
+const SOURCE_UPGRADE_COST := 300.0
+const SOURCE_UPGRADE_SUPPLY_MULT := 2.0
+
 ## ---------- bridges: road-over-road crossings (placed structure) ----------
 ## Built with the Bridge tool onto one existing route tile, turning it into a
 ## crossing: the road already there keeps running underneath, and a raised deck

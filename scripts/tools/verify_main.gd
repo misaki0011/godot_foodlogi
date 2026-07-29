@@ -239,6 +239,9 @@ func _report() -> void:
 		var item_name: String = terrain.mesh_library.get_item_name(item_id)
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
+	# Last, because it spends the treasury and permanently widens the Garden:
+	# everything above still expects the map it started with.
+	_test_reserved_ground_and_source_upgrade()
 	print("verify_main checks passed.")
 
 ## ROUTE-16: every route tile is attributed to the source(s) its network is
@@ -628,6 +631,60 @@ func _test_multi_tile_settlement_draws_one_stack(map_data: MapData) -> void:
 	state.active_orders.erase(city.node_id)
 	_main.call("_render_grid")
 	print("Multi-tile bubbles (DEV-02): City E draws 1 stack across 4 cells.")
+
+## Reserved upgrade ground is unbuildable, and the Upgrade tool spends money
+## to widen a source onto it (DEV-03).
+func _test_reserved_ground_and_source_upgrade() -> void:
+	var state: GameState = _main.get("_state")
+	var map_data: MapData = _main.get("_map_data")
+	var garden: NodeData = _node_by_id(map_data, "garden")
+	var saved_balance: float = state.balance
+	var reserved: Array[Vector2i] = garden.reserved_cells()
+	assert(reserved.size() == 1, "The Garden should reserve one cell, got %d" % reserved.size())
+	var held: Vector2i = reserved[0]
+
+	# A drag that tries to run over reserved ground builds nothing, wherever
+	# in the path the reserved cell falls -- including at the very end.
+	_main.call("_set_tool", "route")
+	var balance_before: float = state.balance
+	var through: Array[Vector2i] = [garden.grid_position, held, held + Vector2i(0, 1)]
+	_main.set("_drag_path", through)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag crossing reserved ground must be invalid")
+	assert("reserved" in String(_main.get("_drag_invalid_reason")).to_lower()
+		or "held for" in String(_main.get("_drag_invalid_reason")).to_lower(),
+		"The refusal must say the ground is spoken for, got: %s" % _main.get("_drag_invalid_reason"))
+	_main.call("_commit_drag")
+	assert(not state.grid.has(held), "Reserved ground must never receive a tile")
+	assert(is_equal_approx(state.balance, balance_before), "A refused drag must not charge")
+
+	# The Upgrade tool on a source spends the cost, widens the footprint onto
+	# the reserved cell and doubles output.
+	var supply_before: float = garden.produces.vegetables
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_set_tool", "upgrade")
+	_main.call("_handle_click", garden.grid_position)
+	assert(garden.cells().size() == 2, "An upgraded Garden stands on 2 cells")
+	assert(garden.occupies(held), "The upgrade must cover the ground it reserved")
+	assert(is_equal_approx(garden.produces.vegetables, supply_before * GameBalance.SOURCE_UPGRADE_SUPPLY_MULT), "Upgrading must double output")
+	assert(is_equal_approx(state.balance, 0.0), "The upgrade must cost SOURCE_UPGRADE_COST")
+
+	# The cell is now part of the node, so it resolves as one -- and it is no
+	# longer merely reserved.
+	assert(_main.call("_node_at", held) == garden, "The gained cell must resolve to the Garden")
+	assert(_main.call("_reserved_for", held) == null, "A gained cell is no longer reserved")
+	assert(not garden.can_upgrade(), "A fully expanded source must not offer another upgrade")
+
+	# And it cannot be bought twice.
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_handle_click", garden.grid_position)
+	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "A second upgrade must not charge")
+	print("Source upgrade (DEV-03): Garden %d -> %d, footprint %s." % [
+		roundi(supply_before), roundi(garden.produces.vegetables), garden.size,
+	])
+
+	state.balance = saved_balance
+	_main.call("_set_tool", "route")
 
 ## Screen position of a grid cell's centre, for driving real press/drag
 ## gestures through Main's input entry points.

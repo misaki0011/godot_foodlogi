@@ -112,6 +112,7 @@ func validate() -> Array[String]:
 	# whichever was placed last, silently hiding one of them from every build
 	# guard and every path.
 	var owner_of := {}
+	var reserved_by := {}
 	for node in node_placements:
 		if node.size.x < 1 or node.size.y < 1:
 			problems.append("%s has a non-positive size %s" % [node.node_id, node.size])
@@ -122,6 +123,24 @@ func validate() -> Array[String]:
 			if owner_of.has(cell):
 				problems.append("%s and %s both occupy %s" % [owner_of[cell], node.node_id, cell])
 			owner_of[cell] = node.node_id
+
+	# Reserved upgrade ground (DEV-03) is permanently unbuildable, so it has
+	# to be real, empty, on the map, and spoken for by exactly one node --
+	# otherwise the game blocks a cell for a growth that can never happen.
+	for node in node_placements:
+		if not node.can_upgrade():
+			continue
+		if node.upgraded_cells().size() <= node.cells().size():
+			problems.append("%s upgrades to a footprint no bigger than it already has" % node.node_id)
+		for cell in node.upgraded_cells():
+			if cell.x < 0 or cell.y < 0 or cell.x >= grid_size.x or cell.y >= grid_size.y:
+				problems.append("%s would upgrade onto %s, which is off the %s grid" % [node.node_id, cell, grid_size])
+			if owner_of.has(cell) and owner_of[cell] != node.node_id:
+				problems.append("%s would upgrade onto %s, which %s occupies" % [node.node_id, cell, owner_of[cell]])
+		for cell in node.reserved_cells():
+			if reserved_by.has(cell):
+				problems.append("%s and %s both reserve %s" % [reserved_by[cell], node.node_id, cell])
+			reserved_by[cell] = node.node_id
 	return problems
 
 func get_terrain(x: int, _y: int) -> GameEnums.TerrainType:

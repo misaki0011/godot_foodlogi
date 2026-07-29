@@ -70,7 +70,7 @@ const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map 
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
 	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
-	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost).",
+	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it instead: it doubles its daily output and grows onto the ground reserved beside it.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
@@ -93,6 +93,8 @@ var _map_data: MapData
 var _state := GameState.new()
 var _tool := "route"
 var _nodes_by_pos: Dictionary = {}
+## Cell -> the NodeData holding it for a future upgrade (DEV-03).
+var _reserved_by_cell: Dictionary = {}
 var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
 var _bubbles_visible := true
@@ -237,18 +239,14 @@ const ARROW_ROTATION_BY_DIR := {
 }
 
 func _ready() -> void:
-	_map_data = load(REGION_MAP_PATH)
+	# Duplicated because upgrading a source mutates its NodeData (DEV-03), and
+	# load() hands back a shared cached resource -- mutating that would leak
+	# one run's upgrades into the next, and into the dev checks.
+	_map_data = load(REGION_MAP_PATH).duplicate(true)
 	_state.balance = GameBalance.STARTING_FUNDS
 	for node in _map_data.node_placements:
-		# One entry per occupied cell (DEV-02). Everything that asks "is there
-		# a node at this cell" -- hit-testing, build guards, the established
-		# route overlay, the engine's never-transit-a-node rule -- resolves
-		# through here, so a multi-tile node needs no special case anywhere
-		# that works in cells. Anything that iterates NODES must iterate
-		# _nodes_by_id instead, or a 2x2 City gets processed four times.
-		for cell in node.cells():
-			_nodes_by_pos[cell] = node
 		_nodes_by_id[node.node_id] = node
+	_rebuild_cell_index()
 	# Seeds the demand lines the map opens with (DEV-01). Must run before the
 	# first _render_grid, since it decides which bubbles exist at all.
 	OrderBook.initialize(_state, _map_data)
@@ -446,14 +444,20 @@ func _recompute_drag_validity() -> void:
 		_drag_new_connections.append([prev, cell])
 		if newly_built.has(cell):
 			continue
-		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell)
+		# Reserved ground is blocked outright, at the end of a path as much as
+		# in the middle: it is not a place a route may terminate either.
+		var reserved := _reserved_for(cell)
+		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell) or reserved != null
 		if pre_existing:
-			if i == last_index or _crosses_bridge_at(i):
+			if reserved == null and (i == last_index or _crosses_bridge_at(i)):
 				continue
 			if _drag_invalid_reason == "":
 				_drag_valid = false
-				_drag_invalid_reason = ("A bridge can only be crossed straight over, along the deck." if SimulationEngine.is_bridge(_state, cell)
-					else "A new route can't cross or reuse an existing tile or node -- it can only run over empty ground between its two ends, or straight over a bridge.")
+				if reserved != null:
+					_drag_invalid_reason = "That ground is held for %s's expansion -- build around it." % reserved.display_name
+				else:
+					_drag_invalid_reason = ("A bridge can only be crossed straight over, along the deck." if SimulationEngine.is_bridge(_state, cell)
+						else "A new route can't cross or reuse an existing tile or node -- it can only run over empty ground between its two ends, or straight over a bridge.")
 			continue
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
 		newly_built[cell] = true
@@ -708,15 +712,53 @@ func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
 	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_START_COLOR)
 	_grid_visuals.add_child(mesh_instance)
 
+## Rebuilds the cell -> node lookups. Run at load and again whenever a
+## footprint changes (a source upgrade widens one, DEV-03).
+##
+## `_nodes_by_pos` holds one entry per OCCUPIED cell (DEV-02). Everything that
+## asks "is there a node at this cell" -- hit-testing, build guards, the
+## established-route overlay, the engine's never-transit-a-node rule --
+## resolves through it, so a multi-tile node needs no special case anywhere
+## that works in cells. Anything that iterates NODES must iterate
+## `_nodes_by_id`, or a 2x2 City gets processed four times.
+##
+## `_reserved_by_cell` is deliberately separate. Reserved ground is not part
+## of the node: a delivery must not be able to arrive there, and tapping it
+## should not open the node's tip. It is only ever consulted by the build
+## guard and by what draws it.
+func _rebuild_cell_index() -> void:
+	_nodes_by_pos.clear()
+	_reserved_by_cell.clear()
+	for node_id in _nodes_by_id:
+		var node: NodeData = _nodes_by_id[node_id]
+		for cell in node.cells():
+			_nodes_by_pos[cell] = node
+		for cell in node.reserved_cells():
+			_reserved_by_cell[cell] = node
+
+## The node holding `cell` for a future upgrade, or null. Reserved ground is
+## permanently unbuildable so an upgrade can never be locked out by the
+## player's own road (DEV-03).
+func _reserved_for(cell: Vector2i) -> NodeData:
+	return _reserved_by_cell.get(cell)
+
 func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	if not _cell_in_bounds(cell):
 		return
 	var n := _node_at(cell)
 	if n:
-		# Sources and settlements are informational, not buildable -- tapping
-		# (mobile has no hover) shows the same info tip a mouse hover would.
-		# Nothing on the map ever needs a tap to advance the game: orders open
-		# themselves as deliveries land (DEV-01).
+		# The Upgrade tool is the one tool that does anything to a node: it
+		# widens a source and doubles its output (DEV-03). This is not the
+		# discoverability trap the old tap-to-accept offer was -- there the
+		# tap was passive and unprompted, here the player has already picked
+		# a tool that says "upgrade what I touch".
+		if _tool == "upgrade" and n.node_type == GameEnums.NodeType.SOURCE:
+			_do_upgrade_source(n)
+			return
+		# Otherwise sources and settlements are informational, not buildable
+		# -- tapping (mobile has no hover) shows the same info tip a mouse
+		# hover would. Nothing on the map ever needs a tap to advance the
+		# game: orders open themselves as deliveries land (DEV-01).
 		_update_tip(cell, screen_position)
 		return
 	_tip_panel.visible = false
@@ -761,6 +803,38 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 	_state.balance -= cost
 	cell_data.level = lvl.next
 	_show_toast("Upgraded to %s for §%d." % [GameBalance.ROUTE_LEVELS[cell_data.level].label, roundi(cost)])
+
+## Widens a source onto the ground held for it and doubles its daily output
+## (DEV-03). The reserved cells were never buildable, so this can never fail
+## for want of space -- the only thing that can stop it is money.
+##
+## Mutates the NodeData, which is safe because Main duplicates the map
+## resource at load; the engine reads supply straight off `produces`, so the
+## bigger output is live on the next simulated day with nothing to thread
+## through.
+func _do_upgrade_source(n: NodeData) -> void:
+	if not n.can_upgrade():
+		_show_toast("%s is already at full size." % n.display_name, true)
+		return
+	var cost := GameBalance.SOURCE_UPGRADE_COST
+	if _state.balance < cost:
+		_show_toast("Not enough treasury to expand %s (§%d needed)." % [n.display_name, roundi(cost)], true)
+		return
+
+	_state.balance -= cost
+	n.grid_position = n.upgraded_origin
+	n.size = n.upgraded_size
+	var gained := []
+	for food_id in n.produces:
+		n.produces[food_id] *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
+		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
+
+	# The footprint moved, so every cell lookup and every marker is stale.
+	_rebuild_cell_index()
+	_node_spawner.spawn(_map_data, _terrain)
+	_render_grid()
+	_update_ui()
+	_show_toast("%s expanded for §%d — now %s." % [n.display_name, roundi(cost), ", ".join(gained)])
 
 func _do_build_storage(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
@@ -1126,6 +1200,12 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 			for food_id in n.produces:
 				parts.append("%s (%d/day)" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
 			text = "[b]%s[/b]\nProduces: %s" % [n.display_name, ", ".join(parts)]
+			# The upgrade is only reachable through the Upgrade tool, so the
+			# tip is where the player finds out it exists at all (DEV-03).
+			if n.can_upgrade():
+				text += "\n[color=#C9A227]Upgrade §%d with the Upgrade tool — doubles output, expands onto the reserved ground.[/color]" % roundi(GameBalance.SOURCE_UPGRADE_COST)
+			else:
+				text += "\n[color=#8A8375]Fully expanded.[/color]"
 		else:
 			text = _settlement_tip_text(n)
 	elif cell_data:
@@ -1305,6 +1385,7 @@ func _render_grid() -> void:
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
+	_render_reserved_ground()
 	_render_established_routes()
 	if _bubbles_visible:
 		_render_supply_bubbles()
@@ -1659,6 +1740,27 @@ func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	mesh_instance.material_override = material
 	_grid_visuals.add_child(mesh_instance)
 
+## Marks the ground held for each source's upgrade (DEV-03).
+##
+## Drawn because it is permanently unbuildable: an invisible wall that eats a
+## drag with an error message would read as a bug, and the player needs to see
+## which cells to route around before they try. Kept flat and translucent so
+## it reads as ground rather than as a structure -- there is nothing built
+## there, it is simply spoken for.
+func _render_reserved_ground() -> void:
+	for cell in _reserved_by_cell:
+		var mesh_instance := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(0.82, 0.06, 0.82)
+		mesh_instance.mesh = mesh
+		mesh_instance.position = _terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.03, 0)
+		var material := StandardMaterial3D.new()
+		material.albedo_color = Color(0.85, 0.78, 0.55, 0.42)
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mesh_instance.material_override = material
+		_grid_visuals.add_child(mesh_instance)
+
 func _add_congestion_marker(pos: Vector3, over: bool) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
@@ -1904,7 +2006,7 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "ROUTES")
 	var route_grid := _add_tool_grid(box)
 	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.RIVER_BRIDGE_COST)])
-	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade Route -- Dirt to Paved (§%d), Paved to Main (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost)])
+	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d) or Paved to Main (§%d); a food source to double its output (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), roundi(GameBalance.SOURCE_UPGRADE_COST)])
 
 	_add_section_title(box, "STORAGE")
 	var storage_grid := _add_tool_grid(box)
