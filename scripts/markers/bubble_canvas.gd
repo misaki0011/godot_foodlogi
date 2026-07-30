@@ -10,9 +10,9 @@ extends Control
 ##
 ## Two variants remain:
 ##
-##   GLYPH_STRIP       a small dark plate carrying one food glyph per open
-##                     order, each with a status mark at its corner. This is
-##                     the map's default layer, and all a SOURCE ever draws.
+##   GLYPH_COLUMN      a vertical stack of chips, one per open order: a food
+##                     glyph on a status-coloured background. This is the
+##                     map's default layer, and all a SOURCE ever draws.
 ##   SETTLEMENT        a cream speech balloon: dark text, big corner
 ##                     radius, triangular tail, a status-coloured border,
 ##                     and a freshness bar along the bottom. Drawn only for
@@ -23,26 +23,31 @@ extends Control
 ## Its used/produced figure moved to the hover tip (main.gd's _update_tip),
 ## which is the only place that number now lives.
 ##
-## A settlement's status is deliberately kept off the bubble *body*: a
-## saturated tint behind the text both fights the food-coloured icon dot
-## and forces every status to stay pale enough to read dark text on, which
-## is what made red and green hard to tell apart at map distance. Status
-## instead rides on the border, the tail, the progress bar and a glyph --
-## and the glyph makes the three states distinguishable by shape alone,
-## for players who cannot separate the red and green hues.
+## Status rides the body's tint, the border, the tail, the bar and a glyph.
+## The glyph is what keeps the three states distinguishable by shape alone,
+## for players who cannot separate the red and green hues -- that guarantee
+## predates the tint and outlives it.
 ##
 ## A map where every node floats a full balloon is unreadable once more than
 ## a couple of orders are open -- the bubbles crowd each other and bury the
-## roads, terrain and route overlay underneath them. The strip answers the
+## roads, terrain and route overlay underneath them. The column answers the
 ## two questions worth asking at a glance (what does this place want, is it
 ## all right) in a fraction of the space, and the balloon -- numbers,
 ## freshness bar and all -- comes back the moment the player hovers or taps
 ## the node. See main.gd's BubblesMode.
 
-const BUBBLE_COLOR := Color(0.97, 0.94, 0.87, 0.97)
-const BORDER_COLOR := Color(0.15, 0.12, 0.08, 0.65)
-const TEXT_COLOR := Color(0.14, 0.11, 0.08)
-const SUBTEXT_COLOR := Color(0.34, 0.29, 0.24)
+## The balloon shares the chip's palette: a dark, status-TINTED ground with
+## light text, rather than the cream body it used to have. Collapsed and
+## expanded are then obviously the same object at two levels of detail,
+## which is the whole point of one expanding into the other.
+##
+## Going dark is also what lets the status colour be strong here. Item 30
+## kept status off the cream body because a saturated ground under DARK text
+## forces every status pale enough to read on, which is what made red and
+## green converge at map distance. Inverting to light-on-dark removes that
+## constraint entirely -- the tint can be as saturated as the chip's.
+const TEXT_COLOR := Color(0.96, 0.96, 0.94)
+const SUBTEXT_COLOR := Color(0.74, 0.77, 0.78)
 
 ## Vertical room reserved below the bubble body for a settlement's tail.
 ## The tail is what reads first at map distance, so it gets a generous
@@ -78,12 +83,6 @@ const RED_COLOR := Color("d64545")
 const AMBER_COLOR := Color("e8a33d")
 const GREEN_COLOR := Color("3fa34d")
 
-## How much of the accent hue washes into the bubble body. Green washes
-## less and outlines thinner than the others on purpose: a settlement that
-## needs nothing should recede, so problems are what catch the eye.
-const STATUS_WASH_ALPHA := 0.12
-const GREEN_WASH_ALPHA := 0.05
-
 ## Red draws an extra translucent halo behind the body. It is static
 ## rather than animated: on day one every settlement is red, and a screen
 ## of pulsing bubbles is worse than no emphasis at all.
@@ -104,8 +103,8 @@ const STATUS_GLYPH_MARGIN := 13.0
 const BAR_INSET := 22.0
 const BAR_HEIGHT := 9.0
 const BAR_BOTTOM_MARGIN := 18.0
-const BAR_TRACK_COLOR := Color(0.15, 0.12, 0.08, 0.16)
-const BAR_TICK_COLOR := Color(0.15, 0.12, 0.08, 0.55)
+const BAR_TRACK_COLOR := Color(1.0, 1.0, 1.0, 0.17)
+const BAR_TICK_COLOR := Color(1.0, 1.0, 1.0, 0.62)
 const BAR_TICK_WIDTH := 3.0
 
 ## The bar only takes the status colour once the full requested amount has
@@ -113,67 +112,88 @@ const BAR_TICK_WIDTH := 3.0
 ## freshness was, so colouring a long bar red -- or worse, green -- would
 ## dress up a line that is not paying. Grey says "measured, but it does
 ## not count yet".
-const BAR_INERT_COLOR := Color(0.15, 0.12, 0.08, 0.32)
+const BAR_INERT_COLOR := Color(1.0, 1.0, 1.0, 0.34)
 
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
 const MIN_FONT_SIZE := 14
 
-## ---------- glyph strip ----------
-## The plate reuses the source sign's dark slate rather than the settlement's
-## cream: the strip sits directly over grass, and a pale plate at the
-## terrain's own luminance loses its edges into the ground. Dark also lets a
-## pale food glyph (milk) and a saturated status mark both read on it.
-const STRIP_PLATE_COLOR := Color(0.18, 0.20, 0.23, 0.90)
-const STRIP_PLATE_BORDER := Color(0.80, 0.82, 0.85, 0.42)
-const STRIP_PLATE_BORDER_WIDTH := 6
-const STRIP_CORNER_RATIO := 0.30
-## Ink the food glyphs are outlined in on the plate -- light, because the
-## plate is dark. This is the inverse of the bubble, where the ink is dark.
-const STRIP_GLYPH_INK := Color(0.93, 0.94, 0.96, 0.92)
-## 4x the radius the strip shipped with (19). At the original size a
-## one-glyph strip came to roughly ten screen pixels on a phone-width view of
-## the whole region, which is below the point where any silhouette resolves --
-## the glyphs were unreadable in exactly the situation they exist for.
+## ---------- glyph column (the map's default layer) ----------
 ##
-## The size increase is native rather than a sprite scale: setup_glyph_strip
-## sizes the SubViewport to fit, so a bigger glyph is drawn at a bigger
-## resolution and stays crisp, instead of magnifying the old texture.
-const STRIP_GLYPH_RADIUS := 76.0
-## Gap and padding grow well under 4x on purpose. A five-order City would
-## otherwise span about four tiles; keeping the spacing tight holds the
-## widest strip near three and reads as one object rather than a row of
-## separate badges.
-const STRIP_GLYPH_GAP := 30.0
-const STRIP_PADDING := Vector2(34.0, 26.0)
-## Slack around the plate so its border and drop shadow are not clipped by
-## the viewport edge.
-const STRIP_MARGIN := 8.0
+## One CHIP per open order, stacked VERTICALLY. Horizontal was tried first
+## and a five-order City spanned three-plus tiles sideways, straight across
+## whichever neighbour happened to sit beside it -- and settlements crowd
+## each other horizontally far more than vertically, because the space above
+## a node is usually empty map.
+##
+## A settlement chip and a source chip are deliberately different objects,
+## the same way the retired balloon and sign were:
+##
+##   SETTLEMENT   heavily rounded, with a status-TINTED dark fill and a
+##                saturated status border. The coloured background is what
+##                carries the verdict at a glance.
+##   SOURCE       near-square corners, neutral slate, no status anything --
+##                a source has no delivery to be judged on.
+##
+## Note the tint may be strong here in a way item 30 ruled out for the
+## balloon *body*: that rule exists because a saturated ground under DARK
+## TEXT forces every status pale enough to read on, which is what made red
+## and green converge. A chip carries no text, so the constraint does not
+## apply and the status colour can be as saturated as it likes.
+const CHIP_SLATE := Color(0.18, 0.20, 0.23, 0.92)
+const CHIP_SLATE_BORDER := Color(0.80, 0.82, 0.85, 0.42)
+const CHIP_BORDER_WIDTH := 7
+## How far the chip's fill is pulled from slate toward its status colour.
+## Enough to read as a red/amber/green object at map distance, but still
+## dark enough that any food glyph -- including pale milk and green
+## vegetables on a green chip -- keeps its contrast against it.
+const CHIP_STATUS_TINT := 0.42
+const SETTLEMENT_CHIP_CORNER_RATIO := 0.34
+const SOURCE_CHIP_CORNER_RATIO := 0.09
+## Ink the food glyphs are outlined in on a chip -- light, because a chip is
+## always dark. This is the inverse of the balloon, where the ink is dark.
+const CHIP_GLYPH_INK := Color(0.93, 0.94, 0.96, 0.94)
+## 4x the radius the strip shipped with (19). At the original size a chip
+## came to roughly ten screen pixels on a phone-width view of the whole
+## region, below the point where any silhouette resolves -- the glyphs were
+## unreadable in exactly the situation they exist for.
+##
+## The size is native rather than a sprite scale: setup_glyph_column sizes
+## the SubViewport to fit, so a bigger glyph is drawn at a bigger resolution
+## and stays crisp instead of magnifying a small texture.
+const CHIP_GLYPH_RADIUS := 76.0
+const CHIP_PADDING := 20.0
+const CHIP_GAP := 12.0
+## Slack around the column so chip borders and drop shadows are not clipped
+## by the viewport edge.
+const CHIP_MARGIN := 8.0
+## The status mark rides the chip's lower-right corner. The tinted background
+## already says red/amber/green, but the mark is what keeps the three states
+## separable by SHAPE, which is item 30's colourblind guarantee -- so it stays
+## even though it is now the second channel rather than the only one.
+const CHIP_STATUS_RATIO := 0.40
+const CHIP_STATUS_BACKING := Color(0.08, 0.09, 0.11, 0.92)
 
-## Viewport size a strip of `count` glyphs needs. Sized to content so a
-## one-glyph source does not carry a texture wide enough for five.
-static func glyph_strip_size(count: int) -> Vector2i:
+## Outer size of one chip, including its padding.
+static func chip_size() -> float:
+	return CHIP_GLYPH_RADIUS * 2.0 + CHIP_PADDING * 2.0
+
+## Viewport size a column of `count` chips needs. Sized to content, so a
+## one-chip source does not carry a texture tall enough for five.
+static func glyph_column_size(count: int) -> Vector2i:
 	var n := maxi(count, 1)
-	var span := n * STRIP_GLYPH_RADIUS * 2.0 + (n - 1) * STRIP_GLYPH_GAP
+	var chip := chip_size()
 	return Vector2i(
-		ceili(span + (STRIP_PADDING.x + STRIP_MARGIN) * 2.0),
-		ceili(STRIP_GLYPH_RADIUS * 2.0 + (STRIP_PADDING.y + STRIP_MARGIN) * 2.0),
+		ceili(chip + CHIP_MARGIN * 2.0),
+		ceili(n * chip + (n - 1) * CHIP_GAP + CHIP_MARGIN * 2.0),
 	)
-## The status mark rides the glyph's lower-right corner. It only has to
-## separate three states where the food glyph separates five, so it can
-## afford to be much smaller and still stay legible.
-const STRIP_STATUS_RATIO := 0.52
-const STRIP_STATUS_OFFSET := Vector2(0.74, 0.78)
-## A dark disc behind the status mark, so a saturated glyph keeps its shape
-## where it overlaps the food glyph's own fill.
-const STRIP_STATUS_BACKING := Color(0.10, 0.11, 0.13, 0.85)
 
-var _kind: FoodBubbleMarker.Kind = FoodBubbleMarker.Kind.GLYPH_STRIP
+var _kind: FoodBubbleMarker.Kind = FoodBubbleMarker.Kind.GLYPH_COLUMN
 var _icon_color: Color = Color.WHITE
 ## Which silhouette identifies the food (see FoodGlyphs). Empty falls back to
 ## the plain disc the bubbles used before glyphs existed.
 var _food_id: String = ""
-## GLYPH_STRIP only: one {food_id, color, status} per open order, already
+## GLYPH_COLUMN only: one {food_id, color, status} per open order, already
 ## sorted worst-first by main.gd.
 var _glyph_entries: Array = []
 var _amount_text: String = "0"
@@ -194,7 +214,9 @@ static func status_color(status: FoodBubbleMarker.Status) -> Color:
 			return AMBER_COLOR
 		FoodBubbleMarker.Status.GREEN:
 			return GREEN_COLOR
-	return BORDER_COLOR
+	# DEFAULT/MUTED: a source, which has no delivery verdict. Callers use
+	# _is_delivery_status to avoid tinting anything with this.
+	return CHIP_SLATE_BORDER
 
 func set_settlement(food_id: String, icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status, freshness_pct: int, threshold: float) -> void:
 	_kind = FoodBubbleMarker.Kind.SETTLEMENT
@@ -207,8 +229,8 @@ func set_settlement(food_id: String, icon_color: Color, amount_text: String, sta
 	queue_redraw()
 
 ## `entries` is one {food_id, color, status} per open order, worst-first.
-func set_glyph_strip(entries: Array) -> void:
-	_kind = FoodBubbleMarker.Kind.GLYPH_STRIP
+func set_glyph_column(entries: Array) -> void:
+	_kind = FoodBubbleMarker.Kind.GLYPH_COLUMN
 	_glyph_entries = entries
 	queue_redraw()
 
@@ -217,7 +239,7 @@ func _draw() -> void:
 		FoodBubbleMarker.Kind.SETTLEMENT:
 			_draw_settlement()
 		_:
-			_draw_glyph_strip()
+			_draw_glyph_column()
 
 # --- variants ---------------------------------------------------------
 
@@ -230,8 +252,9 @@ func _draw_settlement() -> void:
 	if _status == FoodBubbleMarker.Status.RED:
 		_draw_halo(rect, radius, accent)
 
-	var wash := GREEN_WASH_ALPHA if green else STATUS_WASH_ALPHA
-	var fill := BUBBLE_COLOR.lerp(Color(accent.r, accent.g, accent.b, BUBBLE_COLOR.a), wash)
+	# Same fill formula as a chip (see CHIP_STATUS_TINT), so the balloon a
+	# hover expands into is visibly the chip it grew from.
+	var fill := CHIP_SLATE.lerp(Color(accent.r, accent.g, accent.b, CHIP_SLATE.a), CHIP_STATUS_TINT)
 	var border_width := GREEN_BORDER_WIDTH if green else SETTLEMENT_BORDER_WIDTH
 
 	_draw_tail(rect, accent)
@@ -243,10 +266,10 @@ func _draw_settlement() -> void:
 
 	var icon_r := rect.size.y * 0.26
 	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, row_cy)
-	# Stroked in the full-strength text ink rather than BORDER_COLOR's 0.65
-	# alpha: this outline is the only thing separating a milk bottle from the
-	# cream body behind it (FoodGlyphs), so it cannot be a hint.
-	FoodGlyphs.draw_glyph(self, _food_id, icon_center, icon_r, _icon_color, TEXT_COLOR)
+	# Stroked in the chip's light ink: this outline is the only thing
+	# separating a pale milk bottle -- or a green carrot on a green-tinted
+	# body -- from the ground behind it (FoodGlyphs), so it cannot be a hint.
+	FoodGlyphs.draw_glyph(self, _food_id, icon_center, icon_r, _icon_color, CHIP_GLYPH_INK)
 
 	var glyph_r := rect.size.y * STATUS_GLYPH_RATIO
 	var glyph_center := Vector2(rect.end.x - STATUS_GLYPH_MARGIN - glyph_r, row_cy)
@@ -266,37 +289,48 @@ func _draw_settlement() -> void:
 ## plate, sized to its contents and centred in the canvas so the surrounding
 ## transparent margin costs nothing on screen. No numbers and no freshness
 ## bar -- those are what the hover/tap balloon is for.
-func _draw_glyph_strip() -> void:
+func _draw_glyph_column() -> void:
 	if _glyph_entries.is_empty():
 		return
 
-	var n := _glyph_entries.size()
-	var r := STRIP_GLYPH_RADIUS
-	var span := n * r * 2.0 + maxf(n - 1, 0) * STRIP_GLYPH_GAP
-	var plate := Rect2(
-		Vector2((size.x - span) * 0.5 - STRIP_PADDING.x, (size.y - r * 2.0) * 0.5 - STRIP_PADDING.y),
-		Vector2(span + STRIP_PADDING.x * 2.0, r * 2.0 + STRIP_PADDING.y * 2.0),
-	)
-	_draw_body(plate, int(plate.size.y * STRIP_CORNER_RATIO), STRIP_PLATE_COLOR, STRIP_PLATE_BORDER, STRIP_PLATE_BORDER_WIDTH)
-
-	var cy := plate.position.y + plate.size.y * 0.5
-	var x := plate.position.x + STRIP_PADDING.x + r
+	var r := CHIP_GLYPH_RADIUS
+	var chip := chip_size()
+	var x := (size.x - chip) * 0.5
+	var y := CHIP_MARGIN
 	for entry in _glyph_entries:
-		var center := Vector2(x, cy)
-		FoodGlyphs.draw_glyph(self, entry.food_id, center, r, entry.color, STRIP_GLYPH_INK)
-
-		# The status mark sits over the glyph's corner rather than beside it,
-		# so a settlement with five orders stays five marks wide instead of
-		# ten. Its own backing disc keeps it legible where it overlaps.
+		var rect := Rect2(Vector2(x, y), Vector2(chip, chip))
 		var status: FoodBubbleMarker.Status = entry.status
-		if status == FoodBubbleMarker.Status.RED \
-				or status == FoodBubbleMarker.Status.AMBER \
-				or status == FoodBubbleMarker.Status.GREEN:
-			var sr := r * STRIP_STATUS_RATIO
-			var sc := center + Vector2(r * STRIP_STATUS_OFFSET.x, r * STRIP_STATUS_OFFSET.y)
-			draw_circle(sc, sr * 1.05, STRIP_STATUS_BACKING)
-			_draw_status_mark(status, sc, sr, status_color(status))
-		x += r * 2.0 + STRIP_GLYPH_GAP
+		var judged := _is_delivery_status(status)
+
+		# A settlement chip takes its status colour as a background; a source
+		# chip stays neutral slate with near-square corners, because a source
+		# has no delivery to be judged on and must not look like it does.
+		var accent := status_color(status)
+		var fill := CHIP_SLATE.lerp(Color(accent.r, accent.g, accent.b, CHIP_SLATE.a), CHIP_STATUS_TINT) if judged else CHIP_SLATE
+		var border := accent if judged else CHIP_SLATE_BORDER
+		var ratio := SETTLEMENT_CHIP_CORNER_RATIO if judged else SOURCE_CHIP_CORNER_RATIO
+		_draw_body(rect, int(chip * ratio), fill, border, CHIP_BORDER_WIDTH)
+
+		var center := rect.position + rect.size * 0.5
+		FoodGlyphs.draw_glyph(self, entry.food_id, center, r, entry.color, CHIP_GLYPH_INK)
+
+		# The tinted background already says red/amber/green; this keeps the
+		# three separable by SHAPE too, which is item 30's colourblind
+		# guarantee. Its own backing disc holds it legible where it overlaps
+		# the glyph.
+		if judged:
+			var sr := chip * CHIP_STATUS_RATIO * 0.5
+			var sc := rect.end - Vector2(sr, sr) - Vector2(CHIP_BORDER_WIDTH, CHIP_BORDER_WIDTH)
+			draw_circle(sc, sr * 1.06, CHIP_STATUS_BACKING)
+			_draw_status_mark(status, sc, sr, accent)
+		y += chip + CHIP_GAP
+
+## Whether a status is a settlement's delivery verdict rather than a source's
+## stock level. DEFAULT/MUTED belong to sources, which are never judged.
+static func _is_delivery_status(status: FoodBubbleMarker.Status) -> bool:
+	return status == FoodBubbleMarker.Status.RED \
+		or status == FoodBubbleMarker.Status.AMBER \
+		or status == FoodBubbleMarker.Status.GREEN
 
 # --- shared pieces ----------------------------------------------------
 

@@ -1540,13 +1540,13 @@ func _node_center(n: NodeData) -> Vector3:
 func _shows_full_bubbles(n: NodeData) -> bool:
 	return _bubbles_mode == BubblesMode.ALL or _focused_node_id == n.node_id
 
-func _spawn_glyph_strip(base_pos: Vector3, entries: Array) -> void:
+func _spawn_glyph_column(base_pos: Vector3, entries: Array) -> void:
 	if entries.is_empty():
 		return
-	var strip: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-	_grid_visuals.add_child(strip)
-	strip.position = base_pos
-	strip.setup_glyph_strip(entries)
+	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+	_grid_visuals.add_child(column)
+	column.position = base_pos
+	column.setup_glyph_column(entries)
 
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
@@ -1575,7 +1575,7 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 				else foods[food_id].color),
 			"status": bubble_status,
 		})
-	_spawn_glyph_strip(base_pos, entries)
+	_spawn_glyph_column(base_pos, entries)
 
 ## A settlement can demand up to 3 foods (Town D, City E), and some
 ## settlements sit only 3 tiles from a neighbor -- stacking every bubble
@@ -1652,7 +1652,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 				"color": foods[e.food_id].color,
 				"status": e.status,
 			})
-		_spawn_glyph_strip(base_pos, glyphs)
+		_spawn_glyph_column(base_pos, glyphs)
 		return
 
 	for index in entries.size():

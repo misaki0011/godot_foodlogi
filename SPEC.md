@@ -104,6 +104,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The settlement's detailed description is retired.** Hovering or tapping a settlement expanded its glyph strip into full balloons *and* opened a text panel repeating the same delivery in words -- the balloons already carry delivered/requested, the freshness percentage, and the bar ticked at that settlement's own bonus threshold, so the panel was saying it twice. `_settlement_tip_text` is deleted and a settlement no longer opens the tip at all; the balloons are the detail view. Sources, routes, storage, hubs and bridges keep their tips.
     Note what the text panel took with it, because the balloons do not carry all of it: the settlement's **`min_freshness`** (the reject threshold -- the bar still ticks `bonus_freshness`, which is the line that pays), the **"May order later"** list of demand lines not yet opened (item 36), and the **"N arrived too spoiled to accept"** rejection figure. The first is inferable from a rejected delivery, but the other two are genuinely gone from the map and now exist only in the day report. If the still-to-come list turns out to be load-bearing for planning, it wants somewhere better than a hover panel anyway. See §10.1, §10.6.
 
+49. **One design language: a vertical column of status-coloured chips, expanding into balloons that share their palette.** Item 48's horizontal strip and item 30's cream balloon were two unrelated looks bolted together, and the strip had a shape problem besides.
+    **The collapsed view is a vertical column of chips, one per open order.** Horizontal was wrong for the map: a five-order City spanned three-plus tiles sideways, straight across whichever neighbour sat beside it -- and settlements crowd each other horizontally far more than vertically, because the space *above* a node is usually empty map. Stacking downward costs nothing anyone else was using. Severity still orders them, so the **top** chip is the line most worth acting on.
+    **A chip is a food glyph on a status-coloured background.** The colour is the point: red, amber and green are readable as a *background* at map distance in a way a corner badge never was. Note this is allowed here precisely because a chip carries **no text** -- item 30 kept status off the balloon body because a saturated ground under dark text forces every status pale enough to read on, which is exactly what made red and green converge. The tint is pulled 42% from slate toward the status colour, which keeps it dark enough that every food glyph holds its contrast: the worst cases are a green carrot on a green chip and gold grain on an amber one, and both survive on the strength of the glyph's light outline (item 47's stroke rule, earning its keep a second time). The ✕/!/✓ mark stays even though the background now says the same thing, because shape is the colourblind guarantee and it should not depend on hue at all.
+    **The balloon takes the same palette.** It was cream with dark text; it is now the chip's dark, status-tinted ground with light text, so the thing a hover expands into is visibly the chip it grew from -- which is what "consistent" has to mean if one turns into the other. Inverting to light-on-dark is also what lets the tint be strong: the constraint item 30 was working around only exists for dark text. `BUBBLE_COLOR`, `STATUS_WASH_ALPHA` and `GREEN_WASH_ALPHA` are gone with the cream.
+    **A source is a different object, by shape as well as colour.** A settlement chip is heavily rounded, status-tinted and carries a status mark; a source chip is **near-square, neutral slate, and carries no status anything** -- a source has no delivery to be judged on and must not look like it does. That reinstates the corner-radius language the retired balloon/sign pair used to carry (item 30), now as the only thing distinguishing two chips rather than two whole silhouettes. See §10.1, §16.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1602,48 +1608,52 @@ The main screen should show:
 - Settlement last-delivery detail, as balloons on hover/tap (§10.1)
 - Top-left zoom/pan controls (§10.7)
 
-#### The map layer: glyphs at rest, bubbles on inspection (v0.6 item 47)
+#### The map layer: chips at rest, balloons on inspection (v0.6 items 47-49)
 
-At rest every node draws a compact **glyph strip** -- one food silhouette per
-open order, each with a status mark. The full balloon comes back only for the
-node the player is hovering or has tapped.
+At rest every node draws a **vertical column of chips** -- one food glyph per
+open order on a status-coloured background. The full balloon comes back only
+for the node the player is hovering or has tapped.
 
 ```text
-   [wheat!] [loaf✓] [fish✕]      <- at rest: one glyph per open order
-          Village C
+   [ ✕ fish  ]      <- worst first
+   [ ! wheat ]
+   [ ✓ loaf  ]
+   Village C
 
-   ,---------------.             <- on hover/tap: the balloons, one per order
+   ,---------------.   <- on hover/tap: balloons, same palette as the chips
    | (loaf)  12/25 ! |
    | [====|-----]    |
    `----v------------'
 ```
 
-- **A glyph, not a colour, says which food.** A bubble carries no food name,
-  so colour alone identified all five -- and it cannot: milk on the cream
-  body is a contrast ratio of about 1.02:1, and grain and bread are adjacent
+- **A glyph, not a colour, says which food.** A balloon carries no food name,
+  so colour alone identified all five -- and it cannot: milk on the old cream
+  body was a contrast ratio of about 1.02:1, and grain and bread are adjacent
   golds. Each food has one silhouette: **wheat ear, loaf, carrot, bottle,
-  fish**. Every glyph is stroked as well as filled, which is what keeps a
-  near-white milk bottle readable on cream.
-- **The same glyph is used everywhere that food appears** -- source sign,
-  settlement balloon, glyph strip. That is what makes it learnable: the mark
-  on the Harbor's sign is the mark on City E's bubble.
+  fish**, stroked as well as filled so a pale or same-hued glyph still reads.
+- **The chip's background says the status.** Red, amber and green read as a
+  background at map distance in a way a corner badge does not. Allowed here
+  because a chip carries no text -- item 30's rule against a saturated body
+  exists only under *dark* text. The ✕/!/✓ mark stays regardless: shape is
+  the colourblind guarantee and must not depend on hue.
+- **The balloon shares that palette** -- dark, status-tinted, light text --
+  so what a hover expands into is visibly the chip it grew from.
 - **Order is severity**: red, then amber, then green, ties broken by the
-  shortfall as a fraction of the amount requested. The leftmost glyph is
-  always the line most worth acting on.
+  shortfall as a fraction requested. The **top** chip is the line most worth
+  acting on.
+- **Vertical, not horizontal.** A five-order City spanned three-plus tiles
+  sideways and crossed its neighbours; the space above a node is usually
+  empty map.
+- **A source is a different object**: near-square corners, neutral slate, no
+  status tint and no status mark -- it has no delivery to be judged on. It
+  never expands, and its used/produced figure lives in the hover tip.
+- **A settlement opens no text tip** (item 48). The balloons are the detail
+  view. Sources, routes, storage, hubs and bridges keep theirs.
 - **Nothing new is tappable.** Expansion rides the hover/tap that already
-  opens the info tip (§10.6); the strip itself is not a control.
-- **Bubbles is a three-state control -- Glyphs / All / Off.** All restores the
-  old always-on balloons for every node, because the strip trades away the
-  delivered/requested numbers and the freshness bar and a player mid-
-  optimisation may want them all on screen.
-- **A source is always its big glyph** (one source, one food, §4.7) -- it
-  never expands into anything else, the dark slate sign having been retired
-  in item 48. It carries no status mark: spent-versus-stocked is already said
-  by the glyph going grey, and a ✓ there would read as a delivery verdict a
-  source never has. Its used/produced figure lives in the hover tip.
-- **A settlement opens no text tip** (item 48). The balloons the hover/tap
-  expands are the detail view; a panel repeating them in words was saying the
-  same thing twice. Sources, routes, storage, hubs and bridges keep theirs.
+  opens the info tip (§10.6).
+- **Bubbles is a three-state control -- Glyphs / All / Off.** All restores
+  always-on balloons for every node, for a player who wants every number on
+  screen at once.
 
 ### 10.2 Route drawing UI
 

@@ -43,22 +43,22 @@ const STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION + 0.1
 const COLUMN_SPACING := WORLD_WIDTH + 0.1
 
 ## The balloon's authored SubViewport size (food_bubble_marker.tscn). Set
-## explicitly on every balloon setup, because setup_glyph_strip resizes the
+## explicitly on every balloon setup, because setup_glyph_column resizes the
 ## viewport to its own contents and a marker must never inherit that.
 const BALLOON_VIEWPORT := Vector2i(310, 150)
 
-## How much smaller a glyph strip renders than a settlement balloon. The
-## strip is the always-on layer over the whole map, so it has to sit well
+## How much smaller a glyph column renders than a settlement balloon. The
+## column is the always-on layer over the whole map, so it has to sit well
 ## below a balloon's visual weight or it is just a differently-shaped
 ## version of the clutter it replaces.
-const GLYPH_STRIP_SCALE := 0.72
+const GLYPH_COLUMN_SCALE := 0.72
 
-## Which variant bubble_canvas.gd draws. GLYPH_STRIP is the map's default
+## Which variant bubble_canvas.gd draws. GLYPH_COLUMN is the map's default
 ## layer -- food glyphs plus status marks, no numbers -- and is all a SOURCE
 ## ever draws now that the sign is retired. SETTLEMENT is the full balloon,
 ## reserved for the settlement the player is inspecting (or the "All" bubbles
 ## mode). See main.gd's BubblesMode.
-enum Kind { SETTLEMENT, GLYPH_STRIP }
+enum Kind { SETTLEMENT, GLYPH_COLUMN }
 
 ## DEFAULT is a source glyph in its food's own colour; MUTED greys it out
 ## once that source has given away its whole daily produce. RED/AMBER/GREEN are
@@ -74,18 +74,18 @@ enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 func _ready() -> void:
 	_sprite.texture = _viewport.get_texture()
 
-## The compact default layer: one food glyph per open order (or, for a
-## source, its single produced food), each carrying a status mark. `entries`
-## is one {food_id, color, status} per glyph, already sorted worst-first --
-## the strip's leftmost mark is the thing most worth doing something about.
-func setup_glyph_strip(entries: Array) -> void:
+## The compact default layer: one chip per open order (or, for a source, its
+## single produced food), stacked vertically. `entries` is one
+## {food_id, color, status} per chip, already sorted worst-first -- the
+## column's TOP chip is the thing most worth doing something about.
+func setup_glyph_column(entries: Array) -> void:
 	# Sized to its contents rather than reusing the balloon's 310x150 canvas:
-	# the glyphs are drawn 4x bigger natively (BubbleCanvas.STRIP_GLYPH_RADIUS)
+	# the glyphs are drawn 4x bigger natively (BubbleCanvas.CHIP_GLYPH_RADIUS)
 	# so they stay sharp instead of being a magnified small texture, and a
-	# one-glyph source does not carry a texture wide enough for five.
-	_resize(BubbleCanvas.glyph_strip_size(entries.size()))
-	_sprite.pixel_size = BASE_PIXEL_SIZE * GLYPH_STRIP_SCALE
-	_canvas.set_glyph_strip(entries)
+	# one-chip source does not carry a texture tall enough for five.
+	_resize(BubbleCanvas.glyph_column_size(entries.size()))
+	_sprite.pixel_size = BASE_PIXEL_SIZE * GLYPH_COLUMN_SCALE
+	_canvas.set_glyph_column(entries)
 	_bake()
 
 ## Points the sprite at a viewport of `px` pixels, keeping the marker anchored
