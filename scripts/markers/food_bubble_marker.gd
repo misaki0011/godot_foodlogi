@@ -51,12 +51,13 @@ func setup_glyph_column(entries: Array, has_tail: bool) -> void:
 
 ## The inspected view: the same column with every row widened to carry its
 ## amount, freshness and bar. `entries` additionally carry delivered,
-## requested and freshness_pct; `bonus_freshness` places each bar's tick.
+## requested and freshness_pct; `bonus_freshness` and `min_freshness` place
+## each bar's two marks -- the bonus target and the refusal floor.
 ##
 ## The canvas is shifted right by exactly half the width it gained, so the
 ## glyph cell lands where the collapsed chips were and the panel appears to
 ## unfurl around a glyph that does not move.
-func setup_settlement_column(entries: Array, bonus_freshness: float) -> void:
+func setup_settlement_column(entries: Array, bonus_freshness: float, min_freshness: float) -> void:
 	var rows: Array = []
 	for e in entries:
 		rows.append({
@@ -66,6 +67,7 @@ func setup_settlement_column(entries: Array, bonus_freshness: float) -> void:
 			"amount_text": _ratio_text(e.delivered, e.requested),
 			"freshness_pct": e.freshness_pct,
 			"threshold": bonus_freshness / 100.0,
+			"min_threshold": min_freshness / 100.0,
 			"rejected": e.get("rejected", 0.0),
 			"rejected_freshness_pct": e.get("rejected_freshness_pct", -1),
 		})

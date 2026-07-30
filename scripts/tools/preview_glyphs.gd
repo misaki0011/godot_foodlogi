@@ -66,7 +66,7 @@ func _rows(entries: Array) -> Array:
 		out.append({
 			"food_id": e.food_id, "color": e.color, "status": e.status,
 			"amount_text": "%d/%d" % [e.delivered, e.requested],
-			"freshness_pct": e.freshness_pct, "threshold": 0.85,
+			"freshness_pct": e.freshness_pct, "threshold": 0.85, "min_threshold": 0.35,
 			"rejected": e.rejected, "rejected_freshness_pct": e.rejected_freshness_pct,
 		})
 	return out

@@ -125,6 +125,10 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     An expanded row now carries a third line -- **"5 spoiled at 32%"** -- in the red accent whatever the row's own status is, since it is unambiguously bad news. The amount alone would say a shipment was lost; the freshness with it says *how far* under the line it came, which is the difference between a route that is marginally too long and one that was never going to work. A row with nothing rejected is unchanged, and a total rejection ("0/25, 25 spoiled at 18%") drops the accepted-freshness line entirely, there being nothing accepted to average.
     This needs one new field: `rejected_fresh_sum` on `last_settlement_status`, amount-weighted exactly like `fresh_sum`. It also restores, in a better place, one of the three things item 48 knowingly dropped when the settlement's text tip was retired -- that tip's "N arrived too spoiled to accept" line. `BALLOON_ROW_WIDTH` widens 420 -> 560 to fit the third line at a readable size; the row has vertical room to spare and none horizontally, and this only affects the hovered node. See §10.1, §16.
 
+53. **The freshness bar marks the refusal floor as well as the bonus target.** The bar carried one tick, at `bonus_freshness` -- so it said where the *bonus* starts while saying nothing about where *refusal* starts, which is the line item 52's spoiled cargo actually failed. Both numbers are per-settlement and neither is guessable: a Village refuses under 35 and pays a bonus over 80, City E refuses under 55 and pays over 90, so "78% fresh" is a comfortable pass at one and a near miss at the other. A bar showing only one of the two lines is answering half the question it exists to answer (item 30's original argument for having the tick at all).
+    **The floor is drawn as a zone, not a second tick.** Two marks of the same kind sitting on one bar would be ambiguous -- nothing would say which was which, and the two mean opposite things (one is a floor you must clear, the other a target you want to beat). So `min_freshness` gets a translucent red band from the bar's left edge up to the threshold, closed by a crisp red edge, while `bonus_freshness` keeps its bare pale tick. The shading is what tells them apart at a glance: the mark with a band to its left is the floor. The band is painted **over** the fill rather than under it, so it stays visible however full the bar is -- otherwise it would vanish exactly on the healthy lines where the player is checking how much headroom they have.
+    Needs `min_freshness` plumbed to the row alongside `bonus_freshness`; both were already on `NodeData` and only `bonus_freshness` was being passed. See §10.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1638,7 +1642,7 @@ for the node the player is hovering or has tapped.
    | ✕wheat|                 | ✕wheat| 25/30        |
    `-------'                 `-------' 90% fresh    |
                                        5 spoiled at |
-                                       32%  [==|--] |
+                                       32%  [#=|==] |
    ,-------.                 ,-------.--------------.
    | ✓loaf |                 | ✓loaf | 30/30        |
    `---v---'                 `---v---'--------------'
@@ -1646,6 +1650,8 @@ for the node the player is hovering or has tapped.
 
    Same row height, same pitch, same glyph cell, same tail. Expanding
    only widens each row to the right -- nothing already on screen moves.
+   On the bar, # is the refusal floor (min_freshness, shaded from the
+   left edge) and | is the bonus target (bonus_freshness).
 ```
 
 - **A glyph, not a colour, says which food.** A balloon carries no food name,

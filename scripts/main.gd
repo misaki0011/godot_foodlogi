@@ -1681,7 +1681,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
-	column.setup_settlement_column(glyphs, n.bonus_freshness)
+	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
 
 ## Severity order for a settlement's open lines: red, then amber, then
 ## green, with the biggest shortfall first inside a tier.

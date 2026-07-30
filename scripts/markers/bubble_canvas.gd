@@ -96,10 +96,12 @@ const HALO_ALPHA := 0.22
 const STATUS_GLYPH_RATIO := 0.19
 const STATUS_GLYPH_MARGIN := 13.0
 
-## Freshness bar along the bottom of a settlement bubble, with a tick at
-## the settlement's own bonus threshold -- the line the bar has to cross
-## to turn the bubble green. Without it "78%" means nothing until you
-## remember whether this particular town wanted 80 or 90.
+## Freshness bar along the bottom of a settlement row, marked at BOTH of
+## that settlement's own thresholds -- the floor cargo must clear to be
+## accepted at all, and the line it has to cross to turn the row green.
+## Without them "78%" means nothing until you remember whether this
+## particular town refuses under 35 and pays a bonus over 80, or refuses
+## under 55 and pays over 90.
 ## Sized for a 192px row. These were 9px tall in the old 310x150 balloon and
 ## were never rescaled when rows went 4x and pixel_size dropped 0.01 -> 0.0072
 ## -- which left the bar physically SMALLER on screen than before the
@@ -114,6 +116,22 @@ const BAR_BOTTOM_MARGIN := 22.0
 const BAR_TRACK_COLOR := Color(0.0, 0.0, 0.0, 0.30)
 const BAR_TICK_COLOR := Color(1.0, 1.0, 1.0, 0.70)
 const BAR_TICK_WIDTH := 5.0
+
+## The settlement's min_freshness -- the floor cargo must clear to be accepted
+## at all (SimulationEngine turns away anything under it, and the day's demand
+## is spent either way). The bar used to mark only bonus_freshness, so it
+## showed where the BONUS starts while saying nothing about where REFUSAL
+## starts, which is the line spoiled cargo actually failed.
+##
+## Two marks of the same kind would be ambiguous, so the floor is drawn as a
+## zone rather than only a line: a translucent red band over everything from
+## the bar's left edge up to the threshold, closed by a crisp red edge. The
+## band is what tells the two apart at a glance -- the mark with shading to
+## its left is the floor, the bare pale tick is the bonus target. It is
+## painted over the fill rather than under it, so it stays visible however
+## full the bar is.
+const BAR_MIN_ZONE_COLOR := Color(0.84, 0.27, 0.27, 0.30)
+const BAR_MIN_TICK_COLOR := Color(1.0, 0.44, 0.44, 0.95)
 
 ## The bar only takes the status colour once the full requested amount has
 ## arrived. Short of that the delivery earns nothing whatever its
@@ -390,6 +408,7 @@ func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent:
 		accent,
 		fresh,
 		entry.get("threshold", 0.0),
+		entry.get("min_threshold", 0.0),
 		entry.status,
 	)
 
@@ -437,7 +456,7 @@ func _draw_halo(rect: Rect2, radius: int, accent: Color) -> void:
 	halo.set_corner_radius_all(radius + int(HALO_GROW))
 	draw_style_box(halo, rect.grow(HALO_GROW))
 
-func _draw_freshness_bar(track: Rect2, accent: Color, freshness_pct: int, threshold: float, status: FoodBubbleMarker.Status) -> void:
+func _draw_freshness_bar(track: Rect2, accent: Color, freshness_pct: int, threshold: float, min_threshold: float, status: FoodBubbleMarker.Status) -> void:
 	var radius := int(track.size.y * 0.5)
 
 	var track_box := StyleBoxFlat.new()
@@ -454,7 +473,17 @@ func _draw_freshness_bar(track: Rect2, accent: Color, freshness_pct: int, thresh
 		fill_box.set_corner_radius_all(radius)
 		draw_style_box(fill_box, Rect2(track.position, Vector2(maxf(track.size.x * filled, track.size.y), track.size.y)))
 
-	# Drawn over the fill so it stays readable whichever side of the
+	# The refusal floor, over the fill so it reads however full the bar is.
+	var floor_mark := clampf(min_threshold, 0.0, 1.0)
+	if floor_mark > 0.0:
+		var zone_box := StyleBoxFlat.new()
+		zone_box.bg_color = BAR_MIN_ZONE_COLOR
+		zone_box.set_corner_radius_all(radius)
+		draw_style_box(zone_box, Rect2(track.position, Vector2(track.size.x * floor_mark, track.size.y)))
+		var fx := track.position.x + track.size.x * floor_mark
+		draw_line(Vector2(fx, track.position.y - 2.0), Vector2(fx, track.end.y + 2.0), BAR_MIN_TICK_COLOR, BAR_TICK_WIDTH)
+
+	# The bonus target. Drawn last so it stays readable whichever side of the
 	# threshold the bar has reached.
 	var mark := clampf(threshold, 0.0, 1.0)
 	if mark > 0.0 and mark < 1.0:
