@@ -121,6 +121,12 @@ var _bubbles_mode: BubblesMode = BubblesMode.GLYPHS
 ## rendering -- nothing in the simulation knows about it.
 var _focused_node_id: String = ""
 
+## Settlements that opened an order this day and should pop their column in
+## on the next render (item 57). Consumed by that render and cleared whole,
+## so a pop fires exactly once per order and never re-fires on the many
+## renders a hover or a build triggers afterwards.
+var _pending_pops: Dictionary = {}
+
 var _funds_label: Label
 var _day_label: Label
 var _best_grade_label: Label
@@ -1065,6 +1071,9 @@ func _run_day() -> void:
 	# moment the delivery does.
 	for order in OrderBook.record_day(_state, _map_data, _map_data.node_placements):
 		_announce_order(order)
+		# Popped on the _render_grid at the end of this function, which is the
+		# first render that will actually draw the new chip.
+		_pending_pops[order.get("node_id", "")] = true
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
 	if _state.auto_run:
@@ -1294,6 +1303,9 @@ func _render_grid() -> void:
 	_render_established_routes()
 	if _bubbles_mode != BubblesMode.OFF:
 		_render_supply_bubbles()
+	# Cleared whether or not anything drew: a pop the player could not have
+	# seen (bubbles off) is spent, not banked for whenever they turn them on.
+	_pending_pops.clear()
 
 ## Continuously overlays a bright gold line along every tile that lies on a
 ## complete source->settlement path (an "established route"), so the player
@@ -1462,13 +1474,15 @@ func _shows_full_bubbles(n: NodeData) -> bool:
 ## `is_settlement` decides the tail and the row width both -- a source row is
 ## wider, carrying its draw-down beside a full-size glyph rather than under a
 ## shrunken one (item 56).
-func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool) -> void:
+func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, popping := false) -> void:
 	if entries.is_empty():
 		return
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
 	column.setup_glyph_column(entries, is_settlement)
+	if popping:
+		column.pop()
 
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
@@ -1613,14 +1627,18 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"withheld": e.withheld,
 		})
 
+	var popping: bool = _pending_pops.has(n.node_id)
+
 	if not _shows_full_bubbles(n):
-		_spawn_glyph_column(base_pos, glyphs, true)
+		_spawn_glyph_column(base_pos, glyphs, true, popping)
 		return
 
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
 	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
+	if popping:
+		column.pop()
 
 ## Severity order for a settlement's open lines: red, then amber, then
 ## green, with the biggest shortfall first inside a tier.

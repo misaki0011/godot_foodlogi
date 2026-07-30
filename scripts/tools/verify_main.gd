@@ -49,6 +49,7 @@ func _report() -> void:
 
 	_test_multi_tile_settlement_draws_one_stack(map_data)
 	_test_glyph_column_collapses_and_expands(map_data)
+	_test_new_order_pops_once(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
 	var farm: NodeData = _node_by_id(map_data, "farm")
@@ -723,6 +724,56 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
 	print("Glyph column (UI-04): one marker either way, same height collapsed and expanded, sorted worst-first.")
+
+## A newly opened order pops its column in exactly ONCE (item 57).
+##
+## The pop is a tween on a marker that _render_grid destroys and rebuilds on
+## every hover change, day and build -- so the thing that can silently break
+## is not the animation but its bookkeeping: a pending pop that is never
+## cleared would re-fire on every subsequent render, leaving the map twitching
+## whenever the pointer crosses a node. Neither failure shows up in a
+## screenshot.
+func _test_new_order_pops_once(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	var centre: Vector3 = _main.call("_node_center", city)
+	state.active_orders[city.node_id] = {"seafood": 10}
+
+	var pops: Dictionary = _main.get("_pending_pops")
+	pops[city.node_id] = true
+	_main.call("_render_grid")
+	var marker := _column_marker_at(centre, 2.5)
+	assert(marker != null, "The popping settlement must have drawn a column")
+	assert(marker.scale.x < 1.0,
+		"A popped column must start scaled down, got %.2f" % marker.scale.x)
+	assert(_main.get("_pending_pops").is_empty(),
+		"A render must consume every pending pop, or it re-fires on the next hover")
+
+	# The very next render draws the same column at rest.
+	_main.call("_render_grid")
+	var settled := _column_marker_at(centre, 2.5)
+	assert(settled != null and is_equal_approx(settled.scale.x, 1.0),
+		"A column must not pop again on a later render")
+
+	# A pop the player could not have seen is spent, not banked.
+	_main.set("_bubbles_mode", 2)  # BubblesMode.OFF
+	var off_pops: Dictionary = _main.get("_pending_pops")
+	off_pops[city.node_id] = true
+	_main.call("_render_grid")
+	assert(_main.get("_pending_pops").is_empty(),
+		"A pop must be cleared even when bubbles are off, not saved up")
+	_main.set("_bubbles_mode", 0)  # BubblesMode.GLYPHS
+
+	state.active_orders.erase(city.node_id)
+	_main.call("_render_grid")
+	print("New-order pop (item 57): fires once, consumed by the render, not banked when hidden.")
+
+func _column_marker_at(centre: Vector3, radius: float) -> FoodBubbleMarker:
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < radius:
+			return child
+	return null
 
 ## The SubViewport size of the single column marker near `centre`.
 func _column_viewport_at(centre: Vector3, radius: float) -> Vector2i:

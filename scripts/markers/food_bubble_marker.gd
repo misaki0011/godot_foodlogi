@@ -33,6 +33,18 @@ const COLUMN_SCALE := 0.72
 ## the delivered freshness rates against that settlement's own thresholds.
 enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 
+## A newly opened order pops its column in, once. Scaled about the marker's
+## own origin, which sits at the node, so the column springs UP out of the
+## settlement rather than inflating around its own middle.
+##
+## Item 30 ruled out animating the red halo, on the grounds that on day one
+## every settlement is red and a screen of pulsing bubbles is worse than no
+## emphasis at all. This is the opposite case and the distinction is the
+## point: a pop marks a discrete, rare event -- one per order the player just
+## earned -- and stops on its own. Nothing here ever repeats or idles.
+const POP_FROM_SCALE := 0.55
+const POP_SEC := 0.34
+
 @onready var _canvas: BubbleCanvas = $SubViewport/BubbleCanvas
 @onready var _viewport: SubViewport = $SubViewport
 @onready var _sprite: Sprite3D = $Sprite3D
@@ -81,11 +93,25 @@ func setup_settlement_column(entries: Array, bonus_freshness: float, min_freshne
 ## edge (offset = half the height, as food_bubble_marker.tscn authors it) and
 ## nudged right by `shift_x`. The canvas is resized alongside the viewport
 ## rather than left to the next layout pass, because the bake is immediate.
+##
+## BubbleCanvas is authored with NO anchors for that reason. Full-rect anchors
+## would size it from the SubViewport on the next layout pass, which is a pass
+## too late -- and setting its size anyway drew a "non-equal opposite anchors
+## will have their size overridden" warning on every single marker built.
 func _apply(px: Vector2i, shift_x: float) -> void:
 	_viewport.size = px
 	_canvas.size = Vector2(px)
 	_sprite.pixel_size = BASE_PIXEL_SIZE * COLUMN_SCALE
 	_sprite.offset = Vector2(shift_x, px.y * 0.5)
+
+## Springs the column in from POP_FROM_SCALE with a slight overshoot. Called
+## by main.gd on the one render that follows an order opening; a marker is
+## rebuilt from scratch on every render, so there is nothing to reset and no
+## way for two pops to stack on one marker.
+func pop() -> void:
+	scale = Vector3.ONE * POP_FROM_SCALE
+	create_tween().tween_property(self, "scale", Vector3.ONE, POP_SEC) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _ratio_text(current: float, max_amount: float) -> String:
 	return "%d/%d" % [roundi(current), roundi(max_amount)]
