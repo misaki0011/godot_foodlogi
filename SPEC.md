@@ -91,6 +91,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **It cannot be failed or lost.** There is no bankruptcy or loss condition anywhere in the build, so this costs nothing to guarantee. Tools are *revealed* step by step rather than disabled with an error, the clock stays off until the step that introduces it, and Bulldoze is available from step 1 as the escape hatch. It is skippable from region select and replayable afterwards, and skipping still unlocks region 1 -- a tutorial that gates content is a toll.
     Millbrook is authored so the lessons fall out of the map's own numbers rather than being narrated: milk to Village B lands **amber at 68%** on eight tiles, so the player succeeds and is shown that succeeding is not the ceiling; Cool Storage takes the same run to **89%** and green. Grain 65/day down one Dirt trunk against a 60 cap teaches capacity, and milk demand 45 against the Dairy's 40 teaches source upgrades -- two different foods, so "the road cannot carry it" and "the farm cannot make it" are never the same day's problem. `MapData.opening_lines` holds exactly one line here, not item 39's three: that argument was about a free-play map giving the player nothing to weigh, and a scripted tutorial supplies the weighing itself. The order book's deepen/expand alternation (item 40) is disabled on this map, since the step list decides what opens and when. See §12.2.
 
+47. **A settlement shows one bubble, chosen by severity, with stickers for the rest.** A settlement drew one bubble per open order, laid out two to a row (`Main._bubble_column_offset`), so City E's five lines wrapped into three rows stacked over its 2x2 footprint -- and the stack carried **no ordering meaning at all**, since bubbles came out in whatever order the food ids iterated. Finding the line that needed attention meant reading all five, at map zoom, next to Town D's four. The stack now shows **one bubble -- the highest-priority open order** -- with the remaining lines reduced to **stickers**: a small chip carrying the food's colour and the same ✕/!/✓ status glyph the bubble uses, in a row along the **top** edge of the bubble body, so the front bubble reads as the top card of a stack. The freshness bar keeps the bottom edge.
+    **Priority is severity: red before amber before green, ties broken by the largest shortfall** (requested minus delivered, as a fraction of requested). The bubble's job is to answer "what is wrong here", so the line that is most wrong is the one that should be legible without a tap. This also extends item 30's existing language rather than inventing one -- green already recedes there by washing lighter and outlining thinner, and this simply lets it recede all the way to a chip.
+    **Note this is a collapse, which item 37 removed once, and the direction is why it survives.** Item 37 deleted the "All fresh" summary bubble because collapsing "hid exactly the numbers the player had worked to earn" -- it fired only when every line was green, so it hid *good news at the moment it was earned*. A severity-sorted stack does the inverse: what goes behind a sticker is the settled, paid, green line, and what is promoted to the front is the broken one. Same mechanism, opposite direction, and the direction was the whole objection. Every line still shows its identity and status; only its *numbers* move behind a tap.
+    **Stickers are display only -- they are not tappable.** The obvious version of this feature taps a sticker to bring its line to the front, and it was rejected on three grounds. Bubbles have **no picking of any kind** today (they are baked SubViewport textures on billboards, and nothing hit-tests them), so it would mean ray-picking camera-facing quads and then resolving a sub-rect inside a baked texture. The target is far too small to hit: item 39 already found that text past about ten characters "shrinks to the font floor at map zoom", and a sticker is a fraction of a bubble, sitting a few pixels above the settlement tile -- which is itself a tap target doing something else. And it would duplicate a better interaction that already exists: tapping the settlement opens the full per-food checklist (§10.6), which shows **every** line with delivered/requested, freshness and rejection reasons, on a much larger target. The numbers are not hidden by a sticker; they are one tap away on a control that already works. Item 40's "nothing on the map needs pressing" argues the same way -- a new thing to press in order to *see state* is the weaker half of what item 40 deleted.
+    A settlement with one open order draws one bubble and no stickers, which is byte-for-byte what it draws today, and the common case under item 40. **Sources are untouched**: one source produces exactly one food (item 0.2.6), so a source has exactly one bubble and can never stack. Because a settlement now draws a single bubble, the two-column row-wrapping layout has nothing left to lay out -- `Main._bubble_column_offset` and `FoodBubbleMarker.COLUMN_SPACING` go, and the settlement branch stops needing `STACK_SPACING`. See §10.1, §16.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1588,6 +1594,40 @@ The main screen should show:
 - Hub last-delivery hover details
 - Settlement last-delivery info on hover/tap
 - Top-left zoom/pan controls (§10.7)
+
+#### The settlement bubble stack (revised in v0.6 item 47)
+
+A settlement draws **one bubble**, for its highest-priority open order, with
+every other open line reduced to a **sticker**.
+
+```text
+        [·][!][✓]          <- stickers: the other open lines
+     ,-------------.
+     | ● Milk      |          food dot + name
+     | 12/25       |          delivered / requested
+     | [====|--- ] |          freshness bar, ticked at bonus_freshness
+     `----v--------'
+          settlement
+```
+
+- **Priority is severity**: red, then amber, then green; ties broken by the
+  largest shortfall as a fraction of the amount requested. The front bubble
+  is therefore always the answer to "what is wrong here", rather than
+  whichever food id happened to iterate first.
+- **A sticker carries the food's colour and the line's ✕/!/✓ status glyph**,
+  and nothing else. Colour plus glyph means a hidden line is still separable
+  by shape alone, for players who cannot separate the hues (§16, item 30).
+- **Stickers sit along the top edge** of the bubble body, so the bubble reads
+  as the top card of a stack. The bottom edge belongs to the freshness bar.
+- **Stickers are not interactive.** Full per-line detail is on the settlement
+  tap, which already shows every open order with delivered/requested,
+  freshness and rejection reasons (§10.6) on a far larger target. See item 47
+  for why a tappable sticker was rejected.
+- **One open order draws one bubble and no stickers** -- identical to the
+  pre-item-47 rendering, and the common case now that orders open one at a
+  time (§6).
+- **Sources never stack.** One source produces exactly one food (§4.7), so a
+  source has exactly one sign and stickers never apply to it.
 
 ### 10.2 Route drawing UI
 
