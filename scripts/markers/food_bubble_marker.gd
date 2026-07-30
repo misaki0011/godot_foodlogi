@@ -1,64 +1,30 @@
 class_name FoodBubbleMarker
 extends Node3D
 
-## A speech bubble floated above a node showing a food-colored icon and a
-## "current/max" quantity: a source's amount drawn today vs. its daily
-## produce, or a settlement's delivered amount vs. its daily demand plus
-## average freshness (both from main.gd, refreshed each time the grid
-## re-renders). The bubble is drawn once into a SubViewport and displayed
-## on a billboard Sprite3D -- baking the whole thing (shape, icon,
-## numbers) into one texture avoids Label3D sorting behind the bubble
-## mesh, and reads far crisper than stacked 3D primitives at this scale.
+## A node's whole order column, floated above it: one row per open order,
+## drawn once into a SubViewport and shown on a billboard Sprite3D. Baking
+## the entire column -- shapes, glyphs, numbers, bars -- into ONE texture
+## avoids Label3D sorting behind the shapes, reads far crisper than stacked
+## 3D primitives at this scale, and is what lets the collapsed and expanded
+## layouts line up exactly (see BubbleCanvas's shared column geometry).
 ##
 ## Sources and settlements share this scene but not their look: see
-## bubble_canvas.gd for the two silhouettes and why status colour rides on
-## a settlement's border/tail/bar rather than its body.
+## bubble_canvas.gd for how a source row is told from a settlement row.
 
-## World-space size of the baked sprite (SubViewport size * Sprite3D
-## pixel_size in food_bubble_marker.tscn).
-const WORLD_WIDTH := 3.1
-const WORLD_HEIGHT := 1.5
-
-## Sprite3D.pixel_size as authored in food_bubble_marker.tscn. Set
-## explicitly on every setup rather than scaled in place, so re-running
-## setup on a marker can't compound the source shrink.
+## Sprite3D.pixel_size as authored in food_bubble_marker.tscn.
 const BASE_PIXEL_SIZE := 0.01
 
-## Main.tscn's Camera3D is pitched -60 deg (rotation.x = -1.047198) and
-## looks straight down that axis with no yaw/roll, so its "right" vector
-## is exactly world +X (unrotated) but its "up" vector is
-## (0, cos60, -sin60) = (0, 0.5, -0.866). A billboard sprite always
-## renders at its full configured size on screen regardless of view
-## angle (that's the point of billboarding) -- but stacking bubbles
-## apart along world Y only buys 0.5x that distance in actual screen
-## separation, since the other 0.866x of a Y-axis camera-up step lands
-## in world Z instead. Spacing rows by only WORLD_HEIGHT (as if the
-## camera were level) therefore left rows visually overlapping on
-## screen even though they were correctly separated in world space;
-## rows need double the gap to end up with WORLD_HEIGHT of *screen*
-## separation. Columns don't have this problem: the camera has no yaw,
-## so world-X offsets map 1:1 onto screen-X with no compression.
-const CAMERA_VERTICAL_COMPENSATION := 2.0
-const STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION + 0.1
-const COLUMN_SPACING := WORLD_WIDTH + 0.1
-
-## The balloon's authored SubViewport size (food_bubble_marker.tscn). Set
-## explicitly on every balloon setup, because setup_glyph_column resizes the
-## viewport to its own contents and a marker must never inherit that.
-const BALLOON_VIEWPORT := Vector2i(310, 150)
-
-## How much smaller a glyph column renders than a settlement balloon. The
-## column is the always-on layer over the whole map, so it has to sit well
-## below a balloon's visual weight or it is just a differently-shaped
-## version of the clutter it replaces.
-const GLYPH_COLUMN_SCALE := 0.72
-
-## Which variant bubble_canvas.gd draws. GLYPH_COLUMN is the map's default
-## layer -- food glyphs plus status marks, no numbers -- and is all a SOURCE
-## ever draws now that the sign is retired. SETTLEMENT is the full balloon,
-## reserved for the settlement the player is inspecting (or the "All" bubbles
-## mode). See main.gd's BubblesMode.
-enum Kind { SETTLEMENT, GLYPH_COLUMN }
+## What the map layer renders at. Collapsed and expanded use the SAME value,
+## which is what lets a row land at the same screen height in both -- see
+## BubbleCanvas's shared column geometry.
+##
+## An earlier design spaced expanded balloons as separate world-space markers
+## and had to double every gap to fight the camera's -60 degree pitch (a
+## world-Y step buys only half its length in screen separation). Drawing the
+## whole column into one texture removed that problem outright, along with
+## the STACK_SPACING / COLUMN_SPACING / CAMERA_VERTICAL_COMPENSATION
+## constants that existed only to manage it.
+const COLUMN_SCALE := 0.72
 
 ## DEFAULT is a source glyph in its food's own colour; MUTED greys it out
 ## once that source has given away its whole daily produce. RED/AMBER/GREEN are
@@ -74,39 +40,46 @@ enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 func _ready() -> void:
 	_sprite.texture = _viewport.get_texture()
 
-## The compact default layer: one chip per open order (or, for a source, its
+## The map's default layer: one chip per open order (or, for a source, its
 ## single produced food), stacked vertically. `entries` is one
 ## {food_id, color, status} per chip, already sorted worst-first -- the
 ## column's TOP chip is the thing most worth doing something about.
-func setup_glyph_column(entries: Array) -> void:
-	# Sized to its contents rather than reusing the balloon's 310x150 canvas:
-	# the glyphs are drawn 4x bigger natively (BubbleCanvas.CHIP_GLYPH_RADIUS)
-	# so they stay sharp instead of being a magnified small texture, and a
-	# one-chip source does not carry a texture tall enough for five.
-	_resize(BubbleCanvas.glyph_column_size(entries.size()))
-	_sprite.pixel_size = BASE_PIXEL_SIZE * GLYPH_COLUMN_SCALE
-	_canvas.set_glyph_column(entries)
+func setup_glyph_column(entries: Array, has_tail: bool) -> void:
+	_apply(BubbleCanvas.column_size(entries.size(), false), 0.0)
+	_canvas.set_glyph_column(entries, has_tail)
 	_bake()
 
-## Points the sprite at a viewport of `px` pixels, keeping the marker anchored
-## by its bottom edge the way food_bubble_marker.tscn authors it (offset =
-## half the height). The canvas is resized alongside the viewport rather than
-## left to the next layout pass, because the bake happens immediately.
-func _resize(px: Vector2i) -> void:
+## The inspected view: the same column with every row widened to carry its
+## amount, freshness and bar. `entries` additionally carry delivered,
+## requested and freshness_pct; `bonus_freshness` places each bar's tick.
+##
+## The canvas is shifted right by exactly half the width it gained, so the
+## glyph cell lands where the collapsed chips were and the panel appears to
+## unfurl around a glyph that does not move.
+func setup_settlement_column(entries: Array, bonus_freshness: float) -> void:
+	var rows: Array = []
+	for e in entries:
+		rows.append({
+			"food_id": e.food_id,
+			"color": e.color,
+			"status": e.status,
+			"amount_text": _ratio_text(e.delivered, e.requested),
+			"freshness_pct": e.freshness_pct,
+			"threshold": bonus_freshness / 100.0,
+		})
+	_apply(BubbleCanvas.column_size(rows.size(), true), BubbleCanvas.column_x_shift())
+	_canvas.set_settlement_column(rows)
+	_bake()
+
+## Points the sprite at a viewport of `px` pixels, anchored by its bottom
+## edge (offset = half the height, as food_bubble_marker.tscn authors it) and
+## nudged right by `shift_x`. The canvas is resized alongside the viewport
+## rather than left to the next layout pass, because the bake is immediate.
+func _apply(px: Vector2i, shift_x: float) -> void:
 	_viewport.size = px
 	_canvas.size = Vector2(px)
-	_sprite.offset = Vector2(0, px.y * 0.5)
-
-## freshness_pct >= 0 fills the bar and prints the percentage; pass -1
-## when nothing has arrived yet and an average freshness would be
-## meaningless. bonus_freshness_pct places the tick the bar has to clear
-## for this settlement to count as green -- it is per-settlement data, so
-## the same 78% is a miss at a fussy city and a pass at a village.
-func setup_settlement(food: FoodData, delivered: float, requested: float, status: Status, freshness_pct: int = -1, bonus_freshness_pct: float = 0.0) -> void:
-	_resize(BALLOON_VIEWPORT)
-	_sprite.pixel_size = BASE_PIXEL_SIZE
-	_canvas.set_settlement(food.food_id, food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
-	_bake()
+	_sprite.pixel_size = BASE_PIXEL_SIZE * COLUMN_SCALE
+	_sprite.offset = Vector2(shift_x, px.y * 0.5)
 
 func _ratio_text(current: float, max_amount: float) -> String:
 	return "%d/%d" % [roundi(current), roundi(max_amount)]

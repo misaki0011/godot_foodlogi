@@ -110,6 +110,11 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The balloon takes the same palette.** It was cream with dark text; it is now the chip's dark, status-tinted ground with light text, so the thing a hover expands into is visibly the chip it grew from -- which is what "consistent" has to mean if one turns into the other. Inverting to light-on-dark is also what lets the tint be strong: the constraint item 30 was working around only exists for dark text. `BUBBLE_COLOR`, `STATUS_WASH_ALPHA` and `GREEN_WASH_ALPHA` are gone with the cream.
     **A source is a different object, by shape as well as colour.** A settlement chip is heavily rounded, status-tinted and carries a status mark; a source chip is **near-square, neutral slate, and carries no status anything** -- a source has no delivery to be judged on and must not look like it does. That reinstates the corner-radius language the retired balloon/sign pair used to carry (item 30), now as the only thing distinguishing two chips rather than two whole silhouettes. See §10.1, §16.
 
+50. **Collapsed and expanded are one column at two widths.** The chips and the balloons were laid out by unrelated machinery -- chips as rows inside one baked texture, balloons as N separate world-space markers -- so their row pitches were computed in different units and could only be lined up by hand. Worse, the balloons' pitch had to fight the camera: at a -60 degree pitch a world-Y step buys only half its length in *screen* separation, which is the whole reason `CAMERA_VERTICAL_COMPENSATION` existed. **Both are now one baked texture**, and the compensation problem is deleted rather than managed -- `STACK_SPACING`, `COLUMN_SPACING`, `CAMERA_VERTICAL_COMPENSATION`, `WORLD_WIDTH`/`WORLD_HEIGHT` and `Main._bubble_column_offset` all go with it.
+    **The layout rule is that nothing the eye tracks moves.** A row is the same height and sits at the same pitch in both states; the food glyph occupies the same leftmost square cell of a row either way; the status mark stays pinned to that cell rather than sliding to the far edge when the row widens. Expanding only *adds* -- the amount, the freshness percentage and the bar, in space a chip does not have. `BubbleCanvas.column_size(count, expanded)` deliberately returns the same height for both, so row *i* lands at the same screen height whichever state it is in, and the balloon column is nudged right by `column_x_shift()` -- exactly half the width it gained -- because the sprite is centre-anchored and widening it would otherwise slide every glyph left. The result reads as the chip unfurling to the right rather than one object being swapped for another, with no animation involved.
+    **One tail per column, not one per row.** Five balloons meant five tails pointing at nothing in particular. The column now hangs a single tail, and it hangs from the *glyph cell's* centre rather than the panel's, so it keeps pointing at the node when an expanded panel widens. It takes the bottom row's colour, since it reads as part of that row; overall severity is already the top chip's job. Sources get no tail at all -- that is a settlement's tell, the way the post used to be a source's.
+    **The expanded column is narrower than what it replaces.** Five orders used to occupy a 2x3 grid roughly 6.2 world units wide; one column is about 3.1 wide and 7.4 tall. Taller, but width is what costs on this map -- settlements crowd each other horizontally, and the space above a node is usually empty. The tallest case is a five-order City at roughly 3.7 tiles, and it is transient. If that proves too much in play the answer is an accordion, expanding only the row under the pointer -- which needs per-row hit-testing, the billboard-picking problem every version of this feature has deliberately avoided. See §10.1, §16.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1615,15 +1620,20 @@ open order on a status-coloured background. The full balloon comes back only
 for the node the player is hovering or has tapped.
 
 ```text
-   [ ✕ fish  ]      <- worst first
-   [ ! wheat ]
-   [ ✓ loaf  ]
-   Village C
+   collapsed                 expanded (hover/tap)
+   ,-------.                 ,-------.--------------.
+   | ✕fish |                 | ✕fish |  0/25        |
+   `-------'                 `-------'--------------'
+   ,-------.                 ,-------.--------------.
+   | !wheat|                 | !wheat| 20/20        |
+   `-------'                 `-------' 72%  [==|--] |
+   ,-------.                 ,-------.--------------.
+   | ✓loaf |                 | ✓loaf | 30/30        |
+   `---v---'                 `---v---'--------------'
+   Village C                 Village C
 
-   ,---------------.   <- on hover/tap: balloons, same palette as the chips
-   | (loaf)  12/25 ! |
-   | [====|-----]    |
-   `----v------------'
+   Same row height, same pitch, same glyph cell, same tail. Expanding
+   only widens each row to the right -- nothing already on screen moves.
 ```
 
 - **A glyph, not a colour, says which food.** A balloon carries no food name,
@@ -1636,8 +1646,11 @@ for the node the player is hovering or has tapped.
   because a chip carries no text -- item 30's rule against a saturated body
   exists only under *dark* text. The ✕/!/✓ mark stays regardless: shape is
   the colourblind guarantee and must not depend on hue.
-- **The balloon shares that palette** -- dark, status-tinted, light text --
-  so what a hover expands into is visibly the chip it grew from.
+- **Collapsed and expanded are one column at two widths** (item 50). Same row
+  height, same pitch, same glyph cell, same tail -- expanding only widens each
+  row rightward to add the amount, the freshness and the bar. Both are a
+  single baked texture, which is what makes that alignment exact rather than
+  hand-tuned.
 - **Order is severity**: red, then amber, then green, ties broken by the
   shortfall as a fraction requested. The **top** chip is the line most worth
   acting on.
@@ -1645,8 +1658,8 @@ for the node the player is hovering or has tapped.
   sideways and crossed its neighbours; the space above a node is usually
   empty map.
 - **A source is a different object**: near-square corners, neutral slate, no
-  status tint and no status mark -- it has no delivery to be judged on. It
-  never expands, and its used/produced figure lives in the hover tip.
+  status tint, no status mark and no tail -- it has no delivery to be judged
+  on. It never expands, and its used/produced figure lives in the hover tip.
 - **A settlement opens no text tip** (item 48). The balloons are the detail
   view. Sources, routes, storage, hubs and bridges keep theirs.
 - **Nothing new is tappable.** Expansion rides the hover/tap that already

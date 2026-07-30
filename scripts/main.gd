@@ -1540,13 +1540,13 @@ func _node_center(n: NodeData) -> Vector3:
 func _shows_full_bubbles(n: NodeData) -> bool:
 	return _bubbles_mode == BubblesMode.ALL or _focused_node_id == n.node_id
 
-func _spawn_glyph_column(base_pos: Vector3, entries: Array) -> void:
+func _spawn_glyph_column(base_pos: Vector3, entries: Array, has_tail: bool) -> void:
 	if entries.is_empty():
 		return
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
-	column.setup_glyph_column(entries)
+	column.setup_glyph_column(entries, has_tail)
 
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
@@ -1575,7 +1575,7 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 				else foods[food_id].color),
 			"status": bubble_status,
 		})
-	_spawn_glyph_column(base_pos, entries)
+	_spawn_glyph_column(base_pos, entries, false)
 
 ## A settlement can demand up to 3 foods (Town D, City E), and some
 ## settlements sit only 3 tiles from a neighbor -- stacking every bubble
@@ -1644,35 +1644,30 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# whatever the demand dictionary happened to iterate.
 	entries.sort_custom(_worse_first)
 
+	# One marker either way. The collapsed chips and the expanded rows are the
+	# same column at two widths (BubbleCanvas's shared column geometry), so a
+	# hover widens the panel around glyphs that do not move -- which is only
+	# possible because both are a single baked texture rather than a set of
+	# separately-positioned billboards.
+	var glyphs: Array = []
+	for e in entries:
+		glyphs.append({
+			"food_id": e.food_id,
+			"color": foods[e.food_id].color,
+			"status": e.status,
+			"delivered": e.delivered,
+			"requested": e.requested,
+			"freshness_pct": e.freshness_pct,
+		})
+
 	if not _shows_full_bubbles(n):
-		var glyphs: Array = []
-		for e in entries:
-			glyphs.append({
-				"food_id": e.food_id,
-				"color": foods[e.food_id].color,
-				"status": e.status,
-			})
-		_spawn_glyph_column(base_pos, glyphs)
+		_spawn_glyph_column(base_pos, glyphs, true)
 		return
 
-	for index in entries.size():
-		var e: Dictionary = entries[index]
-		var row: int = index / 2
-		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(
-			_bubble_column_offset(index, entries.size()),
-			row * FoodBubbleMarker.STACK_SPACING,
-			0,
-		)
-		bubble.setup_settlement(
-			foods[e.food_id],
-			e.delivered,
-			e.requested,
-			e.status,
-			e.freshness_pct,
-			n.bonus_freshness,
-		)
+	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+	_grid_visuals.add_child(column)
+	column.position = base_pos
+	column.setup_settlement_column(glyphs, n.bonus_freshness)
 
 ## Severity order for a settlement's open lines: red, then amber, then
 ## green, with the biggest shortfall first inside a tier.
@@ -1698,16 +1693,6 @@ static func _shortfall(e: Dictionary) -> float:
 	if requested <= 0.0:
 		return 0.0
 	return clampf((requested - e.delivered) / requested, 0.0, 1.0)
-
-## Where a bubble sits across the 2-column stack. A row holding a single
-## bubble centres it over the settlement instead of leaving it hanging in the
-## left column: with orders opening one at a time (DEV-01), a settlement
-## showing exactly one bubble is now the common case rather than an edge one.
-func _bubble_column_offset(index: int, count: int) -> float:
-	var row_start: int = (index / 2) * 2
-	if count - row_start == 1:
-		return 0.0
-	return ((index % 2) - 0.5) * FoodBubbleMarker.COLUMN_SPACING
 
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
 ## so a route tile always uses the same unrotated scene regardless of its

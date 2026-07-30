@@ -648,9 +648,8 @@ func _test_multi_tile_settlement_draws_one_stack(map_data: MapData) -> void:
 	_main.call("_render_grid")
 	print("Multi-tile bubbles (DEV-02): City E draws 1 stack across 4 cells.")
 
-## At rest a settlement collapses to ONE glyph column however many orders it
-## has open, and expands back to one balloon per order while the player is
-## inspecting it (UI-04). Both halves are invisible to a screenshot taken at
+## A settlement draws ONE column marker whatever its state, and the collapsed
+## and expanded columns are the same height so their rows line up (UI-04). Both halves are invisible to a screenshot taken at
 ## the wrong moment, and the collapse is the whole point of the feature -- a
 ## regression that quietly drew balloons again would just look like the old
 ## build.
@@ -673,20 +672,33 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 		"bread": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0},
 	}
 
-	# Wide enough to take in a whole expanded stack -- balloons spread +-1.55
-	# either side of centre on COLUMN_SPACING -- and still far short of the
-	# nearest other node (Harbor is 8 world units away).
+	# Wide enough to take in the column, and far short of the nearest other
+	# node (Harbor is 8 world units away).
 	var span := 2.5
 
 	_main.set("_focused_node_id", "")
 	_main.call("_render_grid")
 	assert(_count_bubbles_at(centre, span) == 1,
-		"At rest a settlement draws one glyph column, got %d markers" % _count_bubbles_at(centre, span))
+		"A settlement draws ONE column marker, got %d" % _count_bubbles_at(centre, span))
+	var collapsed: Vector2i = _column_viewport_at(centre, span)
 
 	_main.set("_focused_node_id", city.node_id)
 	_main.call("_render_grid")
-	assert(_count_bubbles_at(centre, span) == 3,
-		"An inspected settlement draws one balloon per open order, got %d" % _count_bubbles_at(centre, span))
+	assert(_count_bubbles_at(centre, span) == 1,
+		"Expanding must still be ONE marker, not one per order, got %d" % _count_bubbles_at(centre, span))
+	var expanded: Vector2i = _column_viewport_at(centre, span)
+
+	# The whole point of the layout: collapsed and expanded are the same
+	# column at two widths. Equal heights mean row i sits at the same screen
+	# height in both, so a hover widens the panel around glyphs that do not
+	# move. If these ever diverge the transition stops reading as one object
+	# unfurling and becomes a swap, which is invisible in a static screenshot.
+	assert(collapsed.y == expanded.y,
+		"Collapsed and expanded columns must be the same height (%d vs %d)" % [collapsed.y, expanded.y])
+	assert(expanded.x > collapsed.x,
+		"Expanding must widen the column (%d vs %d)" % [collapsed.x, expanded.x])
+	assert(is_equal_approx(BubbleCanvas.column_x_shift(), (expanded.x - collapsed.x) * 0.5),
+		"The expanded column must be nudged right by half the width it gained, or the glyphs slide")
 
 	# Severity order: red, then amber, then green.
 	var entries := [
@@ -713,7 +725,15 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 	state.active_orders.erase(city.node_id)
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
-	print("Glyph column (UI-04): 3 orders collapse to 1 column, expand to 3 on focus, sorted worst-first.")
+	print("Glyph column (UI-04): one marker either way, same height collapsed and expanded, sorted worst-first.")
+
+## The SubViewport size of the single column marker near `centre`.
+func _column_viewport_at(centre: Vector3, radius: float) -> Vector2i:
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < radius:
+			return (child.get_node("SubViewport") as SubViewport).size
+	return Vector2i.ZERO
 
 func _count_bubbles_at(centre: Vector3, radius: float) -> int:
 	var visuals: Node3D = _main.get_node("GridVisuals")

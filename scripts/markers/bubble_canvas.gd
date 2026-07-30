@@ -174,37 +174,71 @@ const CHIP_MARGIN := 8.0
 const CHIP_STATUS_RATIO := 0.40
 const CHIP_STATUS_BACKING := Color(0.08, 0.09, 0.11, 0.92)
 
-## Outer size of one chip, including its padding.
-static func chip_size() -> float:
+## ---------- shared column geometry ----------
+##
+## The collapsed chips and the expanded balloons are THE SAME COLUMN at two
+## widths. Every row is the same height and sits at the same pitch in both,
+## and the food glyph occupies the same cell at the left of a row either way,
+## so expanding a node grows the panel rightward around a glyph that does not
+## move. That is what makes a hover read as a chip unfurling rather than one
+## object being swapped for another.
+##
+## This only works because BOTH are a single baked texture. While the
+## balloons were separate world-space markers their row pitch had to fight
+## the camera pitch -- a world-Y step buys only half its length in screen
+## separation at -60 degrees -- so the two layouts were computed in unrelated
+## units and could not be held in line. Folding the balloons into one canvas
+## deletes that problem rather than compensating for it.
+
+## Outer size of one row: a chip is exactly this square.
+static func row_size() -> float:
 	return CHIP_GLYPH_RADIUS * 2.0 + CHIP_PADDING * 2.0
 
-## Viewport size a column of `count` chips needs. Sized to content, so a
-## one-chip source does not carry a texture tall enough for five.
-static func glyph_column_size(count: int) -> Vector2i:
+## An expanded row is the same height, just wider -- room for the amount, the
+## freshness percentage and the bar, to the right of the glyph cell.
+const BALLOON_ROW_WIDTH := 420.0
+const ROW_TEXT_GAP := 10.0
+const ROW_RIGHT_PAD := 18.0
+
+static func column_width(expanded: bool) -> float:
+	return (BALLOON_ROW_WIDTH if expanded else row_size()) + CHIP_MARGIN * 2.0
+
+## Canvas size for `count` rows. Height is deliberately independent of
+## `expanded`, so a column occupies the same vertical space collapsed or not
+## and row i lands at the same screen height in both.
+static func column_size(count: int, expanded: bool) -> Vector2i:
 	var n := maxi(count, 1)
-	var chip := chip_size()
 	return Vector2i(
-		ceili(chip + CHIP_MARGIN * 2.0),
-		ceili(n * chip + (n - 1) * CHIP_GAP + CHIP_MARGIN * 2.0),
+		ceili(column_width(expanded)),
+		ceili(n * row_size() + (n - 1) * CHIP_GAP + CHIP_MARGIN * 2.0 + TAIL_HEIGHT),
 	)
 
-var _kind: FoodBubbleMarker.Kind = FoodBubbleMarker.Kind.GLYPH_COLUMN
-var _icon_color: Color = Color.WHITE
-## Which silhouette identifies the food (see FoodGlyphs). Empty falls back to
-## the plain disc the bubbles used before glyphs existed.
-var _food_id: String = ""
-## GLYPH_COLUMN only: one {food_id, color, status} per open order, already
-## sorted worst-first by main.gd.
-var _glyph_entries: Array = []
-var _amount_text: String = "0"
-var _status: FoodBubbleMarker.Status = FoodBubbleMarker.Status.DEFAULT
-## Settlement only: average freshness, or -1 when nothing has arrived and
-## freshness is therefore meaningless. Drives both the bar and the small
-## percentage under the amount.
-var _freshness_pct: int = -1
-## Settlement only: this settlement's bonus_freshness, as the 0..1 point
-## on the bar where the tick goes.
-var _threshold: float = 0.0
+## How far right an expanded column must be nudged for its glyph cell to land
+## exactly where the collapsed column's chips were. Both canvases are centred
+## on the marker, so widening one would otherwise slide the glyphs left.
+static func column_x_shift() -> float:
+	return (column_width(true) - column_width(false)) * 0.5
+
+## Centre of the glyph cell within a row, measured from the canvas's left
+## edge. Identical in both states -- this is the anchor the whole layout is
+## built around, and the tail hangs from it rather than from the panel's
+## centre, so it keeps pointing at the node when the panel widens.
+static func glyph_centre_x() -> float:
+	return CHIP_MARGIN + row_size() * 0.5
+
+## Kept as the name the rest of the code already uses for a chip column.
+static func glyph_column_size(count: int) -> Vector2i:
+	return column_size(count, false)
+
+## One {food_id, color, status} per open order, already sorted worst-first
+## by main.gd. An expanded column's entries additionally carry amount_text,
+## freshness_pct and threshold.
+var _entries: Array = []
+## Expanded rows are wider and carry the amount, freshness and bar. Row
+## height, pitch, glyph cell and tail are identical either way.
+var _expanded := false
+## Settlements hang a tail off the column; sources do not.
+var _has_tail := false
 
 static func status_color(status: FoodBubbleMarker.Status) -> Color:
 	match status:
@@ -218,112 +252,121 @@ static func status_color(status: FoodBubbleMarker.Status) -> Color:
 	# _is_delivery_status to avoid tinting anything with this.
 	return CHIP_SLATE_BORDER
 
-func set_settlement(food_id: String, icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status, freshness_pct: int, threshold: float) -> void:
-	_kind = FoodBubbleMarker.Kind.SETTLEMENT
-	_food_id = food_id
-	_icon_color = icon_color
-	_amount_text = amount_text
-	_status = status
-	_freshness_pct = freshness_pct
-	_threshold = threshold
+## The map's default layer. `entries` is one {food_id, color, status} per
+## open order (or, for a source, its single produced food), worst-first.
+func set_glyph_column(entries: Array, has_tail: bool) -> void:
+	_entries = entries
+	_expanded = false
+	_has_tail = has_tail
 	queue_redraw()
 
-## `entries` is one {food_id, color, status} per open order, worst-first.
-func set_glyph_column(entries: Array) -> void:
-	_kind = FoodBubbleMarker.Kind.GLYPH_COLUMN
-	_glyph_entries = entries
+## The inspected view: the same column, each row widened to carry
+## amount_text, freshness_pct and threshold alongside the glyph.
+func set_settlement_column(entries: Array) -> void:
+	_entries = entries
+	_expanded = true
+	_has_tail = true
 	queue_redraw()
 
 func _draw() -> void:
-	match _kind:
-		FoodBubbleMarker.Kind.SETTLEMENT:
-			_draw_settlement()
-		_:
-			_draw_glyph_column()
+	_draw_column()
 
-# --- variants ---------------------------------------------------------
+# --- the column -------------------------------------------------------
 
-func _draw_settlement() -> void:
-	var accent := status_color(_status)
-	var green := _status == FoodBubbleMarker.Status.GREEN
-	var rect := _body_rect()
-	var radius := int(rect.size.y * SETTLEMENT_CORNER_RATIO)
-
-	if _status == FoodBubbleMarker.Status.RED:
-		_draw_halo(rect, radius, accent)
-
-	# Same fill formula as a chip (see CHIP_STATUS_TINT), so the balloon a
-	# hover expands into is visibly the chip it grew from.
-	var fill := CHIP_SLATE.lerp(Color(accent.r, accent.g, accent.b, CHIP_SLATE.a), CHIP_STATUS_TINT)
-	var border_width := GREEN_BORDER_WIDTH if green else SETTLEMENT_BORDER_WIDTH
-
-	_draw_tail(rect, accent)
-	_draw_body(rect, radius, fill, accent, border_width)
-
-	# The bar sits in the bottom strip, so the icon/text row centres on
-	# what is left above it rather than on the whole body.
-	var row_cy := rect.position.y + (rect.size.y - BAR_BOTTOM_MARGIN - BAR_HEIGHT) * 0.5
-
-	var icon_r := rect.size.y * 0.26
-	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, row_cy)
-	# Stroked in the chip's light ink: this outline is the only thing
-	# separating a pale milk bottle -- or a green carrot on a green-tinted
-	# body -- from the ground behind it (FoodGlyphs), so it cannot be a hint.
-	FoodGlyphs.draw_glyph(self, _food_id, icon_center, icon_r, _icon_color, CHIP_GLYPH_INK)
-
-	var glyph_r := rect.size.y * STATUS_GLYPH_RATIO
-	var glyph_center := Vector2(rect.end.x - STATUS_GLYPH_MARGIN - glyph_r, row_cy)
-	_draw_status_glyph(glyph_center, glyph_r, accent)
-
-	var text_x := icon_center.x + icon_r + 12.0
-	var text_w := glyph_center.x - glyph_r - 10.0 - text_x
-	if _freshness_pct >= 0:
-		_draw_fitted(_amount_text, text_x, text_w, row_cy - 14.0, int(rect.size.y * 0.40), TEXT_COLOR)
-		_draw_fitted("%d%%" % _freshness_pct, text_x, text_w, row_cy + 24.0, int(rect.size.y * 0.20), SUBTEXT_COLOR)
-	else:
-		_draw_fitted(_amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.42), TEXT_COLOR)
-
-	_draw_freshness_bar(rect, accent)
-
-## The default map layer: one food glyph per open order on a small dark
-## plate, sized to its contents and centred in the canvas so the surrounding
-## transparent margin costs nothing on screen. No numbers and no freshness
-## bar -- those are what the hover/tap balloon is for.
-func _draw_glyph_column() -> void:
-	if _glyph_entries.is_empty():
+## One column, drawn the same way collapsed or expanded. `_expanded` only
+## widens each row and fills the extra space with the amount, the freshness
+## percentage and the bar -- the row height, the pitch, the glyph cell and
+## the tail are identical either way.
+func _draw_column() -> void:
+	if _entries.is_empty():
 		return
 
-	var r := CHIP_GLYPH_RADIUS
-	var chip := chip_size()
-	var x := (size.x - chip) * 0.5
+	var row_h := row_size()
+	var row_w := column_width(_expanded) - CHIP_MARGIN * 2.0
+	var glyph_r := CHIP_GLYPH_RADIUS
+	# The glyph cell is always the leftmost row_h square of a row, so the
+	# glyph lands at the same place in both states.
+	var cell_cx := CHIP_MARGIN + row_h * 0.5
+
 	var y := CHIP_MARGIN
-	for entry in _glyph_entries:
-		var rect := Rect2(Vector2(x, y), Vector2(chip, chip))
+	for entry in _entries:
+		var rect := Rect2(Vector2(CHIP_MARGIN, y), Vector2(row_w, row_h))
 		var status: FoodBubbleMarker.Status = entry.status
 		var judged := _is_delivery_status(status)
-
-		# A settlement chip takes its status colour as a background; a source
-		# chip stays neutral slate with near-square corners, because a source
-		# has no delivery to be judged on and must not look like it does.
 		var accent := status_color(status)
+		var radius := int(row_h * (SETTLEMENT_CHIP_CORNER_RATIO if judged else SOURCE_CHIP_CORNER_RATIO))
+
+		if status == FoodBubbleMarker.Status.RED:
+			_draw_halo(rect, radius, accent)
+
+		# A settlement row takes its status colour as a background; a source
+		# row stays neutral slate with near-square corners, because a source
+		# has no delivery to be judged on and must not look like it does.
 		var fill := CHIP_SLATE.lerp(Color(accent.r, accent.g, accent.b, CHIP_SLATE.a), CHIP_STATUS_TINT) if judged else CHIP_SLATE
 		var border := accent if judged else CHIP_SLATE_BORDER
-		var ratio := SETTLEMENT_CHIP_CORNER_RATIO if judged else SOURCE_CHIP_CORNER_RATIO
-		_draw_body(rect, int(chip * ratio), fill, border, CHIP_BORDER_WIDTH)
+		var border_width := GREEN_BORDER_WIDTH if status == FoodBubbleMarker.Status.GREEN else CHIP_BORDER_WIDTH
+		_draw_body(rect, radius, fill, border, border_width)
 
-		var center := rect.position + rect.size * 0.5
-		FoodGlyphs.draw_glyph(self, entry.food_id, center, r, entry.color, CHIP_GLYPH_INK)
+		var cell_centre := Vector2(cell_cx, y + row_h * 0.5)
+		# Stroked in the chip's light ink: this outline is the only thing
+		# separating a pale milk bottle -- or a green carrot on a green-tinted
+		# row -- from the ground behind it (FoodGlyphs), so it cannot be a hint.
+		FoodGlyphs.draw_glyph(self, entry.food_id, cell_centre, glyph_r, entry.color, CHIP_GLYPH_INK)
 
-		# The tinted background already says red/amber/green; this keeps the
-		# three separable by SHAPE too, which is item 30's colourblind
-		# guarantee. Its own backing disc holds it legible where it overlaps
-		# the glyph.
+		# The status mark stays pinned to the glyph cell in BOTH states rather
+		# than moving to the far edge when the row widens -- the point of the
+		# layout is that nothing the eye is tracking moves.
 		if judged:
-			var sr := chip * CHIP_STATUS_RATIO * 0.5
-			var sc := rect.end - Vector2(sr, sr) - Vector2(CHIP_BORDER_WIDTH, CHIP_BORDER_WIDTH)
+			var sr := row_h * CHIP_STATUS_RATIO * 0.5
+			var sc := Vector2(cell_cx + row_h * 0.5, y + row_h) - Vector2(sr, sr) - Vector2(CHIP_BORDER_WIDTH, CHIP_BORDER_WIDTH)
 			draw_circle(sc, sr * 1.06, CHIP_STATUS_BACKING)
 			_draw_status_mark(status, sc, sr, accent)
-		y += chip + CHIP_GAP
+
+		if _expanded:
+			_draw_row_detail(entry, rect, cell_cx + row_h * 0.5, accent)
+		y += row_h + CHIP_GAP
+
+	# One tail for the whole column, hung from the glyph cell rather than the
+	# panel's centre -- so it keeps pointing at the node when an expanded
+	# panel widens to the right. Sources get none: a tail is a settlement's
+	# tell, the way the post used to be a source's.
+	if _has_tail:
+		# The bottom row's colour, not the worst row's: the tail hangs off
+		# that row and reads as part of it. Overall severity is already the
+		# top chip's job.
+		_draw_column_tail(y - CHIP_GAP, status_color(_entries[-1].status))
+
+## The right-hand part of an expanded row: the amount, the freshness
+## percentage under it, and the bar. Everything here lives in the space a
+## collapsed chip simply does not have.
+func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent: Color) -> void:
+	var text_x := cell_right + ROW_TEXT_GAP
+	var text_w := rect.end.x - ROW_RIGHT_PAD - text_x
+	var bar_y := rect.end.y - BAR_BOTTOM_MARGIN - BAR_HEIGHT
+	var row_cy := rect.position.y + (rect.size.y - BAR_BOTTOM_MARGIN - BAR_HEIGHT) * 0.5
+	var fresh: int = entry.get("freshness_pct", -1)
+
+	if fresh >= 0:
+		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
+		_draw_fitted("%d%% fresh" % fresh, text_x, text_w, row_cy + 30.0, int(rect.size.y * 0.17), SUBTEXT_COLOR)
+	else:
+		_draw_fitted(entry.amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.34), TEXT_COLOR)
+
+	_draw_freshness_bar(
+		Rect2(Vector2(text_x, bar_y), Vector2(text_w, BAR_HEIGHT)),
+		accent,
+		fresh,
+		entry.get("threshold", 0.0),
+		entry.status,
+	)
+
+func _draw_column_tail(bottom: float, accent: Color) -> void:
+	var cx := glyph_centre_x()
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(cx - TAIL_HALF_WIDTH, bottom - TAIL_OVERLAP),
+		Vector2(cx + TAIL_HALF_WIDTH, bottom - TAIL_OVERLAP),
+		Vector2(cx, bottom + TAIL_HEIGHT),
+	]), accent)
 
 ## Whether a status is a settlement's delivery verdict rather than a source's
 ## stock level. DEFAULT/MUTED belong to sources, which are never judged.
@@ -333,10 +376,6 @@ static func _is_delivery_status(status: FoodBubbleMarker.Status) -> bool:
 		or status == FoodBubbleMarker.Status.GREEN
 
 # --- shared pieces ----------------------------------------------------
-
-## The bubble body, excluding the tail/stem strip along the bottom.
-func _body_rect() -> Rect2:
-	return Rect2(Vector2(3, 3), Vector2(size.x - 6, size.y - TAIL_HEIGHT - 6))
 
 func _draw_body(rect: Rect2, radius: int, fill: Color, border: Color, border_width: int) -> void:
 	var shadow := StyleBoxFlat.new()
@@ -357,44 +396,29 @@ func _draw_halo(rect: Rect2, radius: int, accent: Color) -> void:
 	halo.set_corner_radius_all(radius + int(HALO_GROW))
 	draw_style_box(halo, rect.grow(HALO_GROW))
 
-## Drawn before the body so the body's border closes off the joint; the
-## triangle's base therefore starts well inside the body outline.
-func _draw_tail(rect: Rect2, accent: Color) -> void:
-	var cx := rect.position.x + rect.size.x * 0.5
-	draw_colored_polygon(PackedVector2Array([
-		Vector2(cx - TAIL_HALF_WIDTH, rect.end.y - TAIL_OVERLAP),
-		Vector2(cx + TAIL_HALF_WIDTH, rect.end.y - TAIL_OVERLAP),
-		Vector2(cx, rect.end.y + TAIL_HEIGHT - 2.0),
-	]), accent)
-
-func _draw_freshness_bar(rect: Rect2, accent: Color) -> void:
-	var y := rect.end.y - BAR_BOTTOM_MARGIN
-	var track := Rect2(
-		Vector2(rect.position.x + BAR_INSET, y),
-		Vector2(rect.size.x - BAR_INSET * 2.0, BAR_HEIGHT),
-	)
-	var radius := int(BAR_HEIGHT * 0.5)
+func _draw_freshness_bar(track: Rect2, accent: Color, freshness_pct: int, threshold: float, status: FoodBubbleMarker.Status) -> void:
+	var radius := int(track.size.y * 0.5)
 
 	var track_box := StyleBoxFlat.new()
 	track_box.bg_color = BAR_TRACK_COLOR
 	track_box.set_corner_radius_all(radius)
 	draw_style_box(track_box, track)
 
-	var filled := 0.0 if _freshness_pct < 0 else clampf(_freshness_pct / 100.0, 0.0, 1.0)
+	var filled := 0.0 if freshness_pct < 0 else clampf(freshness_pct / 100.0, 0.0, 1.0)
 	if filled > 0.0:
 		# Never draw a fill narrower than it is tall -- a rounded box
 		# thinner than its own corner radius renders as a smear.
 		var fill_box := StyleBoxFlat.new()
-		fill_box.bg_color = BAR_INERT_COLOR if _status == FoodBubbleMarker.Status.RED else accent
+		fill_box.bg_color = BAR_INERT_COLOR if status == FoodBubbleMarker.Status.RED else accent
 		fill_box.set_corner_radius_all(radius)
-		draw_style_box(fill_box, Rect2(track.position, Vector2(maxf(track.size.x * filled, BAR_HEIGHT), BAR_HEIGHT)))
+		draw_style_box(fill_box, Rect2(track.position, Vector2(maxf(track.size.x * filled, track.size.y), track.size.y)))
 
 	# Drawn over the fill so it stays readable whichever side of the
 	# threshold the bar has reached.
-	var mark := clampf(_threshold, 0.0, 1.0)
+	var mark := clampf(threshold, 0.0, 1.0)
 	if mark > 0.0 and mark < 1.0:
 		var x := track.position.x + track.size.x * mark
-		draw_line(Vector2(x, track.position.y - 1.0), Vector2(x, track.end.y + 1.0), BAR_TICK_COLOR, BAR_TICK_WIDTH)
+		draw_line(Vector2(x, track.position.y - 2.0), Vector2(x, track.end.y + 2.0), BAR_TICK_COLOR, BAR_TICK_WIDTH)
 
 ## Returns the font size actually used, after shrink-to-fit.
 func _draw_fitted(text: String, x: float, max_width: float, center_y: float, start_size: int, color: Color) -> int:
@@ -410,9 +434,6 @@ func _draw_fitted(text: String, x: float, max_width: float, center_y: float, sta
 # Drawn from primitives rather than typeset from the fallback font: the
 # font is not guaranteed to carry check/cross glyphs, and a tofu box in
 # the corner of every bubble would be worse than no glyph at all.
-
-func _draw_status_glyph(center: Vector2, r: float, color: Color) -> void:
-	_draw_status_mark(_status, center, r, color)
 
 ## Takes the status explicitly, because the glyph strip draws one mark per
 ## entry rather than one for the whole canvas.

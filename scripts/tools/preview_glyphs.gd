@@ -18,65 +18,70 @@ func _initialize() -> void:
 	root.add_child(bg)
 
 	var foods := GameBalance.food_types()
-	var x := 10.0
-	for food_id in FOODS:
-		# Settlement balloon: full amount, short of the bonus line (amber).
-		var s := _canvas(Vector2(x, 6), Vector2(310, 150))
-		s.set_settlement(food_id, foods[food_id].color, "12/25", FoodBubbleMarker.Status.AMBER, 72, 0.85)
-		x += 222.0
+	var three := [
+		_e(foods, "seafood", FoodBubbleMarker.Status.RED, 0, 25, -1),
+		_e(foods, "grain", FoodBubbleMarker.Status.AMBER, 20, 20, 72),
+		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 94),
+	]
 
-	# Glyph columns: one, three and five orders, spanning all three statuses.
-	var one := _strip(Vector2(10, 180), 1)
-	one.set_glyph_column([_e(foods, "milk", FoodBubbleMarker.Status.RED)])
-	var three := _strip(Vector2(260, 180), 3)
-	three.set_glyph_column([
-		_e(foods, "seafood", FoodBubbleMarker.Status.RED),
-		_e(foods, "grain", FoodBubbleMarker.Status.AMBER),
-		_e(foods, "bread", FoodBubbleMarker.Status.GREEN),
-	])
-	var five := _strip(Vector2(510, 180), 5)
-	five.set_glyph_column([
-		_e(foods, "seafood", FoodBubbleMarker.Status.RED),
-		_e(foods, "milk", FoodBubbleMarker.Status.RED),
-		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER),
-		_e(foods, "grain", FoodBubbleMarker.Status.GREEN),
-		_e(foods, "bread", FoodBubbleMarker.Status.GREEN),
-	])
-	# A source's strip, spent (muted) and stocked.
-	var spent := _strip(Vector2(780, 180), 1)
-	spent.set_glyph_column([{
-		"food_id": "grain",
-		"color": BubbleCanvas.MUTED_ICON_COLOR,
+	# The point of the layout: collapsed and expanded are the same column at
+	# two widths. Drawn at a matching baseline here, every row must line up.
+	# Both canvases lay rows out from their own left edge, so drawing them at
+	# the same y with a clear gap is the alignment check: every row must sit
+	# at the same height and the glyph the same distance in from the edge.
+	# (In game the sprite is centre-anchored, which is what column_x_shift
+	# compensates for -- that is arithmetic, not something to eyeball here.)
+	_col(Vector2(30, 30), false).set_glyph_column(three, true)
+	_col(Vector2(270, 30), true).set_settlement_column(_rows(three))
+
+	var five := [
+		_e(foods, "seafood", FoodBubbleMarker.Status.RED, 0, 35, -1),
+		_e(foods, "milk", FoodBubbleMarker.Status.RED, 12, 30, 61),
+		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER, 25, 25, 68),
+		_e(foods, "grain", FoodBubbleMarker.Status.GREEN, 30, 30, 97),
+		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 92),
+	]
+	_col(Vector2(760, 30), false).set_glyph_column(five, true)
+	_col(Vector2(1000, 30), true).set_settlement_column(_rows(five))
+
+	# Sources: near-square, neutral slate, no status mark and no tail.
+	_col(Vector2(1500, 30), false).set_glyph_column([{
+		"food_id": "grain", "color": BubbleCanvas.MUTED_ICON_COLOR,
 		"status": FoodBubbleMarker.Status.MUTED,
-	}])
-	var stocked := _strip(Vector2(1030, 180), 1)
-	stocked.set_glyph_column([_e(foods, "vegetables", FoodBubbleMarker.Status.DEFAULT)])
+	}], false)
+	_col(Vector2(1500, 260), false).set_glyph_column(
+		[_e(foods, "vegetables", FoodBubbleMarker.Status.DEFAULT, 0, 0, -1)], false)
 
-	# Worst-case contrast: a food glyph sitting on a chip tinted its OWN hue.
-	# Green vegetables on a green chip and gold grain on an amber chip are the
-	# two that could vanish into their background.
-	var clash := _strip(Vector2(780, 420), 4)
-	clash.set_glyph_column([
-		_e(foods, "vegetables", FoodBubbleMarker.Status.GREEN),
-		_e(foods, "grain", FoodBubbleMarker.Status.AMBER),
-		_e(foods, "bread", FoodBubbleMarker.Status.AMBER),
-		_e(foods, "milk", FoodBubbleMarker.Status.GREEN),
-	])
+	# Worst-case contrast: a food glyph on a row tinted its OWN hue.
+	_col(Vector2(1500, 490), false).set_glyph_column([
+		_e(foods, "vegetables", FoodBubbleMarker.Status.GREEN, 20, 20, 95),
+		_e(foods, "grain", FoodBubbleMarker.Status.AMBER, 20, 20, 70),
+	], true)
 
-func _e(foods: Dictionary, food_id: String, status: FoodBubbleMarker.Status) -> Dictionary:
-	return {"food_id": food_id, "color": foods[food_id].color, "status": status}
+func _rows(entries: Array) -> Array:
+	var out: Array = []
+	for e in entries:
+		out.append({
+			"food_id": e.food_id, "color": e.color, "status": e.status,
+			"amount_text": "%d/%d" % [e.delivered, e.requested],
+			"freshness_pct": e.freshness_pct, "threshold": 0.85,
+		})
+	return out
 
-func _canvas(pos: Vector2, size: Vector2) -> BubbleCanvas:
+func _col(pos: Vector2, expanded: bool) -> BubbleCanvas:
+	# Rows are laid out from the TOP of the canvas and the height is the same
+	# either way, so drawing both at one y is exactly the alignment check.
 	var c := BubbleCanvas.new()
 	c.position = pos
-	c.size = size
+	c.size = Vector2(BubbleCanvas.column_size(5, expanded))
 	root.add_child(c)
 	return c
 
-## A column canvas sized exactly the way FoodBubbleMarker sizes its viewport,
-## so the preview shows the real proportions rather than a guess.
-func _strip(pos: Vector2, count: int) -> BubbleCanvas:
-	return _canvas(pos, Vector2(BubbleCanvas.glyph_column_size(count)))
+func _e(foods: Dictionary, food_id: String, status: FoodBubbleMarker.Status, delivered: float, requested: float, fresh: int) -> Dictionary:
+	return {
+		"food_id": food_id, "color": foods[food_id].color, "status": status,
+		"delivered": delivered, "requested": requested, "freshness_pct": fresh,
+	}
 
 func _process(_delta: float) -> bool:
 	_frame += 1
