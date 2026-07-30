@@ -91,11 +91,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **It cannot be failed or lost.** There is no bankruptcy or loss condition anywhere in the build, so this costs nothing to guarantee. Tools are *revealed* step by step rather than disabled with an error, the clock stays off until the step that introduces it, and Bulldoze is available from step 1 as the escape hatch. It is skippable from region select and replayable afterwards, and skipping still unlocks region 1 -- a tutorial that gates content is a toll.
     Millbrook is authored so the lessons fall out of the map's own numbers rather than being narrated: milk to Village B lands **amber at 68%** on eight tiles, so the player succeeds and is shown that succeeding is not the ceiling; Cool Storage takes the same run to **89%** and green. Grain 65/day down one Dirt trunk against a 60 cap teaches capacity, and milk demand 45 against the Dairy's 40 teaches source upgrades -- two different foods, so "the road cannot carry it" and "the farm cannot make it" are never the same day's problem. `MapData.opening_lines` holds exactly one line here, not item 39's three: that argument was about a free-play map giving the player nothing to weigh, and a scripted tutorial supplies the weighing itself. The order book's deepen/expand alternation (item 40) is disabled on this map, since the step list decides what opens and when. See §12.2.
 
-47. **A settlement shows one bubble, chosen by severity, with stickers for the rest.** A settlement drew one bubble per open order, laid out two to a row (`Main._bubble_column_offset`), so City E's five lines wrapped into three rows stacked over its 2x2 footprint -- and the stack carried **no ordering meaning at all**, since bubbles came out in whatever order the food ids iterated. Finding the line that needed attention meant reading all five, at map zoom, next to Town D's four. The stack now shows **one bubble -- the highest-priority open order** -- with the remaining lines reduced to **stickers**: a small chip carrying the food's colour and the same ✕/!/✓ status glyph the bubble uses, in a row along the **top** edge of the bubble body, so the front bubble reads as the top card of a stack. The freshness bar keeps the bottom edge.
-    **Priority is severity: red before amber before green, ties broken by the largest shortfall** (requested minus delivered, as a fraction of requested). The bubble's job is to answer "what is wrong here", so the line that is most wrong is the one that should be legible without a tap. This also extends item 30's existing language rather than inventing one -- green already recedes there by washing lighter and outlining thinner, and this simply lets it recede all the way to a chip.
-    **Note this is a collapse, which item 37 removed once, and the direction is why it survives.** Item 37 deleted the "All fresh" summary bubble because collapsing "hid exactly the numbers the player had worked to earn" -- it fired only when every line was green, so it hid *good news at the moment it was earned*. A severity-sorted stack does the inverse: what goes behind a sticker is the settled, paid, green line, and what is promoted to the front is the broken one. Same mechanism, opposite direction, and the direction was the whole objection. Every line still shows its identity and status; only its *numbers* move behind a tap.
-    **Stickers are display only -- they are not tappable.** The obvious version of this feature taps a sticker to bring its line to the front, and it was rejected on three grounds. Bubbles have **no picking of any kind** today (they are baked SubViewport textures on billboards, and nothing hit-tests them), so it would mean ray-picking camera-facing quads and then resolving a sub-rect inside a baked texture. The target is far too small to hit: item 39 already found that text past about ten characters "shrinks to the font floor at map zoom", and a sticker is a fraction of a bubble, sitting a few pixels above the settlement tile -- which is itself a tap target doing something else. And it would duplicate a better interaction that already exists: tapping the settlement opens the full per-food checklist (§10.6), which shows **every** line with delivered/requested, freshness and rejection reasons, on a much larger target. The numbers are not hidden by a sticker; they are one tap away on a control that already works. Item 40's "nothing on the map needs pressing" argues the same way -- a new thing to press in order to *see state* is the weaker half of what item 40 deleted.
-    A settlement with one open order draws one bubble and no stickers, which is byte-for-byte what it draws today, and the common case under item 40. **Sources are untouched**: one source produces exactly one food (item 0.2.6), so a source has exactly one bubble and can never stack. Because a settlement now draws a single bubble, the two-column row-wrapping layout has nothing left to lay out -- `Main._bubble_column_offset` and `FoodBubbleMarker.COLUMN_SPACING` go, and the settlement branch stops needing `STACK_SPACING`. See §10.1, §16.
+47. **The map's default layer is glyphs; the bubbles come back on hover or tap.** Every node floated a full balloon per open order, permanently -- and past a couple of orders that buries the thing the balloons are describing. A settlement drew one balloon per line, two to a row (`Main._bubble_column_offset`), so City E's five wrapped into three rows over its own footprint, beside Town D's four; the roads, terrain and route overlay underneath were what paid for it. At rest a node now draws a compact **glyph strip** -- one food silhouette per open order on a small dark plate, each carrying its ✕/!/✓ status mark -- and the full balloons, numbers and freshness bar and all, come back for whichever node the player is hovering or has tapped.
+    **A food had no name on the map, only a colour, and colour could not do the job.** `set_settlement` took an icon colour and an amount and no food name at all, so a single coloured dot was the entire identity of five foods -- and the palette does not support that: milk (`#EDEFE6`) against the cream bubble body (`#F7F0DE`) is a contrast ratio of about **1.02:1**, meaning the milk dot was effectively invisible, and grain (`#D9C36A`) against bread (`#C89A5B`) are adjacent mid-golds. So shape takes over identity. Each food gets one silhouette -- **a wheat ear, a loaf, a carrot, a bottle, a fish** -- used everywhere that food appears, on the source sign and the settlement balloon as well as the strip, which is what makes it learnable rather than decorative: the mark on the Harbor's sign is the mark on City E's bubble. Every glyph is stroked as well as filled, and that stroke is what rescues milk: a near-white bottle on cream stays legible by its edge when its fill does not.
+    **Severity decides the order.** Red, then amber, then green, ties broken by the shortfall as a fraction of what was asked for -- so a village 5 short of 10 outranks a city 5 short of 40, being the closer to failing. The leftmost glyph on a strip, and the first balloon in an expanded stack, is therefore always the line most worth acting on; before this the order was whatever the demand dictionary happened to iterate. This also extends item 30's existing language rather than inventing one, since green already recedes there by washing lighter and outlining thinner.
+    **The strip is not interactive, and nothing new is.** Expansion rides the hover/tap that already opens the info tip (§10.6, §0.4.1) -- there is no new tap target, no picking against billboards, and no sub-rect hit-testing inside a baked texture. Bubbles have never had picking of any kind and still do not.
+    **This is a collapse, which item 37 removed once, and it is a bigger one than that was -- so note honestly what it costs.** "All fresh" hid a settlement's numbers only when every line was green, which is to say it hid good news at the moment it was earned, and it hid it inconsistently while other settlements stayed loud. This hides the delivered/requested figures and the freshness bar at *every* node until one is inspected. Three things carry it. The status mark still gives the verdict -- green is the full amount at or above that settlement's own bonus freshness, which is the same question the bar's tick was answering. It is uniform, so no node is being singled out. And the **Bubbles control becomes three-state -- Glyphs / All / Off** -- so the old dense view is one click away for a player who wants every number on screen at once, which costs almost nothing because both renderers are the same scene. Mobile pays more than desktop here, since hover is free and a tap is deliberate; that asymmetry is real, and the All mode is the answer to it.
+    A node with one open order draws a one-glyph strip, and sources -- one food each (item 0.2.6) -- always do. A source's strip carries no status mark: spent-versus-stocked is already said by the glyph fading, and a ✓ beside it would read as a delivery verdict a source never has. See §10.1, §16.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -1595,39 +1596,43 @@ The main screen should show:
 - Settlement last-delivery info on hover/tap
 - Top-left zoom/pan controls (§10.7)
 
-#### The settlement bubble stack (revised in v0.6 item 47)
+#### The map layer: glyphs at rest, bubbles on inspection (v0.6 item 47)
 
-A settlement draws **one bubble**, for its highest-priority open order, with
-every other open line reduced to a **sticker**.
+At rest every node draws a compact **glyph strip** -- one food silhouette per
+open order, each with a status mark. The full balloon comes back only for the
+node the player is hovering or has tapped.
 
 ```text
-        [·][!][✓]          <- stickers: the other open lines
-     ,-------------.
-     | ● Milk      |          food dot + name
-     | 12/25       |          delivered / requested
-     | [====|--- ] |          freshness bar, ticked at bonus_freshness
-     `----v--------'
-          settlement
+   [wheat!] [loaf✓] [fish✕]      <- at rest: one glyph per open order
+          Village C
+
+   ,---------------.             <- on hover/tap: the balloons, one per order
+   | (loaf)  12/25 ! |
+   | [====|-----]    |
+   `----v------------'
 ```
 
-- **Priority is severity**: red, then amber, then green; ties broken by the
-  largest shortfall as a fraction of the amount requested. The front bubble
-  is therefore always the answer to "what is wrong here", rather than
-  whichever food id happened to iterate first.
-- **A sticker carries the food's colour and the line's ✕/!/✓ status glyph**,
-  and nothing else. Colour plus glyph means a hidden line is still separable
-  by shape alone, for players who cannot separate the hues (§16, item 30).
-- **Stickers sit along the top edge** of the bubble body, so the bubble reads
-  as the top card of a stack. The bottom edge belongs to the freshness bar.
-- **Stickers are not interactive.** Full per-line detail is on the settlement
-  tap, which already shows every open order with delivered/requested,
-  freshness and rejection reasons (§10.6) on a far larger target. See item 47
-  for why a tappable sticker was rejected.
-- **One open order draws one bubble and no stickers** -- identical to the
-  pre-item-47 rendering, and the common case now that orders open one at a
-  time (§6).
-- **Sources never stack.** One source produces exactly one food (§4.7), so a
-  source has exactly one sign and stickers never apply to it.
+- **A glyph, not a colour, says which food.** A bubble carries no food name,
+  so colour alone identified all five -- and it cannot: milk on the cream
+  body is a contrast ratio of about 1.02:1, and grain and bread are adjacent
+  golds. Each food has one silhouette: **wheat ear, loaf, carrot, bottle,
+  fish**. Every glyph is stroked as well as filled, which is what keeps a
+  near-white milk bottle readable on cream.
+- **The same glyph is used everywhere that food appears** -- source sign,
+  settlement balloon, glyph strip. That is what makes it learnable: the mark
+  on the Harbor's sign is the mark on City E's bubble.
+- **Order is severity**: red, then amber, then green, ties broken by the
+  shortfall as a fraction of the amount requested. The leftmost glyph is
+  always the line most worth acting on.
+- **Nothing new is tappable.** Expansion rides the hover/tap that already
+  opens the info tip (§10.6); the strip itself is not a control.
+- **Bubbles is a three-state control -- Glyphs / All / Off.** All restores the
+  old always-on balloons for every node, because the strip trades away the
+  delivered/requested numbers and the freshness bar and a player mid-
+  optimisation may want them all on screen.
+- **Sources always draw a one-glyph strip** (one source, one food, §4.7), and
+  carry no status mark: spent-versus-stocked is already said by the glyph
+  fading, and a ✓ there would read as a delivery verdict a source never has.
 
 ### 10.2 Route drawing UI
 
@@ -1728,7 +1733,7 @@ Top to bottom:
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
-- **Bubbles On/Off (added in v0.4):** a toggle button hides or shows every source/settlement speech bubble (§10.1/UI-01) at once. A busy network can crowd many bubbles together; toggling them off leaves the routes, storage, and hubs visible without needing to zoom out or pan away.
+- **Bubbles: Glyphs / All / Off (added in v0.4, made three-state in v0.6 item 47):** cycles the map's node layer. **Glyphs** is the default -- a compact glyph strip per node, with the full balloons appearing only for whichever node is hovered or tapped. **All** restores the older behaviour of every balloon being on screen at once, for a player who wants every number visible while optimising. **Off** hides the layer entirely, leaving routes, storage and hubs clear without zooming out.
 - **Legend:** collapsed by default, since it is reference material rather than a control. Expanding it scrolls it into view.
 
 None of this depends on a mouse wheel or keyboard, so the game stays playable and testable from a phone browser. These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.

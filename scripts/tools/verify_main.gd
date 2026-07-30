@@ -48,6 +48,7 @@ func _report() -> void:
 	assert(ui_root.mouse_filter == Control.MOUSE_FILTER_IGNORE)
 
 	_test_multi_tile_settlement_draws_one_stack(map_data)
+	_test_glyph_strip_collapses_and_expands(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
 	var farm: NodeData = _node_by_id(map_data, "farm")
@@ -634,6 +635,81 @@ func _test_multi_tile_settlement_draws_one_stack(map_data: MapData) -> void:
 	state.active_orders.erase(city.node_id)
 	_main.call("_render_grid")
 	print("Multi-tile bubbles (DEV-02): City E draws 1 stack across 4 cells.")
+
+## At rest a settlement collapses to ONE glyph strip however many orders it
+## has open, and expands back to one balloon per order while the player is
+## inspecting it (UI-04). Both halves are invisible to a screenshot taken at
+## the wrong moment, and the collapse is the whole point of the feature -- a
+## regression that quietly drew balloons again would just look like the old
+## build.
+##
+## The severity sort is checked here too, because it decides which glyph is
+## leftmost and which balloon is on top, and nothing else would catch it
+## silently reverting to dictionary order.
+func _test_glyph_strip_collapses_and_expands(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	var centre: Vector3 = _main.call("_node_center", city)
+
+	# Three open orders, deliberately spanning all three statuses: seafood
+	# gets nothing (red), grain arrives in full but dull (amber), bread
+	# arrives in full and fresh (green).
+	state.active_orders[city.node_id] = {"seafood": 10, "grain": 10, "bread": 10}
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0},
+		"grain": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 500.0},
+		"bread": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0},
+	}
+
+	# Wide enough to take in a whole expanded stack -- balloons spread +-1.55
+	# either side of centre on COLUMN_SPACING -- and still far short of the
+	# nearest other node (Harbor is 8 world units away).
+	var span := 2.5
+
+	_main.set("_focused_node_id", "")
+	_main.call("_render_grid")
+	assert(_count_bubbles_at(centre, span) == 1,
+		"At rest a settlement draws one glyph strip, got %d markers" % _count_bubbles_at(centre, span))
+
+	_main.set("_focused_node_id", city.node_id)
+	_main.call("_render_grid")
+	assert(_count_bubbles_at(centre, span) == 3,
+		"An inspected settlement draws one balloon per open order, got %d" % _count_bubbles_at(centre, span))
+
+	# Severity order: red, then amber, then green.
+	var entries := [
+		{"status": FoodBubbleMarker.Status.GREEN, "requested": 10.0, "delivered": 10.0},
+		{"status": FoodBubbleMarker.Status.RED, "requested": 10.0, "delivered": 0.0},
+		{"status": FoodBubbleMarker.Status.AMBER, "requested": 10.0, "delivered": 10.0},
+	]
+	entries.sort_custom(Callable(_main, "_worse_first"))
+	assert(entries[0].status == FoodBubbleMarker.Status.RED, "Red sorts first")
+	assert(entries[1].status == FoodBubbleMarker.Status.AMBER, "Amber sorts above green")
+	assert(entries[2].status == FoodBubbleMarker.Status.GREEN, "Green sorts last")
+
+	# Within a tier, the bigger shortfall as a FRACTION of what was asked
+	# for comes first -- a village 5 short of 10 is closer to failing than a
+	# city 5 short of 40.
+	var tied := [
+		{"status": FoodBubbleMarker.Status.RED, "requested": 40.0, "delivered": 35.0},
+		{"status": FoodBubbleMarker.Status.RED, "requested": 10.0, "delivered": 5.0},
+	]
+	tied.sort_custom(Callable(_main, "_worse_first"))
+	assert(is_equal_approx(tied[0].requested, 10.0), "The proportionally worse shortfall sorts first")
+
+	_main.set("_focused_node_id", "")
+	state.active_orders.erase(city.node_id)
+	state.last_settlement_status.erase(city.node_id)
+	_main.call("_render_grid")
+	print("Glyph strip (UI-04): 3 orders collapse to 1 strip, expand to 3 on focus, sorted worst-first.")
+
+func _count_bubbles_at(centre: Vector3, radius: float) -> int:
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	var count := 0
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < radius:
+			count += 1
+	return count
 
 ## The Upgrade tool spends money to double a source's output (DEV-03). The
 ## footprint does not change -- a source already stands on 2x1 -- so nothing

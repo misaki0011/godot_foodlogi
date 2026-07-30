@@ -49,8 +49,17 @@ const STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION + 0.1
 const SOURCE_STACK_SPACING := WORLD_HEIGHT * CAMERA_VERTICAL_COMPENSATION * SOURCE_SCALE + 0.1
 const COLUMN_SPACING := WORLD_WIDTH + 0.1
 
-## Which silhouette bubble_canvas.gd draws.
-enum Kind { SOURCE, SETTLEMENT }
+## How much smaller a glyph strip renders than a settlement balloon. The
+## strip is the always-on layer over the whole map, so it has to sit well
+## below a balloon's visual weight or it is just a differently-shaped
+## version of the clutter it replaces.
+const GLYPH_STRIP_SCALE := 0.72
+
+## Which silhouette bubble_canvas.gd draws. GLYPH_STRIP is the compact
+## default layer -- food glyphs plus status marks, no numbers -- with
+## SOURCE/SETTLEMENT reserved for the node the player is actually inspecting
+## (or for the "All" bubbles mode). See main.gd's BubblesMode.
+enum Kind { SOURCE, SETTLEMENT, GLYPH_STRIP }
 
 ## DEFAULT is a source's plain food-on-beige look; MUTED grays a source
 ## out once it has given away its whole daily produce. RED/AMBER/GREEN are
@@ -68,7 +77,16 @@ func _ready() -> void:
 
 func setup_source(food: FoodData, used: float, produced: float, status: Status = Status.DEFAULT) -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE * SOURCE_SCALE
-	_canvas.set_source(food.color, _ratio_text(used, produced), status)
+	_canvas.set_source(food.food_id, food.color, _ratio_text(used, produced), status)
+	_bake()
+
+## The compact default layer: one food glyph per open order (or, for a
+## source, its single produced food), each carrying a status mark. `entries`
+## is one {food_id, color, status} per glyph, already sorted worst-first --
+## the strip's leftmost mark is the thing most worth doing something about.
+func setup_glyph_strip(entries: Array) -> void:
+	_sprite.pixel_size = BASE_PIXEL_SIZE * GLYPH_STRIP_SCALE
+	_canvas.set_glyph_strip(entries)
 	_bake()
 
 ## freshness_pct >= 0 fills the bar and prints the percentage; pass -1
@@ -78,7 +96,7 @@ func setup_source(food: FoodData, used: float, produced: float, status: Status =
 ## the same 78% is a miss at a fussy city and a pass at a village.
 func setup_settlement(food: FoodData, delivered: float, requested: float, status: Status, freshness_pct: int = -1, bonus_freshness_pct: float = 0.0) -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE
-	_canvas.set_settlement(food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
+	_canvas.set_settlement(food.food_id, food.color, _ratio_text(delivered, requested), status, freshness_pct, bonus_freshness_pct / 100.0)
 	_bake()
 
 func _ratio_text(current: float, max_amount: float) -> String:

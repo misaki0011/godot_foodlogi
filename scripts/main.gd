@@ -95,7 +95,31 @@ var _tool := "route"
 var _nodes_by_pos: Dictionary = {}
 var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
-var _bubbles_visible := true
+
+## How much of a node's order book is drawn on the map at rest.
+##
+## GLYPHS is the default and the reason this enum exists: a full balloon per
+## open order buries the map under its own UI once more than a couple are
+## open (see the crowding a 5-line City produced). At rest a node now draws a
+## compact glyph strip -- one food silhouette per order, each with a status
+## mark -- and the balloons come back for whichever node the player is
+## hovering or has tapped.
+##
+## ALL restores the old always-on balloons for every node, because the strip
+## trades away the delivered/requested numbers and the freshness bar, and a
+## player mid-optimisation may well want those on screen at once. Keeping
+## both renderers costs almost nothing: they are the same scene.
+enum BubblesMode { GLYPHS, ALL, OFF }
+const BUBBLES_MODE_LABELS := {
+	BubblesMode.GLYPHS: "Glyphs",
+	BubblesMode.ALL: "All",
+	BubblesMode.OFF: "Off",
+}
+var _bubbles_mode: BubblesMode = BubblesMode.GLYPHS
+## Which node is showing its full balloons because the pointer is over it (or
+## it was tapped). Empty when the pointer is on terrain. Only ever affects
+## rendering -- nothing in the simulation knows about it.
+var _focused_node_id: String = ""
 
 var _funds_label: Label
 var _day_label: Label
@@ -1165,8 +1189,12 @@ func _show_day_summary(r: DayReportData) -> void:
 func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 	if not _cell_in_bounds(cell):
 		_tip_panel.visible = false
+		_set_focused_node("")
 		return
 	var n := _node_at(cell)
+	# Inspecting a node is what expands it from a glyph strip back into full
+	# balloons, so the same pointer that opens the tip drives the map layer.
+	_set_focused_node(n.node_id if n else "")
 	var cell_data = _state.grid.get(cell)
 	var text := ""
 	if n:
@@ -1239,6 +1267,19 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 	_tip_label.text = text
 	_tip_panel.visible = true
 	_tip_panel.position = mouse_pos + Vector2(16, 12)
+
+## Re-renders only when the focused node actually changes. _render_grid
+## rebuilds every visual on the map, so calling it per mouse-motion event
+## would be untenable -- but crossing into or out of a node's footprint is
+## rare, and only that crossing changes what is drawn.
+func _set_focused_node(node_id: String) -> void:
+	if node_id == _focused_node_id:
+		return
+	_focused_node_id = node_id
+	# In ALL or OFF mode nothing about a node's rendering depends on focus,
+	# so the rebuild would be pure waste.
+	if _bubbles_mode == BubblesMode.GLYPHS:
+		_render_grid()
 
 ## ---------- settlement tip ----------
 
@@ -1361,7 +1402,7 @@ func _render_grid() -> void:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
 	_render_established_routes()
-	if _bubbles_visible:
+	if _bubbles_mode != BubblesMode.OFF:
 		_render_supply_bubbles()
 
 ## Continuously overlays a bright gold line along every tile that lies on a
@@ -1521,11 +1562,26 @@ func _node_center(n: NodeData) -> Vector3:
 	var far: Vector3 = _terrain.map_to_local(Vector3i(far_cell.x, 0, far_cell.y))
 	return (near + far) * 0.5
 
+## Whether this node draws its full balloons rather than the compact glyph
+## strip: either the player is inspecting it, or they have asked for every
+## balloon at once.
+func _shows_full_bubbles(n: NodeData) -> bool:
+	return _bubbles_mode == BubblesMode.ALL or _focused_node_id == n.node_id
+
+func _spawn_glyph_strip(base_pos: Vector3, entries: Array) -> void:
+	if entries.is_empty():
+		return
+	var strip: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+	_grid_visuals.add_child(strip)
+	strip.position = base_pos
+	strip.setup_glyph_strip(entries)
+
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
 	# The source's crate model is shorter than the settlement pin, so its
 	# bubble sits a little lower than the settlement stack's start height.
 	var base_pos: Vector3 = _node_center(n) + Vector3(0, 2.5, 0)
+	var entries: Array = []
 	var stack := 0
 	for food_id in n.produces:
 		var produced: float = n.produces[food_id]
@@ -1533,11 +1589,24 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 		if status.has(food_id):
 			used = status[food_id].used
 		var bubble_status := FoodBubbleMarker.Status.MUTED if used >= produced - 0.01 else FoodBubbleMarker.Status.DEFAULT
+		if not _shows_full_bubbles(n):
+			# A source's strip carries no status mark: MUTED/DEFAULT is
+			# "spent today" vs "still has stock", which the glyph already
+			# says by fading, and a ✓ beside it would read as a delivery
+			# verdict this node never has.
+			entries.append({
+				"food_id": food_id,
+				"color": (BubbleCanvas.MUTED_ICON_COLOR if bubble_status == FoodBubbleMarker.Status.MUTED
+					else foods[food_id].color),
+				"status": bubble_status,
+			})
+			continue
 		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 		_grid_visuals.add_child(bubble)
 		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.SOURCE_STACK_SPACING, 0)
 		bubble.setup_source(foods[food_id], used, produced, bubble_status)
 		stack += 1
+	_spawn_glyph_strip(base_pos, entries)
 
 ## A settlement can demand up to 3 foods (Town D, City E), and some
 ## settlements sit only 3 tiles from a neighbor -- stacking every bubble
@@ -1599,6 +1668,24 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 		})
 
+	# Worst first, so the leftmost glyph on the strip -- and the first
+	# balloon in an expanded stack -- is the line most worth acting on. Red
+	# before amber before green, ties broken by how far short the delivery
+	# fell as a fraction of what was asked for. Without this the order was
+	# whatever the demand dictionary happened to iterate.
+	entries.sort_custom(_worse_first)
+
+	if not _shows_full_bubbles(n):
+		var glyphs: Array = []
+		for e in entries:
+			glyphs.append({
+				"food_id": e.food_id,
+				"color": foods[e.food_id].color,
+				"status": e.status,
+			})
+		_spawn_glyph_strip(base_pos, glyphs)
+		return
+
 	for index in entries.size():
 		var e: Dictionary = entries[index]
 		var row: int = index / 2
@@ -1617,6 +1704,31 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			e.freshness_pct,
 			n.bonus_freshness,
 		)
+
+## Severity order for a settlement's open lines: red, then amber, then
+## green, with the biggest shortfall first inside a tier.
+static func _worse_first(a: Dictionary, b: Dictionary) -> bool:
+	var rank_a := _status_rank(a.status)
+	var rank_b := _status_rank(b.status)
+	if rank_a != rank_b:
+		return rank_a < rank_b
+	return _shortfall(a) > _shortfall(b)
+
+static func _status_rank(status: FoodBubbleMarker.Status) -> int:
+	match status:
+		FoodBubbleMarker.Status.RED:
+			return 0
+		FoodBubbleMarker.Status.AMBER:
+			return 1
+	return 2
+
+## As a fraction of what was asked for, so a village 5 short of 10 outranks a
+## city 5 short of 40 -- the small order is the one closer to failing.
+static func _shortfall(e: Dictionary) -> float:
+	var requested: float = e.requested
+	if requested <= 0.0:
+		return 0.0
+	return clampf((requested - e.delivered) / requested, 0.0, 1.0)
 
 ## Where a bubble sits across the 2-column stack. A row holding a single
 ## bubble centres it over the settlement instead of leaving it hanging in the
@@ -1768,9 +1880,11 @@ func _set_tool(tool: String) -> void:
 			button.button_pressed = key == tool
 	_hint_label.text = TOOL_HINTS.get(tool, "")
 
-func _on_bubbles_toggled(pressed: bool) -> void:
-	_bubbles_visible = pressed
-	_bubbles_button.text = "On" if pressed else "Off"
+## Three states rather than a checkbox, so the compact default and the old
+## dense view are both reachable without a second control.
+func _on_bubbles_pressed() -> void:
+	_bubbles_mode = ((_bubbles_mode + 1) % BubblesMode.size()) as BubblesMode
+	_bubbles_button.text = BUBBLES_MODE_LABELS[_bubbles_mode]
 	_render_grid()
 
 func _update_ui() -> void:
@@ -2017,11 +2131,9 @@ func _build_map_section(box: VBoxContainer) -> void:
 	bubbles_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bubbles_row.add_child(bubbles_label)
 	_bubbles_button = Button.new()
-	_bubbles_button.toggle_mode = true
-	_bubbles_button.button_pressed = true
-	_bubbles_button.text = "On"
-	_bubbles_button.custom_minimum_size = Vector2(48, 32)
-	_bubbles_button.toggled.connect(_on_bubbles_toggled)
+	_bubbles_button.text = BUBBLES_MODE_LABELS[_bubbles_mode]
+	_bubbles_button.custom_minimum_size = Vector2(62, 32)
+	_bubbles_button.pressed.connect(_on_bubbles_pressed)
 	bubbles_row.add_child(_bubbles_button)
 
 ## Reference material, so it starts collapsed and the panel stays short.

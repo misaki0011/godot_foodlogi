@@ -27,6 +27,20 @@ extends Control
 ## instead rides on the border, the tail, the progress bar and a glyph --
 ## and the glyph makes the three states distinguishable by shape alone,
 ## for players who cannot separate the red and green hues.
+##
+## There is a third variant, and by default it is the only one on screen:
+##
+##   GLYPH_STRIP       a small dark plate carrying one food glyph per open
+##                     order, each with a status mark at its corner. This is
+##                     what a node draws when it is not being inspected.
+##
+## A map where every node floats a full balloon is unreadable once more than
+## a couple of orders are open -- the bubbles crowd each other and bury the
+## roads, terrain and route overlay underneath them. The strip answers the
+## two questions worth asking at a glance (what does this place want, is it
+## all right) in a fraction of the space, and the balloon -- numbers,
+## freshness bar and all -- comes back the moment the player hovers or taps
+## the node. See main.gd's BubblesMode.
 
 const BUBBLE_COLOR := Color(0.97, 0.94, 0.87, 0.97)
 const BORDER_COLOR := Color(0.15, 0.12, 0.08, 0.65)
@@ -135,8 +149,38 @@ const BAR_INERT_COLOR := Color(0.15, 0.12, 0.08, 0.32)
 ## the bubble; this is the floor so it never shrinks past readable.
 const MIN_FONT_SIZE := 14
 
+## ---------- glyph strip ----------
+## The plate reuses the source sign's dark slate rather than the settlement's
+## cream: the strip sits directly over grass, and a pale plate at the
+## terrain's own luminance loses its edges into the ground. Dark also lets a
+## pale food glyph (milk) and a saturated status mark both read on it.
+const STRIP_PLATE_COLOR := Color(0.18, 0.20, 0.23, 0.90)
+const STRIP_PLATE_BORDER := Color(0.80, 0.82, 0.85, 0.42)
+const STRIP_PLATE_BORDER_WIDTH := 2
+const STRIP_CORNER_RATIO := 0.30
+## Ink the food glyphs are outlined in on the plate -- light, because the
+## plate is dark. This is the inverse of the bubble, where the ink is dark.
+const STRIP_GLYPH_INK := Color(0.93, 0.94, 0.96, 0.92)
+const STRIP_GLYPH_RADIUS := 19.0
+const STRIP_GLYPH_GAP := 13.0
+const STRIP_PADDING := Vector2(14.0, 11.0)
+## The status mark rides the glyph's lower-right corner. It only has to
+## separate three states where the food glyph separates five, so it can
+## afford to be much smaller and still stay legible.
+const STRIP_STATUS_RATIO := 0.52
+const STRIP_STATUS_OFFSET := Vector2(0.74, 0.78)
+## A dark disc behind the status mark, so a saturated glyph keeps its shape
+## where it overlaps the food glyph's own fill.
+const STRIP_STATUS_BACKING := Color(0.10, 0.11, 0.13, 0.85)
+
 var _kind: FoodBubbleMarker.Kind = FoodBubbleMarker.Kind.SOURCE
 var _icon_color: Color = Color.WHITE
+## Which silhouette identifies the food (see FoodGlyphs). Empty falls back to
+## the plain disc the bubbles used before glyphs existed.
+var _food_id: String = ""
+## GLYPH_STRIP only: one {food_id, color, status} per open order, already
+## sorted worst-first by main.gd.
+var _glyph_entries: Array = []
 var _amount_text: String = "0"
 var _status: FoodBubbleMarker.Status = FoodBubbleMarker.Status.DEFAULT
 ## Settlement only: average freshness, or -1 when nothing has arrived and
@@ -157,15 +201,17 @@ static func status_color(status: FoodBubbleMarker.Status) -> Color:
 			return GREEN_COLOR
 	return BORDER_COLOR
 
-func set_source(icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status) -> void:
+func set_source(food_id: String, icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status) -> void:
 	_kind = FoodBubbleMarker.Kind.SOURCE
+	_food_id = food_id
 	_icon_color = icon_color
 	_amount_text = amount_text
 	_status = status
 	queue_redraw()
 
-func set_settlement(icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status, freshness_pct: int, threshold: float) -> void:
+func set_settlement(food_id: String, icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status, freshness_pct: int, threshold: float) -> void:
 	_kind = FoodBubbleMarker.Kind.SETTLEMENT
+	_food_id = food_id
 	_icon_color = icon_color
 	_amount_text = amount_text
 	_status = status
@@ -173,10 +219,18 @@ func set_settlement(icon_color: Color, amount_text: String, status: FoodBubbleMa
 	_threshold = threshold
 	queue_redraw()
 
+## `entries` is one {food_id, color, status} per open order, worst-first.
+func set_glyph_strip(entries: Array) -> void:
+	_kind = FoodBubbleMarker.Kind.GLYPH_STRIP
+	_glyph_entries = entries
+	queue_redraw()
+
 func _draw() -> void:
 	match _kind:
 		FoodBubbleMarker.Kind.SETTLEMENT:
 			_draw_settlement()
+		FoodBubbleMarker.Kind.GLYPH_STRIP:
+			_draw_glyph_strip()
 		_:
 			_draw_source()
 
@@ -211,8 +265,9 @@ func _draw_source() -> void:
 	var cy := rect.position.y + rect.size.y * 0.5
 	var icon_r := rect.size.y * 0.23
 	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, cy)
-	draw_circle(icon_center, icon_r, icon)
-	draw_arc(icon_center, icon_r, 0, TAU, 32, border, 2.0, true)
+	# The same silhouette this food carries everywhere else on the map, so a
+	# sign and the bubbles it supplies are visibly about the same thing.
+	FoodGlyphs.draw_glyph(self, _food_id, icon_center, icon_r, icon, border)
 
 	var glyph_r := rect.size.y * 0.155
 	var glyph_center := Vector2(rect.end.x - 16.0 - glyph_r, cy)
@@ -244,8 +299,10 @@ func _draw_settlement() -> void:
 
 	var icon_r := rect.size.y * 0.26
 	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, row_cy)
-	draw_circle(icon_center, icon_r, _icon_color)
-	draw_arc(icon_center, icon_r, 0, TAU, 32, BORDER_COLOR, 2.0, true)
+	# Stroked in the full-strength text ink rather than BORDER_COLOR's 0.65
+	# alpha: this outline is the only thing separating a milk bottle from the
+	# cream body behind it (FoodGlyphs), so it cannot be a hint.
+	FoodGlyphs.draw_glyph(self, _food_id, icon_center, icon_r, _icon_color, TEXT_COLOR)
 
 	var glyph_r := rect.size.y * STATUS_GLYPH_RATIO
 	var glyph_center := Vector2(rect.end.x - STATUS_GLYPH_MARGIN - glyph_r, row_cy)
@@ -260,6 +317,42 @@ func _draw_settlement() -> void:
 		_draw_fitted(_amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.42), TEXT_COLOR)
 
 	_draw_freshness_bar(rect, accent)
+
+## The default map layer: one food glyph per open order on a small dark
+## plate, sized to its contents and centred in the canvas so the surrounding
+## transparent margin costs nothing on screen. No numbers and no freshness
+## bar -- those are what the hover/tap balloon is for.
+func _draw_glyph_strip() -> void:
+	if _glyph_entries.is_empty():
+		return
+
+	var n := _glyph_entries.size()
+	var r := STRIP_GLYPH_RADIUS
+	var span := n * r * 2.0 + maxf(n - 1, 0) * STRIP_GLYPH_GAP
+	var plate := Rect2(
+		Vector2((size.x - span) * 0.5 - STRIP_PADDING.x, (size.y - r * 2.0) * 0.5 - STRIP_PADDING.y),
+		Vector2(span + STRIP_PADDING.x * 2.0, r * 2.0 + STRIP_PADDING.y * 2.0),
+	)
+	_draw_body(plate, int(plate.size.y * STRIP_CORNER_RATIO), STRIP_PLATE_COLOR, STRIP_PLATE_BORDER, STRIP_PLATE_BORDER_WIDTH)
+
+	var cy := plate.position.y + plate.size.y * 0.5
+	var x := plate.position.x + STRIP_PADDING.x + r
+	for entry in _glyph_entries:
+		var center := Vector2(x, cy)
+		FoodGlyphs.draw_glyph(self, entry.food_id, center, r, entry.color, STRIP_GLYPH_INK)
+
+		# The status mark sits over the glyph's corner rather than beside it,
+		# so a settlement with five orders stays five marks wide instead of
+		# ten. Its own backing disc keeps it legible where it overlaps.
+		var status: FoodBubbleMarker.Status = entry.status
+		if status == FoodBubbleMarker.Status.RED \
+				or status == FoodBubbleMarker.Status.AMBER \
+				or status == FoodBubbleMarker.Status.GREEN:
+			var sr := r * STRIP_STATUS_RATIO
+			var sc := center + Vector2(r * STRIP_STATUS_OFFSET.x, r * STRIP_STATUS_OFFSET.y)
+			draw_circle(sc, sr * 1.05, STRIP_STATUS_BACKING)
+			_draw_status_mark(status, sc, sr, status_color(status))
+		x += r * 2.0 + STRIP_GLYPH_GAP
 
 # --- shared pieces ----------------------------------------------------
 
@@ -341,7 +434,12 @@ func _draw_fitted(text: String, x: float, max_width: float, center_y: float, sta
 # the corner of every bubble would be worse than no glyph at all.
 
 func _draw_status_glyph(center: Vector2, r: float, color: Color) -> void:
-	match _status:
+	_draw_status_mark(_status, center, r, color)
+
+## Takes the status explicitly, because the glyph strip draws one mark per
+## entry rather than one for the whole canvas.
+func _draw_status_mark(status: FoodBubbleMarker.Status, center: Vector2, r: float, color: Color) -> void:
+	match status:
 		FoodBubbleMarker.Status.GREEN:
 			_draw_check(center, r, color)
 		FoodBubbleMarker.Status.AMBER:
