@@ -100,19 +100,27 @@ const STATUS_GLYPH_MARGIN := 13.0
 ## the settlement's own bonus threshold -- the line the bar has to cross
 ## to turn the bubble green. Without it "78%" means nothing until you
 ## remember whether this particular town wanted 80 or 90.
-const BAR_INSET := 22.0
-const BAR_HEIGHT := 9.0
-const BAR_BOTTOM_MARGIN := 18.0
-const BAR_TRACK_COLOR := Color(1.0, 1.0, 1.0, 0.17)
-const BAR_TICK_COLOR := Color(1.0, 1.0, 1.0, 0.62)
-const BAR_TICK_WIDTH := 3.0
+## Sized for a 192px row. These were 9px tall in the old 310x150 balloon and
+## were never rescaled when rows went 4x and pixel_size dropped 0.01 -> 0.0072
+## -- which left the bar physically SMALLER on screen than before the
+## redesign, inside a row four times the size.
+const BAR_HEIGHT := 24.0
+const BAR_BOTTOM_MARGIN := 22.0
+## The track is a dark recess, not a pale wash. Both track and fill were
+## translucent white after the light-on-dark inversion (item 49), 0.17 against
+## 0.34, which is far too small a step to read as "filled" -- a 90% bar looked
+## like an empty one. Cutting the track darker than the body and lifting the
+## fill well clear of it puts real contrast between them.
+const BAR_TRACK_COLOR := Color(0.0, 0.0, 0.0, 0.30)
+const BAR_TICK_COLOR := Color(1.0, 1.0, 1.0, 0.70)
+const BAR_TICK_WIDTH := 5.0
 
 ## The bar only takes the status colour once the full requested amount has
 ## arrived. Short of that the delivery earns nothing whatever its
 ## freshness was, so colouring a long bar red -- or worse, green -- would
 ## dress up a line that is not paying. Grey says "measured, but it does
 ## not count yet".
-const BAR_INERT_COLOR := Color(1.0, 1.0, 1.0, 0.34)
+const BAR_INERT_COLOR := Color(1.0, 1.0, 1.0, 0.58)
 
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
