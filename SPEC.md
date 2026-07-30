@@ -98,6 +98,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **This is a collapse, which item 37 removed once, and it is a bigger one than that was -- so note honestly what it costs.** "All fresh" hid a settlement's numbers only when every line was green, which is to say it hid good news at the moment it was earned, and it hid it inconsistently while other settlements stayed loud. This hides the delivered/requested figures and the freshness bar at *every* node until one is inspected. Three things carry it. The status mark still gives the verdict -- green is the full amount at or above that settlement's own bonus freshness, which is the same question the bar's tick was answering. It is uniform, so no node is being singled out. And the **Bubbles control becomes three-state -- Glyphs / All / Off** -- so the old dense view is one click away for a player who wants every number on screen at once, which costs almost nothing because both renderers are the same scene. Mobile pays more than desktop here, since hover is free and a tap is deliberate; that asymmetry is real, and the All mode is the answer to it.
     A node with one open order draws a one-glyph strip, and sources -- one food each (item 0.2.6) -- always do. A source's strip carries no status mark: spent-versus-stocked is already said by the glyph fading, and a ✓ beside it would read as a delivery verdict a source never has. See §10.1, §16.
 
+48. **Icons get four times bigger, a source is always its glyph, and a settlement's text tip is retired.** Three follow-ups to item 47, all from seeing it on a phone.
+    **Size.** A one-glyph strip came to roughly ten screen pixels on a phone-width view of the whole region -- below the point at which any silhouette resolves, so the glyphs were unreadable in exactly the situation they exist for. `STRIP_GLYPH_RADIUS` goes from 19 to **76**. The increase is *native*, not a sprite scale: `setup_glyph_strip` now sizes the marker's SubViewport to fit its contents, so a bigger glyph is drawn at a bigger resolution and stays sharp rather than being a magnified small texture, and a one-glyph source stops carrying a texture wide enough for five. Gap and padding grow well under 4x deliberately -- at full 4x a five-order City would have spanned about four tiles, and keeping the spacing tight holds the widest strip near three while making the row read as one object instead of separate badges.
+    **A source is always its big glyph.** The dark slate sign on a post is retired outright -- `set_source`, `_draw_source`, the outgoing-supply arrow, the stem/foot and the whole `SOURCE_*` palette are deleted, since nothing calls them once a source never expands. A source's identity is the food it makes, and a glyph says that faster and smaller than a sign printing "21/80". What that sign uniquely carried -- how much of today's produce has actually been drawn -- would otherwise have been lost, since the map glyph only distinguishes spent from stocked by going grey, so it moves to the source's hover tip as a "Drawn today: 21/80" line. The source tip stays for a second reason: it is where the player discovers source upgrades exist at all (item 42).
+    **The settlement's detailed description is retired.** Hovering or tapping a settlement expanded its glyph strip into full balloons *and* opened a text panel repeating the same delivery in words -- the balloons already carry delivered/requested, the freshness percentage, and the bar ticked at that settlement's own bonus threshold, so the panel was saying it twice. `_settlement_tip_text` is deleted and a settlement no longer opens the tip at all; the balloons are the detail view. Sources, routes, storage, hubs and bridges keep their tips.
+    Note what the text panel took with it, because the balloons do not carry all of it: the settlement's **`min_freshness`** (the reject threshold -- the bar still ticks `bonus_freshness`, which is the line that pays), the **"May order later"** list of demand lines not yet opened (item 36), and the **"N arrived too spoiled to accept"** rejection figure. The first is inferable from a rejected delivery, but the other two are genuinely gone from the map and now exist only in the day report. If the still-to-come list turns out to be load-bearing for planning, it wants somewhere better than a hover panel anyway. See §10.1, §10.6.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1593,7 +1599,7 @@ The main screen should show:
 - Route congestion or capacity warnings
 - Freshness warnings
 - Hub last-delivery hover details
-- Settlement last-delivery info on hover/tap
+- Settlement last-delivery detail, as balloons on hover/tap (§10.1)
 - Top-left zoom/pan controls (§10.7)
 
 #### The map layer: glyphs at rest, bubbles on inspection (v0.6 item 47)
@@ -1630,9 +1636,14 @@ node the player is hovering or has tapped.
   old always-on balloons for every node, because the strip trades away the
   delivered/requested numbers and the freshness bar and a player mid-
   optimisation may want them all on screen.
-- **Sources always draw a one-glyph strip** (one source, one food, §4.7), and
-  carry no status mark: spent-versus-stocked is already said by the glyph
-  fading, and a ✓ there would read as a delivery verdict a source never has.
+- **A source is always its big glyph** (one source, one food, §4.7) -- it
+  never expands into anything else, the dark slate sign having been retired
+  in item 48. It carries no status mark: spent-versus-stocked is already said
+  by the glyph going grey, and a ✓ there would read as a delivery verdict a
+  source never has. Its used/produced figure lives in the hover tip.
+- **A settlement opens no text tip** (item 48). The balloons the hover/tap
+  expands are the detail view; a panel repeating them in words was saying the
+  same thing twice. Sources, routes, storage, hubs and bridges keep theirs.
 
 ### 10.2 Route drawing UI
 

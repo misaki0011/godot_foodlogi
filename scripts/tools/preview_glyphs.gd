@@ -21,23 +21,20 @@ func _initialize() -> void:
 	var x := 10.0
 	for food_id in FOODS:
 		# Settlement balloon: full amount, short of the bonus line (amber).
-		var s := _canvas(Vector2(x, 6))
+		var s := _canvas(Vector2(x, 6), Vector2(310, 150))
 		s.set_settlement(food_id, foods[food_id].color, "12/25", FoodBubbleMarker.Status.AMBER, 72, 0.85)
-		# Source sign.
-		var src := _canvas(Vector2(x, 168))
-		src.set_source(food_id, foods[food_id].color, "21/80", FoodBubbleMarker.Status.DEFAULT)
 		x += 222.0
 
 	# Glyph strips: one, three and five orders, spanning all three statuses.
-	var one := _canvas(Vector2(10, 330))
+	var one := _strip(Vector2(10, 180), 1)
 	one.set_glyph_strip([_e(foods, "milk", FoodBubbleMarker.Status.RED)])
-	var three := _canvas(Vector2(320, 330))
+	var three := _strip(Vector2(320, 180), 3)
 	three.set_glyph_strip([
 		_e(foods, "seafood", FoodBubbleMarker.Status.RED),
 		_e(foods, "grain", FoodBubbleMarker.Status.AMBER),
 		_e(foods, "bread", FoodBubbleMarker.Status.GREEN),
 	])
-	var five := _canvas(Vector2(630, 330))
+	var five := _strip(Vector2(10, 400), 5)
 	five.set_glyph_strip([
 		_e(foods, "seafood", FoodBubbleMarker.Status.RED),
 		_e(foods, "milk", FoodBubbleMarker.Status.RED),
@@ -46,24 +43,29 @@ func _initialize() -> void:
 		_e(foods, "bread", FoodBubbleMarker.Status.GREEN),
 	])
 	# A source's strip, spent (muted) and stocked.
-	var spent := _canvas(Vector2(10, 470))
+	var spent := _strip(Vector2(1120, 180), 1)
 	spent.set_glyph_strip([{
 		"food_id": "grain",
 		"color": BubbleCanvas.MUTED_ICON_COLOR,
 		"status": FoodBubbleMarker.Status.MUTED,
 	}])
-	var stocked := _canvas(Vector2(320, 470))
+	var stocked := _strip(Vector2(1330, 180), 1)
 	stocked.set_glyph_strip([_e(foods, "vegetables", FoodBubbleMarker.Status.DEFAULT)])
 
 func _e(foods: Dictionary, food_id: String, status: FoodBubbleMarker.Status) -> Dictionary:
 	return {"food_id": food_id, "color": foods[food_id].color, "status": status}
 
-func _canvas(pos: Vector2) -> BubbleCanvas:
+func _canvas(pos: Vector2, size: Vector2) -> BubbleCanvas:
 	var c := BubbleCanvas.new()
 	c.position = pos
-	c.size = Vector2(310, 150)
+	c.size = size
 	root.add_child(c)
 	return c
+
+## A strip canvas sized exactly the way FoodBubbleMarker sizes its viewport,
+## so the preview shows the real proportions rather than a guess.
+func _strip(pos: Vector2, count: int) -> BubbleCanvas:
+	return _canvas(pos, Vector2(BubbleCanvas.glyph_strip_size(count)))
 
 func _process(_delta: float) -> bool:
 	_frame += 1

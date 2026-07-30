@@ -1203,6 +1203,13 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 			for food_id in n.produces:
 				parts.append("%s (%d/day)" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
 			text = "[b]%s[/b]\nProduces: %s" % [n.display_name, ", ".join(parts)]
+			# The only place today's draw-down is readable now that the sign
+			# printing "21/80" is gone (v0.6 item 48) -- the map glyph only
+			# says spent or not by going grey.
+			var drawn: Dictionary = _state.last_source_status.get(n.node_id, {})
+			for food_id in n.produces:
+				if drawn.has(food_id):
+					text += "\nDrawn today: %d/%d" % [roundi(drawn[food_id].used), roundi(n.produces[food_id])]
 			# The upgrade is only reachable through the Upgrade tool, so the
 			# tip is where the player finds out it exists at all (DEV-03).
 			if n.can_upgrade():
@@ -1210,7 +1217,12 @@ func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
 			else:
 				text += "\n[color=#8A8375]Already expanded.[/color]"
 		else:
-			text = _settlement_tip_text(n)
+			# No text tip for a settlement (v0.6 item 48). Hovering or
+			# tapping one expands it from a glyph strip into its full
+			# balloons -- delivered/requested, freshness and the bar ticked
+			# at its own bonus threshold -- and a panel repeating that in
+			# words alongside was saying the same thing twice.
+			text = ""
 	elif cell_data:
 		if cell_data.kind == "route":
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
@@ -1282,47 +1294,6 @@ func _set_focused_node(node_id: String) -> void:
 		_render_grid()
 
 ## ---------- settlement tip ----------
-
-func _settlement_tip_text(n: NodeData) -> String:
-	# The tip works from the open orders, not the settlement's eventual
-	# appetite (DEV-01) -- promising a food it will not buy for another ten
-	# days would send the player building a road that earns nothing. What is
-	# still to come is listed separately, as the plan it is.
-	var demand := OrderBook.active_demand(_state, n)
-	var parts := []
-	for food_id in demand:
-		parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(demand[food_id])])
-	var text := "[b]%s[/b] -- %s\n" % [n.display_name, n.kind]
-	if parts.is_empty():
-		text += "[i]Not ordering yet -- this settlement starts buying later.[/i]\n"
-	else:
-		text += "Orders: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
-
-	var later := []
-	for food_id in n.demand:
-		if not demand.has(food_id):
-			later.append(GameBalance.food_types()[food_id].display_name)
-	if not later.is_empty():
-		text += "[color=#8A8375]May order later: %s[/color]\n" % ", ".join(later)
-
-	var status = _state.last_settlement_status.get(n.node_id)
-	if status == null or demand.is_empty():
-		text += "\n[i]No deliveries yet -- run a day to see what's getting through.[/i]"
-		return text
-	text += "\n[b]Last delivery:[/b]\n"
-	for food_id in demand:
-		var s = status.get(food_id, {"requested": demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
-		var done: bool = s.delivered >= s.requested - 0.5
-		var partial: bool = not done and s.delivered > 0.0
-		var icon := "✓" if done else ("◐" if partial else "✗")
-		var color := "#5C8A5C" if done else ("#D98E4A" if partial else "#C4573A")
-		var fresh_text := ""
-		if s.delivered > 0.0:
-			fresh_text = " · %d%% fresh" % roundi(s.fresh_sum / s.delivered)
-		text += "[color=%s]%s[/color] %s: %d/%d%s\n" % [color, icon, GameBalance.food_types()[food_id].display_name, roundi(s.delivered), roundi(s.requested), fresh_text]
-		if s.rejected > 0.0:
-			text += "  [color=#C4573A]%d arrived too spoiled to accept[/color]\n" % roundi(s.rejected)
-	return text
 
 ## ---------- daily report ----------
 
@@ -1562,9 +1533,10 @@ func _node_center(n: NodeData) -> Vector3:
 	var far: Vector3 = _terrain.map_to_local(Vector3i(far_cell.x, 0, far_cell.y))
 	return (near + far) * 0.5
 
-## Whether this node draws its full balloons rather than the compact glyph
-## strip: either the player is inspecting it, or they have asked for every
-## balloon at once.
+## Whether this settlement draws its full balloons rather than the compact
+## glyph strip: either the player is inspecting it, or they have asked for
+## every balloon at once. Sources never consult this -- a source is always
+## its big food glyph now (v0.6 item 48).
 func _shows_full_bubbles(n: NodeData) -> bool:
 	return _bubbles_mode == BubblesMode.ALL or _focused_node_id == n.node_id
 
@@ -1581,31 +1553,28 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# The source's crate model is shorter than the settlement pin, so its
 	# bubble sits a little lower than the settlement stack's start height.
 	var base_pos: Vector3 = _node_center(n) + Vector3(0, 2.5, 0)
+	# A source is ALWAYS its big food glyph, inspected or not. The dark slate
+	# sign it used to expand into is retired: a source's identity is the food
+	# it makes, and a glyph says that faster and smaller than a sign printing
+	# "21/80" ever did. That used/produced figure moved to the hover tip,
+	# which is now the only place it lives.
 	var entries: Array = []
-	var stack := 0
 	for food_id in n.produces:
 		var produced: float = n.produces[food_id]
 		var used: float = 0.0
 		if status.has(food_id):
 			used = status[food_id].used
 		var bubble_status := FoodBubbleMarker.Status.MUTED if used >= produced - 0.01 else FoodBubbleMarker.Status.DEFAULT
-		if not _shows_full_bubbles(n):
-			# A source's strip carries no status mark: MUTED/DEFAULT is
-			# "spent today" vs "still has stock", which the glyph already
-			# says by fading, and a ✓ beside it would read as a delivery
-			# verdict this node never has.
-			entries.append({
-				"food_id": food_id,
-				"color": (BubbleCanvas.MUTED_ICON_COLOR if bubble_status == FoodBubbleMarker.Status.MUTED
-					else foods[food_id].color),
-				"status": bubble_status,
-			})
-			continue
-		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.SOURCE_STACK_SPACING, 0)
-		bubble.setup_source(foods[food_id], used, produced, bubble_status)
-		stack += 1
+		# A source's glyph carries no status mark: MUTED/DEFAULT is "spent
+		# today" vs "still has stock", which the glyph already says by going
+		# grey, and a ✓ beside it would read as a delivery verdict this node
+		# never has.
+		entries.append({
+			"food_id": food_id,
+			"color": (BubbleCanvas.MUTED_ICON_COLOR if bubble_status == FoodBubbleMarker.Status.MUTED
+				else foods[food_id].color),
+			"status": bubble_status,
+		})
 	_spawn_glyph_strip(base_pos, entries)
 
 ## A settlement can demand up to 3 foods (Town D, City E), and some

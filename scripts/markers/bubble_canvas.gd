@@ -8,17 +8,20 @@ extends Control
 ## the number behind the bubble, and reads crisper than the old low-poly
 ## primitives.
 ##
-## Sources and settlements are told apart by *silhouette*, not colour,
-## because colour is already carrying two other meanings on this map (the
-## food's identity, and a settlement's delivery status):
+## Two variants remain:
 ##
-##   SOURCE            a dark slate sign on a post: white text,
-##                     near-square corners, a stem and foot down to the
-##                     crate, and an outgoing-supply arrow. No progress
-##                     bar -- the bar belongs to settlements alone.
+##   GLYPH_STRIP       a small dark plate carrying one food glyph per open
+##                     order, each with a status mark at its corner. This is
+##                     the map's default layer, and all a SOURCE ever draws.
 ##   SETTLEMENT        a cream speech balloon: dark text, big corner
 ##                     radius, triangular tail, a status-coloured border,
-##                     and a freshness bar along the bottom.
+##                     and a freshness bar along the bottom. Drawn only for
+##                     the settlement the player is inspecting.
+##
+## The dark slate sign on a post that sources used to draw is gone: a source
+## is now always its big food glyph, so the sign had no remaining caller.
+## Its used/produced figure moved to the hover tip (main.gd's _update_tip),
+## which is the only place that number now lives.
 ##
 ## A settlement's status is deliberately kept off the bubble *body*: a
 ## saturated tint behind the text both fights the food-coloured icon dot
@@ -27,12 +30,6 @@ extends Control
 ## instead rides on the border, the tail, the progress bar and a glyph --
 ## and the glyph makes the three states distinguishable by shape alone,
 ## for players who cannot separate the red and green hues.
-##
-## There is a third variant, and by default it is the only one on screen:
-##
-##   GLYPH_STRIP       a small dark plate carrying one food glyph per open
-##                     order, each with a status mark at its corner. This is
-##                     what a node draws when it is not being inspected.
 ##
 ## A map where every node floats a full balloon is unreadable once more than
 ## a couple of orders are open -- the bubbles crowd each other and bury the
@@ -47,40 +44,19 @@ const BORDER_COLOR := Color(0.15, 0.12, 0.08, 0.65)
 const TEXT_COLOR := Color(0.14, 0.11, 0.08)
 const SUBTEXT_COLOR := Color(0.34, 0.29, 0.24)
 
-## Sources invert the settlement palette outright: a dark slate sign with
-## white text against the settlements' cream balloon with dark text. That
-## reads as two different things far sooner than the silhouette does, and
-## it costs no colour meaning, since grey is the one hue on this map that
-## is neither a food nor a status. The food dot ends up the brightest
-## thing on the sign, which is what should be identifying the source
-## anyway (all source markers share one colour -- see main.gd's
-## _source_food_color).
-const SOURCE_BUBBLE_COLOR := Color(0.20, 0.22, 0.25, 0.96)
-const SOURCE_BORDER_COLOR := Color(0.80, 0.82, 0.85, 0.5)
-const SOURCE_TEXT_COLOR := Color(0.97, 0.96, 0.94)
-const SOURCE_GLYPH_INK := Color(0.70, 0.74, 0.78)
-
-## Vertical room reserved below the bubble body for a settlement's tail /
-## a source's stem. The tail and the post are what read first at map
-## distance, so they get a generous strip: a mean little nub under each
-## bubble makes the two variants look alike again from any way off.
+## Vertical room reserved below the bubble body for a settlement's tail.
+## The tail is what reads first at map distance, so it gets a generous
+## strip: a mean little nub under the bubble barely registers from any way
+## off.
 const TAIL_HEIGHT := 20.0
 const TAIL_HALF_WIDTH := 14.0
 ## How far the tail's base is tucked up inside the body, so the body's
 ## border closes over it and the tail appears to grow out from under.
 const TAIL_OVERLAP := 12.0
-const STEM_WIDTH := 8.0
-const STEM_FOOT_WIDTH := 22.0
-const STEM_FOOT_HEIGHT := 5.0
 
-## Corner radius as a fraction of body height. The gap between the two is
-## the primary source/settlement tell, so keep them far apart.
-const SOURCE_CORNER_RATIO := 0.07
+## Corner radius as a fraction of body height.
 const SETTLEMENT_CORNER_RATIO := 0.34
 
-## Settlements are where the player has to act, so they carry the heavier
-## outline; sources are reference information and stay quiet.
-const SOURCE_BORDER_WIDTH := 2
 const SETTLEMENT_BORDER_WIDTH := 3
 ## A settled (green) settlement outlines thinner than one still asking for
 ## something, so a map full of solved towns recedes and the problems catch
@@ -88,16 +64,10 @@ const SETTLEMENT_BORDER_WIDTH := 3
 ## "All fresh" summary is gone.
 const GREEN_BORDER_WIDTH := 2
 
-## A source that has given up its whole daily produce fades in place: a
-## lighter, flatter slate with dim ink and a grey dot. Dropping contrast
-## rather than switching palette keeps it obviously the same kind of
-## object -- it must still read as a source, only a spent one.
-## Kept clearly darker than the map's grass: a mid-grey at the terrain's
-## own luminance loses its edges into the ground and stops reading as a
-## sign at all. The fade comes from the ink, not from lightening the body.
-const MUTED_BUBBLE_COLOR := Color(0.28, 0.29, 0.31, 0.88)
-const MUTED_BORDER_COLOR := Color(0.62, 0.63, 0.65, 0.4)
-const MUTED_TEXT_COLOR := Color(0.62, 0.63, 0.64)
+## A source that has given up its whole daily produce fades in place: its
+## glyph goes grey instead of taking the food's colour. Dropping saturation
+## rather than hiding the glyph keeps it obviously the same object -- it must
+## still read as that source, only a spent one.
 const MUTED_ICON_COLOR := Color(0.46, 0.47, 0.49)
 
 ## Status accents. These are fully saturated -- they are only ever used
@@ -156,14 +126,39 @@ const MIN_FONT_SIZE := 14
 ## pale food glyph (milk) and a saturated status mark both read on it.
 const STRIP_PLATE_COLOR := Color(0.18, 0.20, 0.23, 0.90)
 const STRIP_PLATE_BORDER := Color(0.80, 0.82, 0.85, 0.42)
-const STRIP_PLATE_BORDER_WIDTH := 2
+const STRIP_PLATE_BORDER_WIDTH := 6
 const STRIP_CORNER_RATIO := 0.30
 ## Ink the food glyphs are outlined in on the plate -- light, because the
 ## plate is dark. This is the inverse of the bubble, where the ink is dark.
 const STRIP_GLYPH_INK := Color(0.93, 0.94, 0.96, 0.92)
-const STRIP_GLYPH_RADIUS := 19.0
-const STRIP_GLYPH_GAP := 13.0
-const STRIP_PADDING := Vector2(14.0, 11.0)
+## 4x the radius the strip shipped with (19). At the original size a
+## one-glyph strip came to roughly ten screen pixels on a phone-width view of
+## the whole region, which is below the point where any silhouette resolves --
+## the glyphs were unreadable in exactly the situation they exist for.
+##
+## The size increase is native rather than a sprite scale: setup_glyph_strip
+## sizes the SubViewport to fit, so a bigger glyph is drawn at a bigger
+## resolution and stays crisp, instead of magnifying the old texture.
+const STRIP_GLYPH_RADIUS := 76.0
+## Gap and padding grow well under 4x on purpose. A five-order City would
+## otherwise span about four tiles; keeping the spacing tight holds the
+## widest strip near three and reads as one object rather than a row of
+## separate badges.
+const STRIP_GLYPH_GAP := 30.0
+const STRIP_PADDING := Vector2(34.0, 26.0)
+## Slack around the plate so its border and drop shadow are not clipped by
+## the viewport edge.
+const STRIP_MARGIN := 8.0
+
+## Viewport size a strip of `count` glyphs needs. Sized to content so a
+## one-glyph source does not carry a texture wide enough for five.
+static func glyph_strip_size(count: int) -> Vector2i:
+	var n := maxi(count, 1)
+	var span := n * STRIP_GLYPH_RADIUS * 2.0 + (n - 1) * STRIP_GLYPH_GAP
+	return Vector2i(
+		ceili(span + (STRIP_PADDING.x + STRIP_MARGIN) * 2.0),
+		ceili(STRIP_GLYPH_RADIUS * 2.0 + (STRIP_PADDING.y + STRIP_MARGIN) * 2.0),
+	)
 ## The status mark rides the glyph's lower-right corner. It only has to
 ## separate three states where the food glyph separates five, so it can
 ## afford to be much smaller and still stay legible.
@@ -173,7 +168,7 @@ const STRIP_STATUS_OFFSET := Vector2(0.74, 0.78)
 ## where it overlaps the food glyph's own fill.
 const STRIP_STATUS_BACKING := Color(0.10, 0.11, 0.13, 0.85)
 
-var _kind: FoodBubbleMarker.Kind = FoodBubbleMarker.Kind.SOURCE
+var _kind: FoodBubbleMarker.Kind = FoodBubbleMarker.Kind.GLYPH_STRIP
 var _icon_color: Color = Color.WHITE
 ## Which silhouette identifies the food (see FoodGlyphs). Empty falls back to
 ## the plain disc the bubbles used before glyphs existed.
@@ -201,14 +196,6 @@ static func status_color(status: FoodBubbleMarker.Status) -> Color:
 			return GREEN_COLOR
 	return BORDER_COLOR
 
-func set_source(food_id: String, icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status) -> void:
-	_kind = FoodBubbleMarker.Kind.SOURCE
-	_food_id = food_id
-	_icon_color = icon_color
-	_amount_text = amount_text
-	_status = status
-	queue_redraw()
-
 func set_settlement(food_id: String, icon_color: Color, amount_text: String, status: FoodBubbleMarker.Status, freshness_pct: int, threshold: float) -> void:
 	_kind = FoodBubbleMarker.Kind.SETTLEMENT
 	_food_id = food_id
@@ -229,53 +216,10 @@ func _draw() -> void:
 	match _kind:
 		FoodBubbleMarker.Kind.SETTLEMENT:
 			_draw_settlement()
-		FoodBubbleMarker.Kind.GLYPH_STRIP:
-			_draw_glyph_strip()
 		_:
-			_draw_source()
+			_draw_glyph_strip()
 
 # --- variants ---------------------------------------------------------
-
-func _draw_source() -> void:
-	var muted := _status == FoodBubbleMarker.Status.MUTED
-	var fill := MUTED_BUBBLE_COLOR if muted else SOURCE_BUBBLE_COLOR
-	var ink := MUTED_TEXT_COLOR if muted else SOURCE_TEXT_COLOR
-	var icon := MUTED_ICON_COLOR if muted else _icon_color
-	var border := MUTED_BORDER_COLOR if muted else SOURCE_BORDER_COLOR
-
-	var rect := _body_rect()
-	var radius := int(rect.size.y * SOURCE_CORNER_RATIO)
-
-	# Post first, so the body and its border cover the joint. The foot at
-	# the bottom is what sells "sign planted in the ground" rather than
-	# "balloon with a skinny tail".
-	var cx := rect.position.x + rect.size.x * 0.5
-	var stem_top := rect.end.y - 6.0
-	var stem_bottom := rect.end.y + TAIL_HEIGHT - STEM_FOOT_HEIGHT - 2.0
-	var stem := Rect2(Vector2(cx - STEM_WIDTH * 0.5, stem_top), Vector2(STEM_WIDTH, stem_bottom - stem_top))
-	var foot := Rect2(Vector2(cx - STEM_FOOT_WIDTH * 0.5, stem_bottom), Vector2(STEM_FOOT_WIDTH, STEM_FOOT_HEIGHT))
-	for r in [stem, foot]:
-		draw_rect(Rect2(r.position + Vector2(0, 2), r.size), Color(0, 0, 0, 0.18))
-	for r in [stem, foot]:
-		draw_rect(r, fill)
-		draw_rect(r, border, false, 2.0)
-
-	_draw_body(rect, radius, fill, border, SOURCE_BORDER_WIDTH)
-
-	var cy := rect.position.y + rect.size.y * 0.5
-	var icon_r := rect.size.y * 0.23
-	var icon_center := Vector2(rect.position.x + 14.0 + icon_r, cy)
-	# The same silhouette this food carries everywhere else on the map, so a
-	# sign and the bubbles it supplies are visibly about the same thing.
-	FoodGlyphs.draw_glyph(self, _food_id, icon_center, icon_r, icon, border)
-
-	var glyph_r := rect.size.y * 0.155
-	var glyph_center := Vector2(rect.end.x - 16.0 - glyph_r, cy)
-	_draw_out_arrow(glyph_center, glyph_r, MUTED_ICON_COLOR if muted else SOURCE_GLYPH_INK)
-
-	var text_x := icon_center.x + icon_r + 12.0
-	var text_w := glyph_center.x - glyph_r - 12.0 - text_x
-	_draw_fitted(_amount_text, text_x, text_w, cy, int(rect.size.y * 0.44), ink)
 
 func _draw_settlement() -> void:
 	var accent := status_color(_status)
@@ -465,13 +409,3 @@ func _draw_cross(center: Vector2, r: float, color: Color) -> void:
 func _draw_bang(center: Vector2, r: float, color: Color) -> void:
 	draw_line(center + Vector2(0, -r * 0.72), center + Vector2(0, r * 0.16), color, r * 0.34, true)
 	draw_circle(center + Vector2(0, r * 0.66), r * 0.19, color)
-
-## Outgoing supply: what this node hands out, as opposed to a
-## settlement's incoming demand.
-func _draw_out_arrow(center: Vector2, r: float, color: Color) -> void:
-	draw_colored_polygon(PackedVector2Array([
-		center + Vector2(0, -r * 0.78),
-		center + Vector2(-r * 0.62, -r * 0.04),
-		center + Vector2(r * 0.62, -r * 0.04),
-	]), color)
-	draw_line(center + Vector2(0, -r * 0.10), center + Vector2(0, r * 0.72), color, r * 0.34, true)

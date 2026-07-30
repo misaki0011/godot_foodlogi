@@ -49,13 +49,13 @@ class_name FoodGlyphs
 ## it: nothing tapers to a trunk, so there is no tree to read.
 static var _GRAIN := PackedVector2Array([
 	Vector2(0.00, -1.00),
-	Vector2(0.30, -0.62), Vector2(0.10, -0.50),
-	Vector2(0.38, -0.16), Vector2(0.10, -0.04),
-	Vector2(0.34, 0.30), Vector2(0.10, 0.42),
+	Vector2(0.26, -0.60), Vector2(0.19, -0.46),
+	Vector2(0.34, -0.16), Vector2(0.22, -0.02),
+	Vector2(0.31, 0.28), Vector2(0.17, 0.44),
 	Vector2(0.00, 1.00),
-	Vector2(-0.10, 0.42), Vector2(-0.34, 0.30),
-	Vector2(-0.10, -0.04), Vector2(-0.38, -0.16),
-	Vector2(-0.10, -0.50), Vector2(-0.30, -0.62),
+	Vector2(-0.17, 0.44), Vector2(-0.31, 0.28),
+	Vector2(-0.22, -0.02), Vector2(-0.34, -0.16),
+	Vector2(-0.19, -0.46), Vector2(-0.26, -0.60),
 ])
 
 static var _MILK := PackedVector2Array([

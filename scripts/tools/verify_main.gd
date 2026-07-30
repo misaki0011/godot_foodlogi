@@ -225,14 +225,26 @@ func _report() -> void:
 	assert(not state.grid.has(mid_cell), "A second bulldoze must clear the bare road tile")
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
 
-	# Tapping a settlement (any tool) shows its info tip, not a dialog, and
-	# never changes the grid.
+	# Tapping a settlement (any tool) never builds there, and no longer opens
+	# a text tip: the settlement's detailed description is retired (v0.6 item
+	# 48), because the balloons the tap expands already carry
+	# delivered/requested, freshness and the bar ticked at its own bonus
+	# threshold. What the tap does instead is focus the node, which is what
+	# swaps its glyph strip for those balloons.
 	var grid_size_before_tip := state.grid.size()
 	var tip_panel: PanelContainer = _main.get("_tip_panel")
 	assert(not tip_panel.visible)
 	_main.call("_handle_click", village_a.grid_position)
-	assert(tip_panel.visible, "Tapping a settlement must show the info tip")
+	assert(not tip_panel.visible, "A settlement must not open a text tip -- its balloons are the detail view")
+	assert(_main.get("_focused_node_id") == village_a.node_id, "Tapping a settlement must focus it, expanding its balloons")
 	assert(state.grid.size() == grid_size_before_tip, "Tapping a settlement must not attempt to build there")
+
+	# A source still opens its tip: it carries the upgrade prompt (DEV-03),
+	# which is where the player discovers source upgrades exist at all, and
+	# the used/produced figure that moved off the retired sign.
+	_main.call("_handle_click", farm.grid_position)
+	assert(tip_panel.visible, "A source must still show its info tip")
+	_main.call("_handle_click", Vector2i(0, 0))
 
 	_check_day_clock(state)
 	_check_day_cycle(state)
