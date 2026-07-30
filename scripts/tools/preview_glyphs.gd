@@ -20,10 +20,12 @@ func _initialize() -> void:
 	var foods := GameBalance.food_types()
 	# Row 1 is the case that prompted this: short AND fresh, because cargo was
 	# rejected. Row 2 is a total rejection, row 3 a clean green line.
+	# One row per payment tier, which is what the colour has always encoded:
+	# red earns nothing, amber earns the line, green earns the line + 25%.
 	var three := [
-		_e(foods, "grain", FoodBubbleMarker.Status.RED, 25, 30, 90, 5, 32),
-		_e(foods, "seafood", FoodBubbleMarker.Status.RED, 0, 25, -1, 25, 18),
-		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 94, 0, -1),
+		_e(foods, "grain", FoodBubbleMarker.Status.RED, 25, 30, 90, 5, 32, 0, 90),
+		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER, 25, 25, 68, 0, -1, 150, 0),
+		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 94, 0, -1, 187, 0),
 	]
 
 	# The point of the layout: collapsed and expanded are the same column at
@@ -37,11 +39,11 @@ func _initialize() -> void:
 	_col(Vector2(270, 30), true).set_settlement_column(_rows(three))
 
 	var five := [
-		_e(foods, "seafood", FoodBubbleMarker.Status.RED, 0, 35, -1, 35, 12),
-		_e(foods, "milk", FoodBubbleMarker.Status.RED, 12, 30, 61, 0, -1),
-		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER, 25, 25, 68, 0, -1),
-		_e(foods, "grain", FoodBubbleMarker.Status.GREEN, 30, 30, 97, 0, -1),
-		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 92, 0, -1),
+		_e(foods, "seafood", FoodBubbleMarker.Status.RED, 0, 35, -1, 35, 12, 0, 350),
+		_e(foods, "milk", FoodBubbleMarker.Status.RED, 12, 30, 61, 0, -1, 0, 96),
+		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER, 25, 25, 68, 0, -1, 150, 0),
+		_e(foods, "grain", FoodBubbleMarker.Status.GREEN, 30, 30, 97, 0, -1, 112, 0),
+		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 92, 0, -1, 187, 0),
 	]
 	_col(Vector2(860, 30), false).set_glyph_column(five, true)
 	_col(Vector2(1100, 30), true).set_settlement_column(_rows(five))
@@ -52,12 +54,12 @@ func _initialize() -> void:
 		"status": FoodBubbleMarker.Status.MUTED,
 	}], false)
 	_col(Vector2(1720, 260), false).set_glyph_column(
-		[_e(foods, "vegetables", FoodBubbleMarker.Status.DEFAULT, 0, 0, -1, 0, -1)], false)
+		[_e(foods, "vegetables", FoodBubbleMarker.Status.DEFAULT, 0, 0, -1, 0, -1, 0, 0)], false)
 
 	# Worst-case contrast: a food glyph on a row tinted its OWN hue.
 	_col(Vector2(1720, 490), false).set_glyph_column([
-		_e(foods, "vegetables", FoodBubbleMarker.Status.GREEN, 20, 20, 95, 0, -1),
-		_e(foods, "grain", FoodBubbleMarker.Status.AMBER, 20, 20, 70, 0, -1),
+		_e(foods, "vegetables", FoodBubbleMarker.Status.GREEN, 20, 20, 95, 0, -1, 150, 0),
+		_e(foods, "grain", FoodBubbleMarker.Status.AMBER, 20, 20, 70, 0, -1, 60, 0),
 	], true)
 
 func _rows(entries: Array) -> Array:
@@ -68,6 +70,7 @@ func _rows(entries: Array) -> Array:
 			"amount_text": "%d/%d" % [e.delivered, e.requested],
 			"freshness_pct": e.freshness_pct, "threshold": 0.85, "min_threshold": 0.35,
 			"rejected": e.rejected, "rejected_freshness_pct": e.rejected_freshness_pct,
+			"earned": e.earned, "withheld": e.withheld,
 		})
 	return out
 
@@ -80,11 +83,12 @@ func _col(pos: Vector2, expanded: bool) -> BubbleCanvas:
 	root.add_child(c)
 	return c
 
-func _e(foods: Dictionary, food_id: String, status: FoodBubbleMarker.Status, delivered: float, requested: float, fresh: int, rejected: float, rejected_fresh: int) -> Dictionary:
+func _e(foods: Dictionary, food_id: String, status: FoodBubbleMarker.Status, delivered: float, requested: float, fresh: int, rejected: float, rejected_fresh: int, earned: float, withheld: float) -> Dictionary:
 	return {
 		"food_id": food_id, "color": foods[food_id].color, "status": status,
 		"delivered": delivered, "requested": requested, "freshness_pct": fresh,
 		"rejected": rejected, "rejected_freshness_pct": rejected_fresh,
+		"earned": earned, "withheld": withheld,
 	}
 
 func _process(_delta: float) -> bool:

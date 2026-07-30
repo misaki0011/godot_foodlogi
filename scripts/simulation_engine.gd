@@ -465,7 +465,11 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			# cargo min_freshness turned away -- without it a short line cannot
 			# say WHY it fell short, since fresh_sum only ever sees what was
 			# accepted (see UI-04's rejected row).
-			food_status[food_id] = {"requested": need, "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0, "rejected_fresh_sum": 0.0}
+			# `earned` is what this line actually paid and `withheld` what it
+			# would have paid had the whole order arrived. Recorded here rather
+			# than re-derived in the UI, so the number a row prints can never
+			# drift from the number the treasury was credited (see UI-04).
+			food_status[food_id] = {"requested": need, "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 0.0}
 			var food: FoodData = foods[food_id]
 
 			var candidates: Array[Dictionary] = []
@@ -530,15 +534,20 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			# A short order is not a partial sale -- the settlement went
 			# without, so the run earns nothing however fresh what did arrive
 			# happened to be.
+			# `line` aliases the food_status entry (Dictionaries are references),
+			# so writing earned/withheld here records them on the line itself.
 			var line: Dictionary = food_status[food_id]
 			if line.delivered >= line.requested - 0.01 and line.delivered > 0.0:
 				income += line_income
+				line.earned = line_income
 				if line.fresh_sum / line.delivered >= settlement.bonus_freshness:
 					var bonus: float = line_income * GameBalance.FRESHNESS_BONUS_RATE
 					income += bonus
 					bonus_income += bonus
+					line.earned += bonus
 			else:
 				withheld_income += line_income
+				line.withheld = line_income
 		var avg_fresh: float = fresh_sum / fresh_count if fresh_count > 0.0 else 0.0
 		var fulfill_rate: float = fulfilled / requested if requested > 0.0 else 1.0
 		var waste_rate: float = rejected / requested if requested > 0.0 else 0.0

@@ -146,6 +146,14 @@ const BAR_INERT_COLOR := Color(1.0, 1.0, 1.0, 0.58)
 ## explanation for why.
 const REJECTED_TEXT_COLOR := Color("f08a8a")
 
+## What the line paid. The row's colour has always BEEN the payment tier
+## (§9: short pays nothing, full pays the line, full-and-fresh pays 25% more)
+## and the row never said so -- which is why a red row next to "90% fresh"
+## read as a verdict on freshness rather than on earnings. Printing the money
+## answers "why this colour?" at the moment the question is asked.
+const EARNED_TEXT_COLOR := Color("9fd8a8")
+const UNPAID_TEXT_COLOR := Color("f0a0a0")
+
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
 const MIN_FONT_SIZE := 14
@@ -383,25 +391,38 @@ func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent:
 
 	var rejected: float = entry.get("rejected", 0.0)
 	var rejected_fresh: int = entry.get("rejected_freshness_pct", -1)
+	var earned: float = entry.get("earned", 0.0)
+	var withheld: float = entry.get("withheld", 0.0)
 	var sub := int(rect.size.y * 0.17)
+	var paid := earned > 0.0
+
+	# The third line is whichever piece of bad news this row has, in one
+	# tone: what spoiled, or -- failing that -- what a short order gave up.
+	# A row with neither has nothing to say there.
+	var note := ""
+	if rejected > 0.0:
+		note = _rejected_text(rejected, rejected_fresh)
+	elif withheld > 0.0:
+		note = "§%d withheld" % roundi(withheld)
 
 	# Three layouts, by how much there is to say. The rejected line matters
 	# most on a RED row, where it is usually the entire reason the line came
 	# up short: cargo under min_freshness is binned AND still consumes the
 	# day's demand, and the delivered freshness above cannot show it because
 	# it averages only what was accepted.
-	if rejected > 0.0 and fresh >= 0:
+	# Freshness and money share a line: they are the two facts that between
+	# them explain the row's colour, and pairing them is what stops the
+	# freshness reading as the reason on its own.
+	var money := "+§%d" % roundi(earned) if paid else "§0"
+	var status_line := "%d%% fresh · %s" % [fresh, money] if fresh >= 0 else money
+
+	if note != "":
 		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 30.0, int(rect.size.y * 0.30), TEXT_COLOR)
-		_draw_fitted("%d%% fresh" % fresh, text_x, text_w, row_cy + 14.0, sub, SUBTEXT_COLOR)
-		_draw_fitted(_rejected_text(rejected, rejected_fresh), text_x, text_w, row_cy + 48.0, sub, REJECTED_TEXT_COLOR)
-	elif rejected > 0.0:
-		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.32), TEXT_COLOR)
-		_draw_fitted(_rejected_text(rejected, rejected_fresh), text_x, text_w, row_cy + 30.0, sub, REJECTED_TEXT_COLOR)
-	elif fresh >= 0:
-		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
-		_draw_fitted("%d%% fresh" % fresh, text_x, text_w, row_cy + 30.0, sub, SUBTEXT_COLOR)
+		_draw_pair(status_line, money, text_x, text_w, row_cy + 14.0, sub, paid)
+		_draw_fitted(note, text_x, text_w, row_cy + 48.0, sub, REJECTED_TEXT_COLOR)
 	else:
-		_draw_fitted(entry.amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.34), TEXT_COLOR)
+		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
+		_draw_pair(status_line, money, text_x, text_w, row_cy + 30.0, sub, paid)
 
 	_draw_freshness_bar(
 		Rect2(Vector2(text_x, bar_y), Vector2(text_w, BAR_HEIGHT)),
@@ -410,6 +431,30 @@ func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent:
 		entry.get("threshold", 0.0),
 		entry.get("min_threshold", 0.0),
 		entry.status,
+	)
+
+## Draws "94% fresh · +§300", tinting only the money half -- green when the
+## line paid, red when it did not. Two draws rather than one so the money
+## carries its own colour: it is the half that explains the row.
+func _draw_pair(full: String, money: String, x: float, max_width: float, center_y: float, font_size: int, paid: bool) -> void:
+	var money_ink := EARNED_TEXT_COLOR if paid else UNPAID_TEXT_COLOR
+	# Nothing arrived, so the line is the money alone -- drawing the grey pass
+	# under it would just double-strike the same glyphs.
+	if full == money:
+		_draw_fitted(money, x, max_width, center_y, font_size, money_ink)
+		return
+	var used := _draw_fitted(full, x, max_width, center_y, font_size, SUBTEXT_COLOR)
+	var font := ThemeDB.fallback_font
+	var money_w := font.get_string_size(money, HORIZONTAL_ALIGNMENT_LEFT, -1, used).x
+	var full_w := font.get_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, -1, used).x
+	draw_string(
+		font,
+		Vector2(x + full_w - money_w, center_y + used * 0.36),
+		money,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		money_w,
+		used,
+		money_ink,
 	)
 
 ## "5 spoiled at 32%" -- the amount turned away and how fresh it actually

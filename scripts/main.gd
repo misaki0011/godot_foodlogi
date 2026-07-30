@@ -1616,6 +1616,8 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 		var avg_fresh: float = 0.0
 		var rejected: float = 0.0
 		var rejected_fresh: float = 0.0
+		var earned: float = 0.0
+		var withheld: float = 0.0
 		var s = status.get(food_id)
 		if s != null:
 			requested = s.requested
@@ -1630,6 +1632,12 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			rejected = s.get("rejected", 0.0)
 			if rejected > 0.0:
 				rejected_fresh = s.get("rejected_fresh_sum", 0.0) / rejected
+			# What the line paid, and what a short one gave up. The row's
+			# colour has always encoded the payment tier (§9) and never said
+			# so -- which is why a red row beside "90% fresh" read as a
+			# freshness verdict rather than an earnings one.
+			earned = s.get("earned", 0.0)
+			withheld = s.get("withheld", 0.0)
 
 		var bubble_status: FoodBubbleMarker.Status
 		if delivered < requested - 0.01:
@@ -1647,6 +1655,8 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 			"rejected": rejected,
 			"rejected_freshness_pct": roundi(rejected_fresh) if rejected > 0.0 else -1,
+			"earned": earned,
+			"withheld": withheld,
 		})
 
 	# Worst first, so the leftmost glyph on the strip -- and the first
@@ -1672,6 +1682,8 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"freshness_pct": e.freshness_pct,
 			"rejected": e.rejected,
 			"rejected_freshness_pct": e.rejected_freshness_pct,
+			"earned": e.earned,
+			"withheld": e.withheld,
 		})
 
 	if not _shows_full_bubbles(n):
