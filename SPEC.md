@@ -85,6 +85,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     Three supporting changes make the roster authorable. First, **terrain becomes a per-cell grid** rather than `river_col`, an int from which `get_terrain(x, _y)` derived a whole column while ignoring `y` entirely -- region 1's river is now authored into that grid like anything else, and `river_col` is retired (§8.1). Second, **§8's original terrain table is superseded**: it gave Mountain "high cost *and* more decay", which is strictly worse than plains in both terms, so no player would ever route through it -- that is a wall, and water is already the game's wall. Mountain is now expensive to build but **preserving** (cold air), which makes the short expensive path genuinely compete with the long cheap one; Snow keeps the cost and gains a **capacity** penalty, which is an axis no other terrain touches (§8.2). Third, a `BLOCKED` terrain gives a map author unbuildable non-water ground -- cliffs, and the walls that turn Oldwall's City into a gated funnel (§8.4).
     Region 1 itself is **unchanged in content**: same grid, same nodes, same demand, same opening lines. It is relabelled the tutorial region and its river is re-authored into the terrain grid, and nothing about how it plays moves. The §6 chapter list stays the full-game teaching order it always was; the roster is what actually delivers it, one region per lesson rather than one chapter per unlock. See §8, §12.1.
 
+46. **A scripted tutorial stage, gated on doing rather than on pressing Next.** Item 45 labelled region 1 the tutorial, which was true of its difficulty and false of everything else: it teaches nothing. Nine build rules have accreted onto the route drag alone (items 15, 18-22) -- press and *hold* an anchor, and only a source, a hub or an unestablished tile; release only on a hub, a settlement or an unestablished tile; every cell between must be empty ground -- and a player meets all of them at once, on a map showing five sources, five settlements and a 60-second clock. **Millbrook** is a new, smaller region 0 that introduces them one at a time, and region 1 becomes the first free-play region rather than the tutorial (revising item 45's roster on that one point; the roster is otherwise unchanged).
+    **Steps complete when the player does the thing, never on a tap.** Each of the nine steps names a condition over game state -- this road is established, this line filled, this line came in green, no tile is over capacity -- and ends the moment it holds. This is item 40's rule applied to teaching: that item deleted a tap-to-advance because the plaques "were read as something to wait out rather than something to press", and a Next button is the same object with a clearer label. It also means a step cannot be dismissed unread, and that the tutorial is impossible to desynchronise from the map, since the map *is* the progress bar.
+    **The whole step machine is a read-only observer.** Every condition it needs is already tracked: `GameState.filled_lines` (already latched, item 38), `last_settlement_status`, `last_congestion`, `connections`, and `NodeData.upgraded`. No new simulation state, and nothing in `SimulationEngine` learns that a tutorial exists. Completion latches for the same reason `filled_lines` does -- bulldozing a step-1 road on step 7 must not throw the player back to step 1 -- but a broken condition on the *current* step re-shows its instruction, so a mistake made now is still corrected now.
+    **It cannot be failed or lost.** There is no bankruptcy or loss condition anywhere in the build, so this costs nothing to guarantee. Tools are *revealed* step by step rather than disabled with an error, the clock stays off until the step that introduces it, and Bulldoze is available from step 1 as the escape hatch. It is skippable from region select and replayable afterwards, and skipping still unlocks region 1 -- a tutorial that gates content is a toll.
+    Millbrook is authored so the lessons fall out of the map's own numbers rather than being narrated: milk to Village B lands **amber at 68%** on eight tiles, so the player succeeds and is shown that succeeding is not the ceiling; Cool Storage takes the same run to **89%** and green. Grain 65/day down one Dirt trunk against a 60 cap teaches capacity, and milk demand 45 against the Dairy's 40 teaches source upgrades -- two different foods, so "the road cannot carry it" and "the farm cannot make it" are never the same day's problem. `MapData.opening_lines` holds exactly one line here, not item 39's three: that argument was about a free-play map giving the player nothing to weigh, and a scripted tutorial supplies the weighing itself. The order book's deepen/expand alternation (item 40) is disabled on this map, since the step list decides what opens and when. See §12.2.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1112,9 +1118,10 @@ delivers.
 
 ### Gradual demand: orders open as deliveries earn them (added in v0.6, revised in items 38-40)
 
-The chapter list below is the full-game shape. On the tutorial region the
+The chapter list below is the full-game shape. On any free-play region the
 same intent is delivered by the order book, which paces one map instead of
-six levels:
+six levels (the scripted tutorial, §12.2, is the exception -- there the step
+list decides what opens, and the alternation is switched off):
 
 ```text
 fill an order  ->  a new order opens, straight away
@@ -1754,8 +1761,9 @@ Profit increased by 18%.
 
 The first playable version should be small.
 
-This section describes **region 1 only**, which is now the tutorial region. The
-main game's stages are a roster of further regions -- see §12.1.
+This section describes **region 1 only**, which is now the first free-play
+region. The main game's stages are a roster of further regions (§12.1), and
+the scripted tutorial that precedes them all is §12.2.
 
 ### MVP map
 
@@ -1867,7 +1875,8 @@ does retain last-day flow records in memory for hub and settlement popups.
 §12's single region was the MVP's scope, not the game's. Every system in §4 is
 now reachable on it, which means it has taught everything it can and only the
 endless efficiency chase is left there. The main game is a **roster of
-regions**; region 1 is retired to the tutorial slot, unchanged in content.
+regions** fronted by a scripted tutorial stage (§12.2); region 1 is unchanged
+in content and becomes the first free-play region.
 
 ### 12.1.1 What separates one region from another
 
@@ -1901,19 +1910,28 @@ there with no further authoring, exactly as it does today.
 
 | # | Region | Climate | Grid | Landscape | Binding constraint | Teaches |
 |---:|---|---:|---|---|---|---|
-| 1 | **Ashfield Plain** *(tutorial)* | 1.0 | 21x14 | Open plains, one river | Freshness | The whole vocabulary |
+| 0 | **Millbrook** *(tutorial)* | 1.0 | 15x11 | Open plains, one river | — (scripted) | Every rule, one at a time (§12.2) |
+| 1 | **Ashfield Plain** | 1.0 | 21x14 | Open plains, one river | Freshness | The whole vocabulary, unsupervised |
 | 2 | **The Terraces** | 0.9 | 21x16 | Mountain ridge, 3 passes | Cost vs. quality | Terrain as a second storage |
 | 3 | **Cold Coast** | 0.75 | 24x14 | Fjords, narrow crossings | Chokepoints | Seafood, and the cold chain |
 | 4 | **The Delta** | 1.0 | 22x16 | Braided channels, islands | Network topology | When *not* to connect |
 | 5 | **Oldwall** | 1.1 | 20x14 | Walled city, 3 gates | Route capacity | Upgrades and trunk roads |
 | 6 | **The Flats** | 1.4 | 24x16 | Nothing at all | Everything at once | The exam |
 
-**1. Ashfield Plain** *(tutorial -- shipped, unchanged)*. 21x14, five sources,
-five settlements, one river column, climate 1.0. Its river moves into the
-terrain grid (§8.1) and nothing else about it changes: same nodes, same
-demand, same opening lines, same difficulty ranking. It teaches the drag
-gesture, hubs, storage, the river surcharge and source upgrades, and it stays
-the map a returning player replays to warm up.
+**0. Millbrook** *(the scripted tutorial)*. 15x11, two sources, four
+settlements, climate 1.0. Nine steps, each ending when the player does the
+thing rather than when they press Next, introducing the route drag, the day
+clock, bubbles, freshness, Cool Storage, hubs, capacity, the river crossing
+and source upgrades in that order. Fully specified in §12.2.
+
+**1. Ashfield Plain** *(shipped, unchanged)*. 21x14, five sources, five
+settlements, one river column, climate 1.0. Its river moves into the terrain
+grid (§8.1) and nothing else about it changes: same nodes, same demand, same
+opening lines, same difficulty ranking. It is the **first free-play region**
+-- everything Millbrook scripted, now unsupervised and on a map four times
+the size -- and the one a returning player replays to warm up. Item 45
+called it the tutorial; item 46 gave that job to Millbrook, which is the only
+part of the roster that changed.
 
 **2. The Terraces.** A mountain ridge runs the length of the map with three
 passes through it. Lowland sources west (Farm, Bakery, Garden), upland
@@ -1979,7 +1997,15 @@ who cannot hold an A here has a gap somewhere in §4.
 - A region-select screen lists each region with its landscape, climate, best
   grade, best score and 7-day average; locked regions show their unlock
   condition rather than being hidden, so the roster reads as a plan.
-- Region 1 is unlocked from the start and never locks again.
+- **Millbrook (region 0) is unlocked from the start**, and completing *or
+  skipping* it unlocks Ashfield Plain. Gating region 1 behind a finished
+  tutorial would make the tutorial a toll; it earns its place by being worth
+  playing, not by standing in the doorway. Once unlocked, nothing ever
+  re-locks.
+- Millbrook is replayable from region select, and carries no grade or score
+  of its own -- it is a lesson, not a run, and scoring it would invite the
+  player to optimise the one map whose numbers are authored to teach rather
+  than to be beaten.
 - Progress is per region and persists; nothing else does.
 
 ### 12.1.4 Relationship to §6's chapters
@@ -1987,9 +2013,140 @@ who cannot hold an A here has a gap somewhere in §4.
 §6's six chapters remain the full-game teaching order they always described.
 The roster is what delivers them -- one region per lesson rather than one
 chapter per unlock -- and the mapping is close but not exact, because a region
-has to be a place before it is a lesson: Chapter 5's long-distance seafood
-lands on Cold Coast, Chapter 6's city supply on Oldwall, and Chapters 1-4 are
-all reachable on the tutorial region, which is why it can stay the tutorial.
+has to be a place before it is a lesson: Chapter 1 is the scripted tutorial
+(§12.2), Chapter 5's long-distance seafood lands on Cold Coast, Chapter 6's
+city supply on Oldwall, and Chapters 2-4 are all reachable on Ashfield Plain,
+which is why it can stay the first free-play map.
+
+---
+
+## 12.2 The tutorial stage: Millbrook (region 0, added in v0.6 item 46)
+
+Item 45 called region 1 the tutorial, which described its difficulty and
+nothing else -- it teaches no system, and a new player meets every rule at
+once. **Millbrook** is a smaller, scripted region 0 that introduces them one
+at a time; region 1 becomes the first free-play region.
+
+### 12.2.1 The rule: a step ends when the player does the thing
+
+Every step names a **condition over game state** and completes the moment it
+holds. There is no Next button, no "tap to continue", and no timed dismissal.
+
+This is item 40's finding applied to teaching. That item removed a
+tap-to-accept offer because the plaques "were read as something to wait out
+rather than something to press"; a Next button is the same object with a
+clearer label, and it lets a player click past an instruction they have not
+read and then be stuck with no way back. Gating on the map instead means the
+instruction is on screen for exactly as long as it is untrue, and the map is
+the progress bar.
+
+**Conditions are read-only over state the game already keeps**, so the step
+machine adds nothing to `SimulationEngine`:
+
+| Condition | Reads |
+|---|---|
+| `route_established(source_id, node_id)` | `SimulationEngine.established_route_cells` |
+| `days_simulated(n)` | `GameState.day` |
+| `node_inspected(node_id)` | the info-tip handler (§10.6) |
+| `line_filled(node_id, food_id)` | `GameState.filled_lines` (already latched) |
+| `line_green(node_id, food_id)` | `last_settlement_status` vs `bonus_freshness` |
+| `structure_built(kind)` | `GameState.grid` |
+| `no_tile_over_capacity` | `GameState.last_congestion` |
+| `source_upgraded(node_id)` | `NodeData.upgraded` |
+
+Conditions are evaluated after a player action and after a day simulates --
+not per frame.
+
+**Completion latches**, for the same reason `filled_lines` does: bulldozing
+the step-1 road while on step 7 must not throw the player back to step 1.
+But if the *current* step's condition breaks before it has ever held, its
+instruction simply stays up, so a mistake made now is corrected now.
+
+### 12.2.2 It cannot be failed
+
+There is no bankruptcy, loss or game-over condition anywhere in the build, so
+this is free to guarantee and worth stating:
+
+- **Tools are revealed, not disabled.** Each step adds its tool to the panel
+  (§10.7). Nothing is greyed out with an error, because a disabled button the
+  player wants to press teaches only that the game is refusing them.
+- **Bulldoze is available from step 1**, alongside Route, as the escape hatch.
+  It is never itself a step -- undoing a mistake is not a lesson.
+- **The clock is off until step 2 introduces it.** Learning the drag gesture
+  under a 60-second countdown is the one place the auto-clock (§3.5) actively
+  hurts. From step 2 it runs normally at 1x.
+- **Days report through the compact card**, never the blocking modal (§3.3),
+  so a day rolling over never interrupts a step.
+- **Skippable and replayable.** Skipping from region select still unlocks
+  region 1 -- a tutorial that gates content is a toll, not a tutorial.
+
+### 12.2.3 Map
+
+**15x11, climate 1.0**, plains with a single river at **column 9**, dividing a
+western area (steps 1-7) from an eastern one (steps 8-9).
+
+| Node | Type | Cells | Food |
+|---|---|---|---|
+| Farm | Source | (2,2)-(3,2) | grain **100**/day |
+| Dairy | Source | (2,8)-(3,8) | milk **40**/day |
+| Village A | Village | (6,2) | grain 20 |
+| Village B | Village | (7,4) | milk 20 |
+| Village C | Village | (6,6) | grain 45 |
+| Town D | Town | (11,6)-(12,6) | grain 20, milk 25 |
+
+`opening_lines` holds **one** line: Village A's grain. Item 39 raised region 1
+to three because a single opening order left a free-play player nothing to
+weigh; a scripted tutorial supplies the weighing itself, and one bubble is
+what step 1 wants on screen. The order book's deepen/expand alternation
+(item 40) is **disabled on this map** -- the step list decides what opens.
+
+**The numbers carry the lessons**, so no step has to assert anything the map
+does not demonstrate:
+
+- Village A is **3 tiles** from the Farm; grain decays 0.5/tile, so it lands
+  at 98.5% and green. The first road works perfectly, on purpose.
+- Village B is **8 tiles** from the Dairy; milk decays 4.0/tile, so it lands
+  at **68% -- amber**, above the village's 35% minimum and below its 80%
+  bonus line. The player succeeds and is shown that succeeding is not the
+  ceiling. Cool Storage placed early on that run (protection 8 covers all
+  8 tiles, 0.35x) takes it to **89% and green**.
+- Grain to Village A (20) plus Village C (45) is **65/day down one shared
+  Dirt trunk against a 60 cap** -- a capacity problem, with the Farm's 100
+  leaving supply comfortably clear of it.
+- Milk to Village B (20) plus Town D (25) is **45/day against the Dairy's
+  40** -- a supply problem, on a trunk far under capacity.
+
+Those last two are deliberately on **different foods**, so "the road cannot
+carry it" and "the farm cannot make it" are never the same day's problem --
+which is exactly the confusion a tutorial exists to prevent.
+
+### 12.2.4 The nine steps
+
+| # | Teaches | Instruction | Reveals | Completes when |
+|---:|---|---|---|---|
+| 1 | The route drag | "Press and **hold** the Farm, drag to Village A, and let go." | Route, Bulldoze | `route_established(farm, villageA)` |
+| 2 | The day clock | "Deliveries happen when a day ends. Run the day." | Clock panel, Run Day Now | `days_simulated(1)` |
+| 3 | Reading a bubble | "Village A got its whole order, fresh. Tap it to see the detail." | — | `node_inspected(villageA)` |
+| 4 | Distance costs freshness | "The Dairy is further out. Run milk to Village B." | — (opens `villageB/milk`) | `line_filled(villageB, milk)` |
+| 5 | Cool Storage | "That milk arrived at 68% -- amber pays the order, green pays 25% more. Put Cool Storage early on the run." | Normal, Cool | `line_green(villageB, milk)` |
+| 6 | Hubs | "Village C wants grain too, and the road out of the Farm is already there. Build a hub where they share it." | Hub | `structure_built(hub)` **and** `line_filled(villageC, grain)` |
+| 7 | Route capacity | "That trunk is carrying 65 a day down a 60 road. Upgrade it." | Upgrade | `no_tile_over_capacity` |
+| 8 | Crossing the river | "Town D is across the water. A route tile on the river costs §40 extra -- or go the long way round." | — (opens `townD/grain`) | `line_filled(townD, grain)` |
+| 9 | Source upgrades | "Town D wants milk as well. That's 45 a day, and the Dairy makes 40." | — (opens `townD/milk`) | `source_upgraded(dairy)` **and** `line_filled(townD, milk)` |
+
+Then: *"That's the whole game. Ashfield Plain is open."*
+
+**What is deliberately not taught.** Bridges (§4.1's placed road-over-road
+deck) and the bulldoze/upgrade sweep (item 26) are left to be discovered: a
+bridge is a capped, expensive, situational structure that a tutorial would
+have to invent a reason to need, and the sweep is a convenience on a tool the
+player already knows. Nine steps is already long, and every step past the
+point the player has got it is a step they resent.
+
+**Step 8 keeps the detour honest.** The river is crossable for §40 or
+avoidable for roughly four more tiles of road and upkeep, and the instruction
+says so. Teaching a cost as a toll teaches the player to pay it; teaching it
+as a choice is the actual skill the rest of the game asks for.
 
 ---
 
