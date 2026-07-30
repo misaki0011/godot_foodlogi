@@ -5,8 +5,8 @@ extends SceneTree
 ## that route creation is drag-only (v0.5), can only start from a source or
 ## a built hub and must end at a hub or a settlement (v0.5 item 19), and
 ## explicitly connects every new tile to what it extends from, never merely
-## by adjacency; and that tapping a source/settlement shows its info tip
-## instead of building or opening a dialog.
+## by adjacency; and that tapping a source/settlement focuses it instead of
+## building or opening any panel.
 ## Run via: godot --headless --script res://scripts/tools/verify_main.gd
 
 var _main: Node
@@ -225,26 +225,23 @@ func _report() -> void:
 	assert(not state.grid.has(mid_cell), "A second bulldoze must clear the bare road tile")
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
 
-	# Tapping a settlement (any tool) never builds there, and no longer opens
-	# a text tip: the settlement's detailed description is retired (v0.6 item
-	# 48), because the balloons the tap expands already carry
-	# delivered/requested, freshness and the bar ticked at its own bonus
-	# threshold. What the tap does instead is focus the node, which is what
-	# swaps its glyph strip for those balloons.
+	# Tapping a node (any tool) never builds there, and no longer opens a text
+	# panel of any kind: the brown detail tip is retired for sources, routes,
+	# storage, hubs and the river alike (v0.6 item 55). What a tap does now is
+	# focus the node, which is what swaps a settlement's glyph column for its
+	# full rows.
 	var grid_size_before_tip := state.grid.size()
-	var tip_panel: PanelContainer = _main.get("_tip_panel")
-	assert(not tip_panel.visible)
+	assert(_main.get("_tip_panel") == null, "The detail tip panel must be gone, not merely hidden")
 	_main.call("_handle_click", village_a.grid_position)
-	assert(not tip_panel.visible, "A settlement must not open a text tip -- its balloons are the detail view")
-	assert(_main.get("_focused_node_id") == village_a.node_id, "Tapping a settlement must focus it, expanding its balloons")
+	assert(_main.get("_focused_node_id") == village_a.node_id, "Tapping a settlement must focus it, expanding its rows")
 	assert(state.grid.size() == grid_size_before_tip, "Tapping a settlement must not attempt to build there")
 
-	# A source still opens its tip: it carries the upgrade prompt (DEV-03),
-	# which is where the player discovers source upgrades exist at all, and
-	# the used/produced figure that moved off the retired sign.
+	# A source is focusable the same way, but never expands -- it has no
+	# delivery to detail. Its drawn/produced figure lives on its chip.
 	_main.call("_handle_click", farm.grid_position)
-	assert(tip_panel.visible, "A source must still show its info tip")
+	assert(_main.get("_focused_node_id") == farm.node_id, "Tapping a source must focus it")
 	_main.call("_handle_click", Vector2i(0, 0))
+	assert(_main.get("_focused_node_id") == "", "Tapping empty ground must clear the focus")
 
 	_check_day_clock(state)
 	_check_day_cycle(state)

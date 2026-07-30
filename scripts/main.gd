@@ -70,7 +70,7 @@ const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map 
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
 	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
-	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it instead: it doubles its daily output.",
+	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it for §300 instead: it doubles its daily output, once.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
@@ -130,8 +130,6 @@ var _hint_label: Label
 var _toast: Label
 var _bubbles_button: Button
 var _tool_buttons: Dictionary = {}
-var _tip_panel: PanelContainer
-var _tip_label: RichTextLabel
 var _clock_day_label: Label
 var _clock_time_label: Label
 var _clock_bar: ProgressBar
@@ -316,7 +314,7 @@ func _process(delta: float) -> void:
 		_camera.position = new_pos
 	if _press_eligible and not _drag_active and Time.get_ticks_msec() - _press_start_msec >= HOLD_TO_DRAG_MSEC:
 		_drag_active = true
-		_tip_panel.visible = false
+		_set_focused_node("")
 		_drag_path = [_press_cell]
 		_recompute_drag_validity()
 		_update_drag_preview()
@@ -336,7 +334,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _drag_active:
 			_extend_drag_path(_screen_to_cell(event.position))
 		elif not _press_eligible:
-			_update_tip(_screen_to_cell(event.position), event.position)
+			_update_hover(_screen_to_cell(event.position))
 
 func _start_press(screen_position: Vector2) -> void:
 	var cell := _screen_to_cell(screen_position)
@@ -368,7 +366,7 @@ func _start_press(screen_position: Vector2) -> void:
 	if SWEEP_TOOLS.has(_tool) and _cell_in_bounds(cell) and node == null:
 		_drag_kind = "sweep"
 		_drag_active = true
-		_tip_panel.visible = false
+		_set_focused_node("")
 		_drag_path = [cell]
 		_recompute_sweep()
 		_update_drag_preview()
@@ -758,12 +756,13 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_upgrade_source(n)
 			return
 		# Otherwise sources and settlements are informational, not buildable
-		# -- tapping (mobile has no hover) shows the same info tip a mouse
-		# hover would. Nothing on the map ever needs a tap to advance the
-		# game: orders open themselves as deliveries land (DEV-01).
-		_update_tip(cell, screen_position)
+		# -- tapping (mobile has no hover) focuses the node exactly as a mouse
+		# hover does, expanding a settlement's column into its full rows.
+		# Nothing on the map ever needs a tap to advance the game: orders
+		# open themselves as deliveries land (DEV-01).
+		_update_hover(cell)
 		return
-	_tip_panel.visible = false
+	_set_focused_node("")
 	match _tool:
 		"route":
 			_do_tap_route(cell)
@@ -1186,99 +1185,21 @@ func _show_day_summary(r: DayReportData) -> void:
 
 ## ---------- hover tooltip ----------
 
-func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
+## Which node the pointer is over, and nothing else. This used to also build
+## and position a text panel describing whatever was under the cursor -- a
+## source's produce, a route's capacity and upkeep, a hub's last-run split,
+## storage protection, the river's crossing price. That panel is retired
+## (v0.6 item 55): the map's own marks carry the state now, and a brown box
+## following the cursor over a map this dense was covering the thing it was
+## describing.
+func _update_hover(cell: Vector2i) -> void:
 	if not _cell_in_bounds(cell):
-		_tip_panel.visible = false
 		_set_focused_node("")
 		return
 	var n := _node_at(cell)
-	# Inspecting a node is what expands it from a glyph strip back into full
-	# balloons, so the same pointer that opens the tip drives the map layer.
+	# Inspecting a settlement is what expands it from a glyph column into full
+	# rows, so the same pointer that used to open the tip drives the map layer.
 	_set_focused_node(n.node_id if n else "")
-	var cell_data = _state.grid.get(cell)
-	var text := ""
-	if n:
-		if n.node_type == GameEnums.NodeType.SOURCE:
-			var parts := []
-			for food_id in n.produces:
-				parts.append("%s (%d/day)" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
-			text = "[b]%s[/b]\nProduces: %s" % [n.display_name, ", ".join(parts)]
-			# The only place today's draw-down is readable now that the sign
-			# printing "21/80" is gone (v0.6 item 48) -- the map glyph only
-			# says spent or not by going grey.
-			var drawn: Dictionary = _state.last_source_status.get(n.node_id, {})
-			for food_id in n.produces:
-				if drawn.has(food_id):
-					text += "\nDrawn today: %d/%d" % [roundi(drawn[food_id].used), roundi(n.produces[food_id])]
-			# The upgrade is only reachable through the Upgrade tool, so the
-			# tip is where the player finds out it exists at all (DEV-03).
-			if n.can_upgrade():
-				text += "\n[color=#C9A227]Upgrade §%d with the Upgrade tool — doubles daily output.[/color]" % roundi(GameBalance.SOURCE_UPGRADE_COST)
-			else:
-				text += "\n[color=#8A8375]Already expanded.[/color]"
-		else:
-			# No text tip for a settlement (v0.6 item 48). Hovering or
-			# tapping one expands it from a glyph strip into its full
-			# balloons -- delivered/requested, freshness and the bar ticked
-			# at its own bonus threshold -- and a panel repeating that in
-			# words alongside was saying the same thing twice.
-			text = ""
-	elif cell_data:
-		if cell_data.kind == "route":
-			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
-			if cell_data.has("bridge_axis"):
-				# A bridge tile carries two roads and can host nothing else, so
-				# it replaces the plain route tip outright rather than annotating
-				# it -- none of the "you could build X here" hints apply.
-				text = "[b]Bridge over %s Route[/b]\nCapacity: %d/day, shared by both roads\nUpkeep ×%.1f +§%d for the deck\nDeck runs %s: a route drawn straight over it never joins the road below.\n[color=orange]Crossing the deck costs %.0f× the usual freshness decay[/color]" % [
-					lvl.label,
-					roundi(lvl.cap),
-					lvl.upkeep_mult,
-					roundi(GameBalance.BRIDGE_UPKEEP),
-					"east-west" if cell_data.bridge_axis.x != 0 else "north-south",
-					GameBalance.BRIDGE_DECK_DECAY_MULT,
-				]
-			else:
-				text = "[b]%s Route[/b]\nCapacity: %d/day\nUpkeep ×%.1f" % [lvl.label, roundi(lvl.cap), lvl.upkeep_mult]
-				if SimulationEngine.network_at_hub_cap(_state, cell):
-					text += "\n[color=orange]⚠ This road already has %d hub%s -- the cap is reached[/color]" % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"]
-				else:
-					text += "\n[color=#4FA8A0]⚙ Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
-				# Only advertise the Bridge tool where it would actually take:
-				# a straight through-run, on a network under its bridge cap.
-				if _deck_axis_for(cell) != Vector2i.ZERO:
-					if SimulationEngine.network_at_bridge_cap(_state, cell):
-						text += "\n[color=orange]⚠ This road network already has %d bridge%s -- the cap is reached[/color]" % [GameBalance.BRIDGE_CAP_PER_NETWORK, "" if GameBalance.BRIDGE_CAP_PER_NETWORK == 1 else "s"]
-					else:
-						text += "\n[color=#4FA8A0]⌒ Bridge tool can span this tile for §%d, so another route can cross over[/color]" % roundi(GameBalance.BRIDGE_BUILD_COST)
-		elif cell_data.kind == "storage":
-			var st = GameBalance.STORAGE_TYPES[cell_data.stype]
-			text = "[b]%s[/b]\nUpkeep: §%d/day\nProtects next %d tiles at %d%% decay" % [st.name, roundi(st.upkeep), st.protection, roundi(st.mult * 100)]
-		elif cell_data.kind == "hub":
-			var ht = GameBalance.HUB_TYPES[cell_data.htype]
-			text = "[b]%s[/b]\nUpkeep: §%d/day\nDiscounts adjacent routes %d%%" % [ht.name, roundi(ht.upkeep), roundi(ht.discount * 100)]
-			var split := SimulationEngine.hub_split_summary(_state, cell)
-			if split.total > 0.0:
-				var lines := []
-				for src_id in split.by_source:
-					var src: NodeData = _nodes_by_id.get(src_id)
-					var pct := roundi(split.by_source[src_id] / split.total * 100.0)
-					lines.append("%s: %d (%d%%)" % [src.display_name if src else src_id, roundi(split.by_source[src_id]), pct])
-				text += "\n\n[b]Last run split (%d total):[/b]\n%s" % [roundi(split.total), "\n".join(lines)]
-			else:
-				text += "\n\n[i]No deliveries routed through here yet.[/i]"
-		for c in _state.last_congestion:
-			if c.pos == cell:
-				text += ("\n[color=orange]! Hit 100%%+ capacity on the last run -- deliveries were capped here[/color]" if c.over
-					else "\n[color=orange]! Ran 90%+ of capacity on the last run -- close to a bottleneck[/color]")
-	elif _map_data.is_river(cell.x, cell.y):
-		text = "[b]River[/b]\nBuilding here requires a bridge (+§%d)." % GameBalance.RIVER_BRIDGE_COST
-	if text == "":
-		_tip_panel.visible = false
-		return
-	_tip_label.text = text
-	_tip_panel.visible = true
-	_tip_panel.position = mouse_pos + Vector2(16, 12)
 
 ## Re-renders only when the focused node actually changes. _render_grid
 ## rebuilds every visual on the map, so calling it per mouse-motion event
@@ -1292,8 +1213,6 @@ func _set_focused_node(node_id: String) -> void:
 	# so the rebuild would be pure waste.
 	if _bubbles_mode == BubblesMode.GLYPHS:
 		_render_grid()
-
-## ---------- settlement tip ----------
 
 ## ---------- daily report ----------
 
@@ -1574,6 +1493,11 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"color": (BubbleCanvas.MUTED_ICON_COLOR if bubble_status == FoodBubbleMarker.Status.MUTED
 				else foods[food_id].color),
 			"status": bubble_status,
+			# Drawn today out of the daily produce. This lived on the retired
+			# sign, then the retired hover tip; the chip is now the only place
+			# it can be, and the glyph going grey alone said whether anything
+			# was left but never how much (v0.6 item 55).
+			"amount_text": "%d/%d" % [roundi(used), roundi(produced)],
 		})
 	_spawn_glyph_column(base_pos, entries, false)
 
@@ -1924,17 +1848,6 @@ func _build_ui() -> void:
 	_toast.visible = false
 	root.add_child(_toast)
 
-	_tip_panel = PanelContainer.new()
-	_tip_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_tip_panel.add_theme_stylebox_override("panel", _panel_style(Color("2c2418"), 0.95))
-	_tip_panel.visible = false
-	root.add_child(_tip_panel)
-	_tip_label = RichTextLabel.new()
-	_tip_label.bbcode_enabled = true
-	_tip_label.fit_content = true
-	_tip_label.custom_minimum_size = Vector2(210, 0)
-	_tip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_tip_panel.add_child(_tip_label)
 
 	_build_control_panel(root)
 	_build_day_clock(root)

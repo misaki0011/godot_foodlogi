@@ -154,6 +154,28 @@ const REJECTED_TEXT_COLOR := Color("f08a8a")
 const EARNED_TEXT_COLOR := Color("9fd8a8")
 const UNPAID_TEXT_COLOR := Color("f0a0a0")
 
+## A source chip prints how much of today's produce has been drawn, under its
+## glyph -- "21/80". The retired sign carried this and item 48 moved it to the
+## hover tip, which item 55 then retired outright; with no panel left, the
+## chip is the only place it can live, and it belongs there anyway. Without it
+## the map only distinguished a spent source from a stocked one by the glyph
+## going grey, which says whether there is anything left but never how much.
+const SOURCE_AMOUNT_COLOR := Color(0.90, 0.91, 0.93)
+const SOURCE_SPENT_AMOUNT_COLOR := Color(0.60, 0.61, 0.63)
+## The glyph shrinks and lifts to make room. Kept large enough that the
+## silhouette still resolves at map zoom, which is the whole reason it is 4x
+## in the first place.
+## Worked back from the 192px chip rather than guessed: with a 7px border the
+## usable band is about 12..180. The figure's baseline sits at 172 so its caps
+## occupy ~146..172, which leaves the glyph everything above ~136 -- hence a
+## radius of 76 * 0.68 centred 12px above the chip's middle, spanning 32..136.
+## A first pass at 0.74 and a 20px lift left the two overlapping, the number
+## printing straight over the wheat's tail and the bottle's body.
+const SOURCE_GLYPH_SCALE := 0.68
+const SOURCE_GLYPH_LIFT := 12.0
+const SOURCE_AMOUNT_BASELINE := 76.0
+const SOURCE_AMOUNT_SIZE := 36
+
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
 const MIN_FONT_SIZE := 14
@@ -351,10 +373,28 @@ func _draw_column() -> void:
 		_draw_body(rect, radius, fill, border, border_width)
 
 		var cell_centre := Vector2(cell_cx, y + row_h * 0.5)
+		var amount: String = entry.get("amount_text", "")
+		# A source shrinks and lifts its glyph to make room for the figure
+		# underneath; a settlement keeps the cell to itself, its numbers
+		# living out in the expanded row instead.
+		var r := glyph_r
+		if not judged and amount != "":
+			r = glyph_r * SOURCE_GLYPH_SCALE
+			cell_centre.y -= SOURCE_GLYPH_LIFT
 		# Stroked in the chip's light ink: this outline is the only thing
 		# separating a pale milk bottle -- or a green carrot on a green-tinted
 		# row -- from the ground behind it (FoodGlyphs), so it cannot be a hint.
-		FoodGlyphs.draw_glyph(self, entry.food_id, cell_centre, glyph_r, entry.color, CHIP_GLYPH_INK)
+		FoodGlyphs.draw_glyph(self, entry.food_id, cell_centre, r, entry.color, CHIP_GLYPH_INK)
+		if not judged and amount != "":
+			var spent: bool = status == FoodBubbleMarker.Status.MUTED
+			_draw_centred(
+				amount,
+				rect.position.x,
+				rect.size.x,
+				y + SOURCE_AMOUNT_BASELINE + row_h * 0.5,
+				SOURCE_AMOUNT_SIZE,
+				SOURCE_SPENT_AMOUNT_COLOR if spent else SOURCE_AMOUNT_COLOR,
+			)
 
 		# The status mark stays pinned to the glyph cell in BOTH states rather
 		# than moving to the far edge when the row widens -- the point of the
@@ -456,6 +496,17 @@ func _draw_pair(full: String, money: String, x: float, max_width: float, center_
 		used,
 		money_ink,
 	)
+
+## Centred within `width` rather than left-aligned from `x`, because a source
+## chip's figure sits under a centred glyph and would read as crooked
+## otherwise.
+func _draw_centred(text: String, x: float, width: float, baseline_y: float, font_size: int, color: Color) -> void:
+	var font := ThemeDB.fallback_font
+	var size := font_size
+	while size > MIN_FONT_SIZE and font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > width - 12.0:
+		size -= 1
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	draw_string(font, Vector2(x + (width - w) * 0.5, baseline_y), text, HORIZONTAL_ALIGNMENT_LEFT, w, size, color)
 
 ## "5 spoiled at 32%" -- the amount turned away and how fresh it actually
 ## was, which is what says whether the route is marginally too long or wildly
