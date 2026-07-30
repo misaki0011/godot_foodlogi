@@ -116,7 +116,14 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The expanded column is narrower than what it replaces.** Five orders used to occupy a 2x3 grid roughly 6.2 world units wide; one column is about 3.1 wide and 7.4 tall. Taller, but width is what costs on this map -- settlements crowd each other horizontally, and the space above a node is usually empty. The tallest case is a five-order City at roughly 3.7 tiles, and it is transient. If that proves too much in play the answer is an accordion, expanding only the row under the pointer -- which needs per-row hit-testing, the billboard-picking problem every version of this feature has deliberately avoided. See §10.1, §16.
 
 51. **The freshness bar was unreadable, and reported as "freshness looks 0".** Two faults, both introduced by the redesign rather than by the bar's own logic. **Size:** `BAR_HEIGHT` stayed at the 9px it was authored at for the old 310x150 balloon while rows went 4x bigger and `pixel_size` dropped from 0.01 to 0.0072 -- leaving the bar about 28% *smaller on screen* than before the redesign, inside a row four times the size. It is now 24px. **Contrast:** item 49 inverted the palette to light-on-dark and flipped the bar's colours to translucent white without re-tuning them, leaving the track at 0.17 alpha and the not-yet-counting fill at 0.34 -- two near-identical washes, so a 90% bar looked like an empty one. The track is now a dark recess (black 0.30) cut into the tinted body, and the inert fill lifts to 0.58, which puts a real step between them. The dead `BAR_INSET` (superseded when the bar started taking an explicit rect) goes too.
-    Worth recording what was *not* a bug, since it prompted the report: a line reading "25/30, 90% fresh" with a **red** ✕ is correct. Red means the order came up **short**, not spoiled -- and per §9 a short order pays nothing at all however fresh what arrived was, so that line earned zero. The freshness is still worth showing on a short line, because it says the route is fine and the shortfall is a supply or capacity problem rather than a distance one. But red beside "90% fresh" reads as a contradiction, and the row does not currently say by how much it fell short. See §10.1.
+    Worth recording what was *not* a bug, since it prompted the report: a line reading "25/30, 90% fresh" with a **red** ✕ is correct. Red means the order came up **short**, not spoiled -- and per §9 a short order pays nothing at all however fresh what arrived was, so that line earned zero. But red beside "90% fresh" reads as a contradiction, and item 52 is why. See §10.1.
+
+52. **A row says how much arrived too spoiled to accept, and how spoiled it was.** The contradiction in item 51's "25/30, 90% fresh, red" was not a display fault -- it was a display *gap*, and the missing number explains the whole row. Two facts about `SimulationEngine.run_day` combine to produce it:
+    - **The freshness shown averages only what was accepted.** `fresh_sum` accumulates in the non-rejected branch alone, so cargo turned away for arriving under `min_freshness` is invisible in that percentage. A line can read 90% while a third of its shipment was binned at 32%.
+    - **A rejected shipment still consumes the day's demand.** `need -= amt` runs *before* the accept/reject branch, so spoiled cargo eats that part of the order and no later candidate path refills it.
+    Together: 30 was dispatched, 5 arrived at 32%, `min_freshness` turned it away, the demand was spent anyway, and the row reported "25/30, 90% fresh" with nothing on screen saying why. The rejection is very often *the entire reason* a line is red, and it was the one thing the row could not say.
+    An expanded row now carries a third line -- **"5 spoiled at 32%"** -- in the red accent whatever the row's own status is, since it is unambiguously bad news. The amount alone would say a shipment was lost; the freshness with it says *how far* under the line it came, which is the difference between a route that is marginally too long and one that was never going to work. A row with nothing rejected is unchanged, and a total rejection ("0/25, 25 spoiled at 18%") drops the accepted-freshness line entirely, there being nothing accepted to average.
+    This needs one new field: `rejected_fresh_sum` on `last_settlement_status`, amount-weighted exactly like `fresh_sum`. It also restores, in a better place, one of the three things item 48 knowingly dropped when the settlement's text tip was retired -- that tip's "N arrived too spoiled to accept" line. `BALLOON_ROW_WIDTH` widens 420 -> 560 to fit the third line at a readable size; the row has vertical room to spare and none horizontally, and this only affects the hovered node. See §10.1, §16.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
 
@@ -1628,8 +1635,10 @@ for the node the player is hovering or has tapped.
    | ✕fish |                 | ✕fish |  0/25        |
    `-------'                 `-------'--------------'
    ,-------.                 ,-------.--------------.
-   | !wheat|                 | !wheat| 20/20        |
-   `-------'                 `-------' 72%  [==|--] |
+   | ✕wheat|                 | ✕wheat| 25/30        |
+   `-------'                 `-------' 90% fresh    |
+                                       5 spoiled at |
+                                       32%  [==|--] |
    ,-------.                 ,-------.--------------.
    | ✓loaf |                 | ✓loaf | 30/30        |
    `---v---'                 `---v---'--------------'

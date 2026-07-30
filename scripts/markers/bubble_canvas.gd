@@ -122,6 +122,12 @@ const BAR_TICK_WIDTH := 5.0
 ## not count yet".
 const BAR_INERT_COLOR := Color(1.0, 1.0, 1.0, 0.58)
 
+## Cargo turned away for arriving under min_freshness reads in the red accent
+## whatever the row's own status is: it is the one number on the row that is
+## unambiguously bad news, and on a row that IS red it is usually the whole
+## explanation for why.
+const REJECTED_TEXT_COLOR := Color("f08a8a")
+
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
 const MIN_FONT_SIZE := 14
@@ -204,7 +210,10 @@ static func row_size() -> float:
 
 ## An expanded row is the same height, just wider -- room for the amount, the
 ## freshness percentage and the bar, to the right of the glyph cell.
-const BALLOON_ROW_WIDTH := 420.0
+## Widened from 420 to fit a rejected row's third line ("5 spoiled at 32%")
+## at a readable size. The row has vertical room to spare and none
+## horizontally, and this only affects the hovered node.
+const BALLOON_ROW_WIDTH := 560.0
 const ROW_TEXT_GAP := 10.0
 const ROW_RIGHT_PAD := 18.0
 
@@ -354,9 +363,25 @@ func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent:
 	var row_cy := rect.position.y + (rect.size.y - BAR_BOTTOM_MARGIN - BAR_HEIGHT) * 0.5
 	var fresh: int = entry.get("freshness_pct", -1)
 
-	if fresh >= 0:
+	var rejected: float = entry.get("rejected", 0.0)
+	var rejected_fresh: int = entry.get("rejected_freshness_pct", -1)
+	var sub := int(rect.size.y * 0.17)
+
+	# Three layouts, by how much there is to say. The rejected line matters
+	# most on a RED row, where it is usually the entire reason the line came
+	# up short: cargo under min_freshness is binned AND still consumes the
+	# day's demand, and the delivered freshness above cannot show it because
+	# it averages only what was accepted.
+	if rejected > 0.0 and fresh >= 0:
+		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 30.0, int(rect.size.y * 0.30), TEXT_COLOR)
+		_draw_fitted("%d%% fresh" % fresh, text_x, text_w, row_cy + 14.0, sub, SUBTEXT_COLOR)
+		_draw_fitted(_rejected_text(rejected, rejected_fresh), text_x, text_w, row_cy + 48.0, sub, REJECTED_TEXT_COLOR)
+	elif rejected > 0.0:
+		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.32), TEXT_COLOR)
+		_draw_fitted(_rejected_text(rejected, rejected_fresh), text_x, text_w, row_cy + 30.0, sub, REJECTED_TEXT_COLOR)
+	elif fresh >= 0:
 		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
-		_draw_fitted("%d%% fresh" % fresh, text_x, text_w, row_cy + 30.0, int(rect.size.y * 0.17), SUBTEXT_COLOR)
+		_draw_fitted("%d%% fresh" % fresh, text_x, text_w, row_cy + 30.0, sub, SUBTEXT_COLOR)
 	else:
 		_draw_fitted(entry.amount_text, text_x, text_w, row_cy, int(rect.size.y * 0.34), TEXT_COLOR)
 
@@ -367,6 +392,14 @@ func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent:
 		entry.get("threshold", 0.0),
 		entry.status,
 	)
+
+## "5 spoiled at 32%" -- the amount turned away and how fresh it actually
+## was, which is what says whether the route is marginally too long or wildly
+## so. Falls back to the amount alone if the freshness is somehow unknown.
+static func _rejected_text(rejected: float, rejected_fresh: int) -> String:
+	if rejected_fresh < 0:
+		return "%d spoiled" % roundi(rejected)
+	return "%d spoiled at %d%%" % [roundi(rejected), rejected_fresh]
 
 func _draw_column_tail(bottom: float, accent: Color) -> void:
 	var cx := glyph_centre_x()

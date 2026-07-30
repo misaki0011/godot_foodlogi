@@ -66,6 +66,8 @@ func setup_settlement_column(entries: Array, bonus_freshness: float) -> void:
 			"amount_text": _ratio_text(e.delivered, e.requested),
 			"freshness_pct": e.freshness_pct,
 			"threshold": bonus_freshness / 100.0,
+			"rejected": e.get("rejected", 0.0),
+			"rejected_freshness_pct": e.get("rejected_freshness_pct", -1),
 		})
 	_apply(BubbleCanvas.column_size(rows.size(), true), BubbleCanvas.column_x_shift())
 	_canvas.set_settlement_column(rows)

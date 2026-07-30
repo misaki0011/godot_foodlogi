@@ -1614,12 +1614,22 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 		var requested: float = demand[food_id]
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
+		var rejected: float = 0.0
+		var rejected_fresh: float = 0.0
 		var s = status.get(food_id)
 		if s != null:
 			requested = s.requested
 			delivered = s.delivered
 			if delivered > 0.0:
 				avg_fresh = s.fresh_sum / delivered
+			# Cargo min_freshness turned away. It still consumed the day's
+			# demand (SimulationEngine drops `need` before deciding whether to
+			# accept), so this is very often the whole reason a line came up
+			# short -- and the delivered freshness above cannot show it,
+			# averaging only what was let in.
+			rejected = s.get("rejected", 0.0)
+			if rejected > 0.0:
+				rejected_fresh = s.get("rejected_fresh_sum", 0.0) / rejected
 
 		var bubble_status: FoodBubbleMarker.Status
 		if delivered < requested - 0.01:
@@ -1635,6 +1645,8 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"requested": requested,
 			"status": bubble_status,
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
+			"rejected": rejected,
+			"rejected_freshness_pct": roundi(rejected_fresh) if rejected > 0.0 else -1,
 		})
 
 	# Worst first, so the leftmost glyph on the strip -- and the first
@@ -1658,6 +1670,8 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"delivered": e.delivered,
 			"requested": e.requested,
 			"freshness_pct": e.freshness_pct,
+			"rejected": e.rejected,
+			"rejected_freshness_pct": e.rejected_freshness_pct,
 		})
 
 	if not _shows_full_bubbles(n):

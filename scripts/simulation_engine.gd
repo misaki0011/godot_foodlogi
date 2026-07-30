@@ -461,7 +461,11 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			var need: float = maxf(1.0, roundf(demand[food_id]))
 			requested += need
 			requested_total += need
-			food_status[food_id] = {"requested": need, "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0}
+			# rejected_fresh_sum is amount-weighted like fresh_sum, but over the
+			# cargo min_freshness turned away -- without it a short line cannot
+			# say WHY it fell short, since fresh_sum only ever sees what was
+			# accepted (see UI-04's rejected row).
+			food_status[food_id] = {"requested": need, "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0, "rejected_fresh_sum": 0.0}
 			var food: FoodData = foods[food_id]
 
 			var candidates: Array[Dictionary] = []
@@ -505,6 +509,7 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 				if rejected_by_strictness or mult == 0.0:
 					rejected += amt
 					food_status[food_id].rejected += amt
+					food_status[food_id].rejected_fresh_sum += fresh * amt
 					spoilage_cost += amt * food.base_value * 0.5
 					flows.append({"food": food_id, "path": c.path, "delivered": 0.0, "rejected": amt, "settlement": settlement.node_id, "source": c.src.node_id})
 				else:
