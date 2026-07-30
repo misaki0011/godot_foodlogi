@@ -18,12 +18,19 @@ func _initialize() -> void:
 	root.add_child(bg)
 
 	var foods := GameBalance.food_types()
-	# Row 1 is the case that prompted this: short AND fresh, because cargo was
-	# rejected. Row 2 is a total rejection, row 3 a clean green line.
 	# One row per payment tier, which is what the colour has always encoded:
 	# red earns nothing, amber earns the line, green earns the line + 25%.
+	#
+	# Every row here is a state region 1 can actually reach. A line has one
+	# candidate path per SOURCE PRODUCING THAT FOOD, and region 1 gives every
+	# food exactly one source -- so a shipment is wholly accepted or wholly
+	# rejected, and a row can never show a delivered amount AND spoiled cargo
+	# at once. Row 1 is therefore short with nothing spoiled (supply ran out
+	# or capacity capped it); the total-rejection case is in the five-row
+	# column below. Mixed accept/reject only becomes reachable on a map that
+	# gives one food two sources -- Cold Coast's two Harbors, when it exists.
 	var three := [
-		_e(foods, "grain", FoodBubbleMarker.Status.RED, 25, 30, 90, 5, 32, 0, 90),
+		_e(foods, "grain", FoodBubbleMarker.Status.RED, 25, 30, 90, 0, -1, 0, 90),
 		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER, 25, 25, 68, 0, -1, 150, 0),
 		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 94, 0, -1, 187, 0),
 	]
