@@ -165,16 +165,23 @@ const SOURCE_SPENT_AMOUNT_COLOR := Color(0.60, 0.61, 0.63)
 ## The glyph shrinks and lifts to make room. Kept large enough that the
 ## silhouette still resolves at map zoom, which is the whole reason it is 4x
 ## in the first place.
-## Worked back from the 192px chip rather than guessed: with a 7px border the
-## usable band is about 12..180. The figure's baseline sits at 172 so its caps
-## occupy ~146..172, which leaves the glyph everything above ~136 -- hence a
-## radius of 76 * 0.68 centred 12px above the chip's middle, spanning 32..136.
-## A first pass at 0.74 and a 20px lift left the two overlapping, the number
-## printing straight over the wheat's tail and the bottle's body.
-const SOURCE_GLYPH_SCALE := 0.68
-const SOURCE_GLYPH_LIFT := 12.0
-const SOURCE_AMOUNT_BASELINE := 76.0
-const SOURCE_AMOUNT_SIZE := 36
+## A source row is laid out like an EXPANDED settlement row -- full-size glyph
+## in the leftmost square cell, figure to its right at the same size a
+## settlement prints its amount -- rather than stacking the two inside a
+## square chip.
+##
+## Stacking was tried first and cannot hold the figure at that size. The
+## settlement amount is int(192 * 0.34) = 65px, at which "21/80" measures
+## 174px and an upgraded source's "110/180" measures 248px, against a square
+## chip's 168px interior. Anything stacked therefore had to shrink either the
+## glyph (which is 4x for legibility, so shrinking it undoes the point) or the
+## figure (which is the thing being matched). Widening instead keeps both at
+## full size, and it makes a source row structurally the same object as the
+## settlement row it sits beside.
+## 468 is the exact fit -- "180/180", the widest figure an upgraded source can
+## show, measures 248px at this font and the text band is 248px wide. Twelve
+## more so font-metric variation cannot push the widest case into a shrink.
+const SOURCE_ROW_WIDTH := 480.0
 
 ## _draw_fitted shrinks the font to fit rather than letting text overflow
 ## the bubble; this is the floor so it never shrinks past readable.
@@ -265,16 +272,18 @@ const BALLOON_ROW_WIDTH := 560.0
 const ROW_TEXT_GAP := 10.0
 const ROW_RIGHT_PAD := 18.0
 
-static func column_width(expanded: bool) -> float:
+static func column_width(expanded: bool, source := false) -> float:
+	if source:
+		return SOURCE_ROW_WIDTH + CHIP_MARGIN * 2.0
 	return (BALLOON_ROW_WIDTH if expanded else row_size()) + CHIP_MARGIN * 2.0
 
 ## Canvas size for `count` rows. Height is deliberately independent of
 ## `expanded`, so a column occupies the same vertical space collapsed or not
 ## and row i lands at the same screen height in both.
-static func column_size(count: int, expanded: bool) -> Vector2i:
+static func column_size(count: int, expanded: bool, source := false) -> Vector2i:
 	var n := maxi(count, 1)
 	return Vector2i(
-		ceili(column_width(expanded)),
+		ceili(column_width(expanded, source)),
 		ceili(n * row_size() + (n - 1) * CHIP_GAP + CHIP_MARGIN * 2.0 + TAIL_HEIGHT),
 	)
 
@@ -294,6 +303,11 @@ static func glyph_centre_x() -> float:
 ## Kept as the name the rest of the code already uses for a chip column.
 static func glyph_column_size(count: int) -> Vector2i:
 	return column_size(count, false)
+
+## Whether these entries belong to a source. Sources are never judged on a
+## delivery, so DEFAULT/MUTED is the tell (see _is_delivery_status).
+static func entries_are_source(entries: Array) -> bool:
+	return not entries.is_empty() and not _is_delivery_status(entries[0].status)
 
 ## One {food_id, color, status} per open order, already sorted worst-first
 ## by main.gd. An expanded column's entries additionally carry amount_text,
@@ -319,10 +333,13 @@ static func status_color(status: FoodBubbleMarker.Status) -> Color:
 
 ## The map's default layer. `entries` is one {food_id, color, status} per
 ## open order (or, for a source, its single produced food), worst-first.
-func set_glyph_column(entries: Array, has_tail: bool) -> void:
+## `is_settlement` decides both the tail (a settlement's tell, the way the
+## post used to be a source's) and the row width -- one flag because they are
+## two consequences of the same fact.
+func set_glyph_column(entries: Array, is_settlement: bool) -> void:
 	_entries = entries
 	_expanded = false
-	_has_tail = has_tail
+	_has_tail = is_settlement
 	queue_redraw()
 
 ## The inspected view: the same column, each row widened to carry
@@ -347,7 +364,8 @@ func _draw_column() -> void:
 		return
 
 	var row_h := row_size()
-	var row_w := column_width(_expanded) - CHIP_MARGIN * 2.0
+	var source := not _expanded and not _has_tail
+	var row_w := column_width(_expanded, source) - CHIP_MARGIN * 2.0
 	var glyph_r := CHIP_GLYPH_RADIUS
 	# The glyph cell is always the leftmost row_h square of a row, so the
 	# glyph lands at the same place in both states.
@@ -373,26 +391,24 @@ func _draw_column() -> void:
 		_draw_body(rect, radius, fill, border, border_width)
 
 		var cell_centre := Vector2(cell_cx, y + row_h * 0.5)
-		var amount: String = entry.get("amount_text", "")
-		# A source shrinks and lifts its glyph to make room for the figure
-		# underneath; a settlement keeps the cell to itself, its numbers
-		# living out in the expanded row instead.
-		var r := glyph_r
-		if not judged and amount != "":
-			r = glyph_r * SOURCE_GLYPH_SCALE
-			cell_centre.y -= SOURCE_GLYPH_LIFT
 		# Stroked in the chip's light ink: this outline is the only thing
 		# separating a pale milk bottle -- or a green carrot on a green-tinted
 		# row -- from the ground behind it (FoodGlyphs), so it cannot be a hint.
-		FoodGlyphs.draw_glyph(self, entry.food_id, cell_centre, r, entry.color, CHIP_GLYPH_INK)
-		if not judged and amount != "":
+		FoodGlyphs.draw_glyph(self, entry.food_id, cell_centre, glyph_r, entry.color, CHIP_GLYPH_INK)
+
+		# A source prints its draw-down beside the glyph, at exactly the size a
+		# settlement prints its amount -- same expression, so the two cannot
+		# drift apart.
+		var amount: String = entry.get("amount_text", "")
+		if source and amount != "":
 			var spent: bool = status == FoodBubbleMarker.Status.MUTED
-			_draw_centred(
+			var text_x := cell_cx + row_h * 0.5 + ROW_TEXT_GAP
+			_draw_fitted(
 				amount,
-				rect.position.x,
-				rect.size.x,
-				y + SOURCE_AMOUNT_BASELINE + row_h * 0.5,
-				SOURCE_AMOUNT_SIZE,
+				text_x,
+				rect.end.x - ROW_RIGHT_PAD - text_x,
+				cell_centre.y,
+				int(row_h * 0.34),
 				SOURCE_SPENT_AMOUNT_COLOR if spent else SOURCE_AMOUNT_COLOR,
 			)
 
@@ -496,17 +512,6 @@ func _draw_pair(full: String, money: String, x: float, max_width: float, center_
 		used,
 		money_ink,
 	)
-
-## Centred within `width` rather than left-aligned from `x`, because a source
-## chip's figure sits under a centred glyph and would read as crooked
-## otherwise.
-func _draw_centred(text: String, x: float, width: float, baseline_y: float, font_size: int, color: Color) -> void:
-	var font := ThemeDB.fallback_font
-	var size := font_size
-	while size > MIN_FONT_SIZE and font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > width - 12.0:
-		size -= 1
-	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	draw_string(font, Vector2(x + (width - w) * 0.5, baseline_y), text, HORIZONTAL_ALIGNMENT_LEFT, w, size, color)
 
 ## "5 spoiled at 32%" -- the amount turned away and how fresh it actually
 ## was, which is what says whether the route is marginally too long or wildly

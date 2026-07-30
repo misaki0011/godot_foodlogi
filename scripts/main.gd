@@ -1459,13 +1459,16 @@ func _node_center(n: NodeData) -> Vector3:
 func _shows_full_bubbles(n: NodeData) -> bool:
 	return _bubbles_mode == BubblesMode.ALL or _focused_node_id == n.node_id
 
-func _spawn_glyph_column(base_pos: Vector3, entries: Array, has_tail: bool) -> void:
+## `is_settlement` decides the tail and the row width both -- a source row is
+## wider, carrying its draw-down beside a full-size glyph rather than under a
+## shrunken one (item 56).
+func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool) -> void:
 	if entries.is_empty():
 		return
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
-	column.setup_glyph_column(entries, has_tail)
+	column.setup_glyph_column(entries, is_settlement)
 
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})

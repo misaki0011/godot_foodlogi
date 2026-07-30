@@ -59,11 +59,11 @@ func _initialize() -> void:
 	# Sources: near-square, neutral slate, no status mark and no tail, with
 	# the day's draw-down printed under the glyph (item 55). The spent one
 	# greys both glyph and figure.
-	_col(Vector2(1130, 260), false, 1).set_glyph_column([{
+	_col(Vector2(30, 700), false, 1, true).set_glyph_column([{
 		"food_id": "seafood", "color": foods["seafood"].color,
 		"status": FoodBubbleMarker.Status.DEFAULT, "amount_text": "110/180",
 	}], false)
-	_col(Vector2(1370, 260), false, 1).set_glyph_column([{
+	_col(Vector2(560, 700), false, 1, true).set_glyph_column([{
 		"food_id": "milk", "color": BubbleCanvas.MUTED_ICON_COLOR,
 		"status": FoodBubbleMarker.Status.MUTED, "amount_text": "75/75",
 	}], false)
@@ -80,12 +80,12 @@ func _rows(entries: Array) -> Array:
 		})
 	return out
 
-func _col(pos: Vector2, expanded: bool, rows: int) -> BubbleCanvas:
+func _col(pos: Vector2, expanded: bool, rows: int, source := false) -> BubbleCanvas:
 	# Rows lay out from the TOP of the canvas and the height is the same
 	# either way, so drawing a pair at one y is exactly the alignment check.
 	var c := BubbleCanvas.new()
 	c.position = pos
-	c.size = Vector2(BubbleCanvas.column_size(rows, expanded))
+	c.size = Vector2(BubbleCanvas.column_size(rows, expanded, source))
 	root.add_child(c)
 	return c
 

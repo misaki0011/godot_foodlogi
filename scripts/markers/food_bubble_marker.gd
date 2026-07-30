@@ -44,9 +44,9 @@ func _ready() -> void:
 ## single produced food), stacked vertically. `entries` is one
 ## {food_id, color, status} per chip, already sorted worst-first -- the
 ## column's TOP chip is the thing most worth doing something about.
-func setup_glyph_column(entries: Array, has_tail: bool) -> void:
-	_apply(BubbleCanvas.column_size(entries.size(), false), 0.0)
-	_canvas.set_glyph_column(entries, has_tail)
+func setup_glyph_column(entries: Array, is_settlement: bool) -> void:
+	_apply(BubbleCanvas.column_size(entries.size(), false, not is_settlement), 0.0)
+	_canvas.set_glyph_column(entries, is_settlement)
 	_bake()
 
 ## The inspected view: the same column with every row widened to carry its
