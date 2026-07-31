@@ -817,6 +817,35 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	assert(fx.get_child_count() == 0, "A settlement that earned nothing must not float a label")
 	_clear_children(fx)
 
+	# The reminder: only settlements whose worst line earned nothing are
+	# recorded for it, and it shakes their markers directly rather than
+	# re-rendering the whole map to move a few of them.
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 100.0},
+	}
+	_main.call("_render_grid")
+	var nagging: Array = _main.get("_nagging_nodes")
+	assert(nagging.has(city.node_id), "A settlement earning nothing must be recorded for the reminder")
+	var by_node: Dictionary = _main.get("_columns_by_node")
+	assert(by_node.has(city.node_id), "The reminder needs the column it is going to shake")
+
+	# Firing it plays the gentler NAG, never the day-end SHAKE.
+	_main.set("_reminder_elapsed", 999.0)
+	_main.call("_tick_reminder", 0.0)
+	assert(by_node[city.node_id].played == FoodBubbleMarker.Flourish.NAG,
+		"The reminder must play NAG, not the day-end SHAKE")
+	assert(_main.get("_reminder_elapsed") < 1.0, "Firing must reset the reminder's clock")
+
+	# A paying settlement is never nagged.
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
+	}
+	_main.call("_render_grid")
+	assert(not (_main.get("_nagging_nodes") as Array).has(city.node_id),
+		"A settlement that paid must not be nagged")
+
 	# Without a day behind it, a render plays nothing at all.
 	_main.call("_render_grid")
 	var quiet := _column_marker_at(centre, 3.0)
@@ -836,7 +865,7 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	state.active_orders.erase(city.node_id)
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
-	print("Flourishes (items 57-59): pop/hop/nudge/shake each fire once, are consumed by the render, and never stack.")
+	print("Flourishes (items 57-61): pop/hop/nudge/shake fire once each, the payout label survives a re-render, and only unpaid settlements get the recurring nag.")
 
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():

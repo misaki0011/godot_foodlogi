@@ -42,6 +42,7 @@ enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 ##   HOP     a full vertical bounce -- a line paid its bonus
 ##   NUDGE   a shallow vertical lift -- a line paid, no bonus
 ##   SHAKE   a horizontal wobble -- a line paid nothing
+##   NAG     the same wobble, gentler -- that line is STILL paying nothing
 ##
 ## The axis carries the meaning. Vertical is "this paid", and its height says
 ## how well; horizontal is "this did not pay" and is the odd one out on
@@ -54,7 +55,7 @@ enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 ## one-shot and event-driven rather than idling, which is the distinction --
 ## but SHAKE is the one that most tests it, since red is also the resting
 ## state of anything not yet connected. See the note in SPEC.md item 59.
-enum Flourish { NONE, POP, HOP, NUDGE, SHAKE }
+enum Flourish { NONE, POP, HOP, NUDGE, SHAKE, NAG }
 
 ## Springing from nearly nothing both lengthens the travel and deepens the
 ## overshoot: TRANS_BACK's kick is proportional to the range it interpolates.
@@ -79,6 +80,14 @@ const SHAKE_OFFSET := 0.40
 const SHAKE_STEP_SEC := 0.075
 const SHAKE_SWINGS := 4
 const SHAKE_DECAY := 0.62
+
+## The reminder is the same gesture at roughly half the amplitude and one
+## swing fewer. It has to be recognisably the day-end shake -- it is the same
+## complaint -- while being quiet enough to live with, because unlike the
+## day-end version it repeats for as long as the problem does.
+const NAG_OFFSET := 0.22
+const NAG_STEP_SEC := 0.085
+const NAG_SWINGS := 3
 
 @onready var _canvas: BubbleCanvas = $SubViewport/BubbleCanvas
 @onready var _viewport: SubViewport = $SubViewport
@@ -159,7 +168,9 @@ func play(flourish: Flourish) -> void:
 		Flourish.NUDGE:
 			_rise(NUDGE_HEIGHT, NUDGE_UP_SEC, NUDGE_DOWN_SEC, Tween.TRANS_SINE)
 		Flourish.SHAKE:
-			_shake()
+			_shake(SHAKE_OFFSET, SHAKE_STEP_SEC, SHAKE_SWINGS)
+		Flourish.NAG:
+			_shake(NAG_OFFSET, NAG_STEP_SEC, NAG_SWINGS)
 
 func _pop() -> void:
 	scale = Vector3.ONE * POP_FROM_SCALE
@@ -179,16 +190,16 @@ func _rise(height: float, up_sec: float, down_sec: float, landing: Tween.Transit
 
 ## A damped left-right wobble, each swing shorter than the last so it reads as
 ## settling rather than stopping dead.
-func _shake() -> void:
+func _shake(offset: float, step_sec: float, swings: int) -> void:
 	var rest := position
 	var tween := create_tween()
-	var swing := SHAKE_OFFSET
-	for i in SHAKE_SWINGS:
+	var swing := offset
+	for i in swings:
 		var dir := 1.0 if i % 2 == 0 else -1.0
-		tween.tween_property(self, "position", rest + Vector3(swing * dir, 0.0, 0.0), SHAKE_STEP_SEC) \
+		tween.tween_property(self, "position", rest + Vector3(swing * dir, 0.0, 0.0), step_sec) \
 			.set_trans(Tween.TRANS_SINE)
 		swing *= SHAKE_DECAY
-	tween.tween_property(self, "position", rest, SHAKE_STEP_SEC).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(self, "position", rest, step_sec).set_trans(Tween.TRANS_SINE)
 
 func _ratio_text(current: float, max_amount: float) -> String:
 	return "%d/%d" % [roundi(current), roundi(max_amount)]

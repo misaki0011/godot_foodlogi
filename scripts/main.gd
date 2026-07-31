@@ -136,6 +136,33 @@ var _pending_pops: Dictionary = {}
 ## treasury.
 var _day_just_ran := false
 
+## ---------- the red reminder (item 61) ----------
+##
+## Settlements whose worst open line earned nothing shake again, gently, every
+## REMINDER_SEC. Red is the only status worth repeating: amber and green are
+## verdicts already delivered and saying them twice adds nothing, while red is
+## a standing call to action -- and it is also the resting state of every
+## settlement not yet reached, which is exactly the thing a player wants
+## pointing at.
+##
+## Replaying ALL the flourishes on a timer was considered and rejected: at 6
+## firings a day across five settlements the shake stops registering as a
+## warning within a session, which is item 30's objection almost word for word
+## -- a repeated alert is wallpaper.
+##
+## Timed in REAL seconds, unscaled by DAY_SPEEDS: this is a claim on the
+## player's attention rather than an event in the simulation, so it should not
+## come three times as often because they set the clock to 4x.
+const REMINDER_SEC := 20.0
+var _reminder_elapsed := 0.0
+## node_id -> its column marker, rebuilt by each render. The reminder shakes
+## these directly rather than re-rendering, which would rebuild every visual
+## on the map to move five of them.
+var _columns_by_node: Dictionary = {}
+## Settlements whose worst open line came out red, recorded during the render
+## that drew them -- so the reminder never re-derives a status rule §9 owns.
+var _nagging_nodes: Array[String] = []
+
 var _funds_label: Label
 var _day_label: Label
 var _best_grade_label: Label
@@ -321,6 +348,7 @@ func _process(delta: float) -> void:
 		_zoom_dir = 0.0
 		return
 	_tick_day_clock(delta)
+	_tick_reminder(delta)
 	if _zoom_dir != 0.0:
 		_camera.size = clampf(_camera.size + _zoom_dir * ZOOM_SPEED * delta, ZOOM_MIN, ZOOM_MAX)
 	if _pan_dir != Vector2.ZERO:
@@ -1063,6 +1091,21 @@ func _tick_day_clock(delta: float) -> void:
 	_apply_day_cycle()
 	_update_clock_ui()
 
+## Nudges every still-unpaid settlement, on the same guard as the day clock:
+## a stopped clock means the game is not running, and nagging a player who has
+## deliberately paused is just pestering.
+func _tick_reminder(delta: float) -> void:
+	if not _state.auto_run or _state.clock_paused or _bubbles_mode == BubblesMode.OFF:
+		return
+	_reminder_elapsed += delta
+	if _reminder_elapsed < REMINDER_SEC:
+		return
+	_reminder_elapsed = 0.0
+	for node_id in _nagging_nodes:
+		var column = _columns_by_node.get(node_id)
+		if is_instance_valid(column):
+			column.play(FoodBubbleMarker.Flourish.NAG)
+
 ## ---------- time-of-day lighting (LOOP-08) ----------
 
 ## How far through the current day the clock is, 0 at its start and 1 as it
@@ -1291,6 +1334,10 @@ func _show_report(r: DayReportData) -> void:
 
 func _render_grid() -> void:
 	_clear_children(_grid_visuals)
+	# Both are rebuilt by this render; the markers they point at are about to
+	# be freed, so holding last frame's would be holding freed instances.
+	_columns_by_node.clear()
+	_nagging_nodes.clear()
 	for pos in _state.grid:
 		var cell = _state.grid[pos]
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
@@ -1493,14 +1540,15 @@ func _shows_full_bubbles(n: NodeData) -> bool:
 ## `is_settlement` decides the tail and the row width both -- a source row is
 ## wider, carrying its draw-down beside a full-size glyph rather than under a
 ## shrunken one (item 56).
-func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, flourish := FoodBubbleMarker.Flourish.NONE) -> void:
+func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, flourish := FoodBubbleMarker.Flourish.NONE) -> FoodBubbleMarker:
 	if entries.is_empty():
-		return
+		return null
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
 	column.setup_glyph_column(entries, is_settlement)
 	column.play(flourish)
+	return column
 
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
@@ -1664,8 +1712,13 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			earned += e.earned
 		_spawn_payout(base_pos, earned)
 
+	# Recorded for the reminder, which shakes these without re-deriving a
+	# status: entries[0] is the worst line, the same one the column expresses.
+	if not entries.is_empty() and entries[0].status == FoodBubbleMarker.Status.RED:
+		_nagging_nodes.append(n.node_id)
+
 	if not _shows_full_bubbles(n):
-		_spawn_glyph_column(base_pos, glyphs, true, flourish)
+		_columns_by_node[n.node_id] = _spawn_glyph_column(base_pos, glyphs, true, flourish)
 		return
 
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
@@ -1673,6 +1726,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	column.position = base_pos
 	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
 	column.play(flourish)
+	_columns_by_node[n.node_id] = column
 
 ## ---------- payout labels ----------
 ## What a settlement earned that day, floating up beside its column and
