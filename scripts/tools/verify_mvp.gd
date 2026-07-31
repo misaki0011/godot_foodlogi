@@ -29,6 +29,7 @@ func _initialize() -> void:
 	_test_openings_are_seeded()
 	_test_dormant_settlements_are_not_scored()
 	_test_demand_and_freshness_are_stable()
+	_test_line_earnings_reconcile()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -695,6 +696,48 @@ func _test_demand_and_freshness_are_stable() -> void:
 	print("Stable day: Village A asks %.0f grain, gets %.0f at %.1f%% fresh, every run." % [
 		first.requested, first.delivered, first.fresh,
 	])
+
+## Every line's recorded `earned` must add up to the day's income, and a
+## line's `withheld` must be non-zero exactly when it earned nothing.
+##
+## A row now PRINTS its earnings (UI-04), and the whole point of that number
+## is that it explains the row's colour by naming the money the treasury
+## actually took. If the per-line figures ever drift from `report.income` the
+## row would confidently state a payment that never happened, which no
+## screenshot could catch.
+func _test_line_earnings_reconcile() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres")
+	var village_a := _node(map, "villageA")
+	var farm := _node(map, "farm")
+	var state := GameState.new()
+	OrderBook.initialize(state, map)
+	var route_path: Array[Vector2i] = [Vector2i(4, 4), Vector2i(4, 3), Vector2i(5, 3)]
+	for cell in route_path:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.add_connection(farm.grid_position, route_path[0])
+	_connect_chain(state, route_path)
+	state.add_connection(route_path[-1], village_a.grid_position)
+	var report := SimulationEngine.run_day(state, map.node_placements)
+
+	var earned_total := 0.0
+	var withheld_total := 0.0
+	for settlement_id in state.last_settlement_status:
+		for food_id in state.last_settlement_status[settlement_id]:
+			var line: Dictionary = state.last_settlement_status[settlement_id][food_id]
+			earned_total += line.earned
+			withheld_total += line.withheld
+			# A line either paid or it did not; it can never do both.
+			assert(line.earned == 0.0 or line.withheld == 0.0,
+				"%s/%s recorded both earnings (%.2f) and withheld income (%.2f)" % [settlement_id, food_id, line.earned, line.withheld])
+			var short: bool = line.delivered < line.requested - 0.01
+			assert(short == (line.earned == 0.0),
+				"%s/%s: a short line must earn nothing and a full one must earn something" % [settlement_id, food_id])
+
+	assert(is_equal_approx(earned_total, report.income),
+		"Per-line earnings must sum to the day's income: %.2f vs %.2f" % [earned_total, report.income])
+	assert(is_equal_approx(withheld_total, report.withheld_income),
+		"Per-line withheld must sum to the report's: %.2f vs %.2f" % [withheld_total, report.withheld_income])
+	print("Line earnings (UI-04): §%.0f earned and §%.0f withheld reconcile with the day report." % [earned_total, withheld_total])
 
 func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:
 	for i in range(1, cells.size()):

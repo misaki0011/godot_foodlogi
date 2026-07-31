@@ -5,8 +5,8 @@ extends SceneTree
 ## that route creation is drag-only (v0.5), can only start from a source or
 ## a built hub and must end at a hub or a settlement (v0.5 item 19), and
 ## explicitly connects every new tile to what it extends from, never merely
-## by adjacency; and that tapping a source/settlement shows its info tip
-## instead of building or opening a dialog.
+## by adjacency; and that tapping a source/settlement focuses it instead of
+## building or opening any panel.
 ## Run via: godot --headless --script res://scripts/tools/verify_main.gd
 
 var _main: Node
@@ -48,6 +48,9 @@ func _report() -> void:
 	assert(ui_root.mouse_filter == Control.MOUSE_FILTER_IGNORE)
 
 	_test_multi_tile_settlement_draws_one_stack(map_data)
+	_test_glyph_column_collapses_and_expands(map_data)
+	_test_flourishes_fire_once(map_data)
+	_test_columns_never_overlap(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
 	var farm: NodeData = _node_by_id(map_data, "farm")
@@ -224,14 +227,23 @@ func _report() -> void:
 	assert(not state.grid.has(mid_cell), "A second bulldoze must clear the bare road tile")
 	assert(is_equal_approx(state.balance, balance_before_bulldoze), "Bulldoze must not refund")
 
-	# Tapping a settlement (any tool) shows its info tip, not a dialog, and
-	# never changes the grid.
+	# Tapping a node (any tool) never builds there, and no longer opens a text
+	# panel of any kind: the brown detail tip is retired for sources, routes,
+	# storage, hubs and the river alike (v0.6 item 55). What a tap does now is
+	# focus the node, which is what swaps a settlement's glyph column for its
+	# full rows.
 	var grid_size_before_tip := state.grid.size()
-	var tip_panel: PanelContainer = _main.get("_tip_panel")
-	assert(not tip_panel.visible)
+	assert(_main.get("_tip_panel") == null, "The detail tip panel must be gone, not merely hidden")
 	_main.call("_handle_click", village_a.grid_position)
-	assert(tip_panel.visible, "Tapping a settlement must show the info tip")
+	assert(_main.get("_focused_node_id") == village_a.node_id, "Tapping a settlement must focus it, expanding its rows")
 	assert(state.grid.size() == grid_size_before_tip, "Tapping a settlement must not attempt to build there")
+
+	# A source is focusable the same way, but never expands -- it has no
+	# delivery to detail. Its drawn/produced figure lives on its chip.
+	_main.call("_handle_click", farm.grid_position)
+	assert(_main.get("_focused_node_id") == farm.node_id, "Tapping a source must focus it")
+	_main.call("_handle_click", Vector2i(0, 0))
+	assert(_main.get("_focused_node_id") == "", "Tapping empty ground must clear the focus")
 
 	_check_day_clock(state)
 	_check_day_cycle(state)
@@ -634,6 +646,317 @@ func _test_multi_tile_settlement_draws_one_stack(map_data: MapData) -> void:
 	state.active_orders.erase(city.node_id)
 	_main.call("_render_grid")
 	print("Multi-tile bubbles (DEV-02): City E draws 1 stack across 4 cells.")
+
+## A settlement draws ONE column marker whatever its state, and the collapsed
+## and expanded columns are the same height so their rows line up (UI-04). Both halves are invisible to a screenshot taken at
+## the wrong moment, and the collapse is the whole point of the feature -- a
+## regression that quietly drew balloons again would just look like the old
+## build.
+##
+## The severity sort is checked here too, because it decides which chip is
+## at the TOP of the column and which balloon leads an expanded stack, and nothing else would catch it
+## silently reverting to dictionary order.
+func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	var centre: Vector3 = _main.call("_node_center", city)
+
+	# Three open orders, deliberately spanning all three statuses: seafood
+	# gets nothing (red), grain arrives in full but dull (amber), bread
+	# arrives in full and fresh (green).
+	state.active_orders[city.node_id] = {"seafood": 10, "grain": 10, "bread": 10}
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0},
+		"grain": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 500.0},
+		"bread": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0},
+	}
+
+	# Wide enough to take in the column, and far short of the nearest other
+	# node (Harbor is 8 world units away).
+	var span := 2.5
+
+	_main.set("_focused_node_id", "")
+	_main.call("_render_grid")
+	assert(_count_bubbles_at(centre, span) == 1,
+		"A settlement draws ONE column marker, got %d" % _count_bubbles_at(centre, span))
+	var collapsed: Vector2i = _column_viewport_at(centre, span)
+
+	_main.set("_focused_node_id", city.node_id)
+	_main.call("_render_grid")
+	assert(_count_bubbles_at(centre, span) == 1,
+		"Expanding must still be ONE marker, not one per order, got %d" % _count_bubbles_at(centre, span))
+	var expanded: Vector2i = _column_viewport_at(centre, span)
+
+	# The whole point of the layout: collapsed and expanded are the same
+	# column at two widths. Equal heights mean row i sits at the same screen
+	# height in both, so a hover widens the panel around glyphs that do not
+	# move. If these ever diverge the transition stops reading as one object
+	# unfurling and becomes a swap, which is invisible in a static screenshot.
+	assert(collapsed.y == expanded.y,
+		"Collapsed and expanded columns must be the same height (%d vs %d)" % [collapsed.y, expanded.y])
+	assert(expanded.x > collapsed.x,
+		"Expanding must widen the column (%d vs %d)" % [collapsed.x, expanded.x])
+	assert(is_equal_approx(BubbleCanvas.column_x_shift(3), (expanded.x - collapsed.x) * 0.5),
+		"The expanded column must be nudged right by half the width it gained, or the glyphs slide")
+
+	# Severity order: red, then amber, then green.
+	var entries := [
+		{"status": FoodBubbleMarker.Status.GREEN, "requested": 10.0, "delivered": 10.0},
+		{"status": FoodBubbleMarker.Status.RED, "requested": 10.0, "delivered": 0.0},
+		{"status": FoodBubbleMarker.Status.AMBER, "requested": 10.0, "delivered": 10.0},
+	]
+	entries.sort_custom(Callable(_main, "_worse_first"))
+	assert(entries[0].status == FoodBubbleMarker.Status.RED, "Red sorts first")
+	assert(entries[1].status == FoodBubbleMarker.Status.AMBER, "Amber sorts above green")
+	assert(entries[2].status == FoodBubbleMarker.Status.GREEN, "Green sorts last")
+
+	# Within a tier, the bigger shortfall as a FRACTION of what was asked
+	# for comes first -- a village 5 short of 10 is closer to failing than a
+	# city 5 short of 40.
+	var tied := [
+		{"status": FoodBubbleMarker.Status.RED, "requested": 40.0, "delivered": 35.0},
+		{"status": FoodBubbleMarker.Status.RED, "requested": 10.0, "delivered": 5.0},
+	]
+	tied.sort_custom(Callable(_main, "_worse_first"))
+	assert(is_equal_approx(tied[0].requested, 10.0), "The proportionally worse shortfall sorts first")
+
+	_main.set("_focused_node_id", "")
+	state.active_orders.erase(city.node_id)
+	state.last_settlement_status.erase(city.node_id)
+	_main.call("_render_grid")
+	print("Glyph column (UI-04): one marker either way, same height collapsed and expanded, sorted worst-first.")
+
+## No two nodes\' columns may overlap on screen, at their WORST case: every
+## demand line open at once.
+##
+## This is a distance rule derived from the chip geometry rather than guessed.
+## Columns are billboards, so their extent in the camera plane is exactly
+## pixels * pixel_size -- and the camera is orthographic with no yaw, so a
+## world point\'s position in that plane is just its dot product with the
+## camera basis. Two columns collide when those rectangles intersect.
+##
+## It failed before MAX_COLUMN_ROWS existed: a five-chip City E column stood
+## 7.62 units tall and needed 4.4 tiles of clear space above it, where Town D
+## sits 3.5 away and Village C is 3 above Town D. Capping the rows bounds the
+## height at 4.68 and the map clears it. The check matters most for the region
+## roster (§12.1) -- a new map can be authored into this the moment two
+## settlements are placed a few tiles apart.
+func _test_columns_never_overlap(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var camera: Camera3D = _main.get_node("Camera3D")
+	var right := camera.global_transform.basis.x
+	var up := camera.global_transform.basis.y
+	var pixel := FoodBubbleMarker.BASE_PIXEL_SIZE * FoodBubbleMarker.COLUMN_SCALE
+
+	# Worst case: every authored line open at every settlement.
+	var saved := state.active_orders.duplicate(true)
+	for node in map_data.node_placements:
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			state.active_orders[node.node_id] = node.demand.duplicate()
+	_main.call("_render_grid")
+
+	var rects: Array[Dictionary] = []
+	for node in map_data.node_placements:
+		var count := 1
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			count = node.demand.size()
+		var is_source := node.node_type == GameEnums.NodeType.SOURCE
+		var px: Vector2i = BubbleCanvas.column_size(count, false, is_source)
+		var base: Vector3 = _main.call("_node_center", node)
+		base.y += 2.5 if is_source else 3.1
+		# Billboards face the camera, so the sprite spans exactly px * pixel
+		# in the camera plane, anchored by its bottom edge.
+		var u := base.dot(right)
+		var v := base.dot(up)
+		rects.append({
+			"id": node.node_id,
+			"rect": Rect2(u - px.x * pixel * 0.5, v, px.x * pixel, px.y * pixel),
+		})
+
+	for i in rects.size():
+		for j in range(i + 1, rects.size()):
+			var a: Dictionary = rects[i]
+			var b: Dictionary = rects[j]
+			assert(not (a.rect as Rect2).intersects(b.rect),
+				"%s and %s overlap on screen at full demand: %s vs %s -- move them apart or lower MAX_COLUMN_ROWS" % [
+					a.id, b.id, a.rect, b.rect,
+				])
+
+	state.active_orders = saved
+	_main.call("_render_grid")
+	print("Column spacing: all %d nodes clear of each other with every line open (max %d rows)." % [
+		rects.size(), BubbleCanvas.MAX_COLUMN_ROWS,
+	])
+
+## Each status plays its own flourish exactly once on the render after a day,
+## and a new order's pop suppresses all of them (items 57-59).
+##
+## The pop is a tween on a marker that _render_grid destroys and rebuilds on
+## every hover change, day and build -- so the thing that can silently break
+## is not the animation but its bookkeeping: a pending pop that is never
+## cleared would re-fire on every subsequent render, leaving the map twitching
+## whenever the pointer crosses a node. Neither failure shows up in a
+## screenshot.
+func _test_flourishes_fire_once(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	var centre: Vector3 = _main.call("_node_center", city)
+	state.active_orders[city.node_id] = {"seafood": 10}
+
+	var pops: Dictionary = _main.get("_pending_pops")
+	pops[city.node_id] = true
+	_main.call("_render_grid")
+	var marker := _column_marker_at(centre, 2.5)
+	assert(marker != null, "The popping settlement must have drawn a column")
+	assert(marker.scale.x < 1.0,
+		"A popped column must start scaled down, got %.2f" % marker.scale.x)
+	assert(_main.get("_pending_pops").is_empty(),
+		"A render must consume every pending pop, or it re-fires on the next hover")
+
+	# The very next render draws the same column at rest.
+	_main.call("_render_grid")
+	var settled := _column_marker_at(centre, 2.5)
+	assert(settled != null and is_equal_approx(settled.scale.x, 1.0),
+		"A column must not pop again on a later render")
+
+	# A pop the player could not have seen is spent, not banked.
+	_main.set("_bubbles_mode", 2)  # BubblesMode.OFF
+	var off_pops: Dictionary = _main.get("_pending_pops")
+	off_pops[city.node_id] = true
+	_main.call("_render_grid")
+	assert(_main.get("_pending_pops").is_empty(),
+		"A pop must be cleared even when bubbles are off, not saved up")
+	_main.set("_bubbles_mode", 0)  # BubblesMode.GLYPHS
+
+	# Each status gets its own flourish on the render after a day, picked from
+	# the column's WORST line -- the same entries[0] the chip order uses.
+	#
+	# Asserted on what the marker was ASKED to play, not on its transform: a
+	# tween applies nothing until it processes, so the column is still exactly
+	# at rest on the frame it was told to hop. (An earlier version of this
+	# check compared position.y against the node centre rather than the
+	# marker's real rest height of centre + 3.1, so it passed no matter what.)
+	for probe in [
+		{"fresh": 1000.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.HOP, "label": "green must hop"},
+		{"fresh": 500.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NUDGE, "label": "amber must nudge"},
+		{"fresh": 0.0, "delivered": 0.0, "want": FoodBubbleMarker.Flourish.SHAKE, "label": "red must shake"},
+	]:
+		state.last_settlement_status[city.node_id] = {
+			"seafood": {"requested": 10.0, "delivered": probe.delivered, "fresh_sum": probe.fresh,
+				"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 0.0},
+		}
+		_main.set("_day_just_ran", true)
+		_main.call("_render_grid")
+		var m := _column_marker_at(centre, 3.0)
+		assert(m != null, "%s -- no column drawn" % probe.label)
+		assert(m.played == probe.want, "%s, got %d" % [probe.label, m.played])
+		assert(not _main.get("_day_just_ran"),
+			"The render must consume _day_just_ran, or every hover re-plays the map")
+
+	# The payout label lives outside GridVisuals, or _render_grid would destroy
+	# it mid-flight the first time the pointer moved. It also only appears for
+	# a settlement that actually earned: "+§0" would say nothing the shake has
+	# not already said.
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
+	}
+	var fx: Node3D = _main.get_node("Effects")
+	_clear_children(fx)
+	_main.set("_day_just_ran", true)
+	_main.call("_render_grid")
+	assert(fx.get_child_count() > 0, "A paying settlement must float a payout label")
+	assert(fx.get_child(0).text.begins_with("+§"), "The payout label must read as money, got '%s'" % fx.get_child(0).text)
+	_main.call("_render_grid")
+	assert(fx.get_child_count() > 0, "A re-render must not destroy a payout label in flight")
+
+	_clear_children(fx)
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 100.0},
+	}
+	_main.set("_day_just_ran", true)
+	_main.call("_render_grid")
+	assert(fx.get_child_count() == 0, "A settlement that earned nothing must not float a label")
+	_clear_children(fx)
+
+	# The reminder: only settlements whose worst line earned nothing are
+	# recorded for it, and it shakes their markers directly rather than
+	# re-rendering the whole map to move a few of them.
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 100.0},
+	}
+	_main.call("_render_grid")
+	var nagging: Array = _main.get("_nagging_nodes")
+	assert(nagging.has(city.node_id), "A settlement earning nothing must be recorded for the reminder")
+	var by_node: Dictionary = _main.get("_columns_by_node")
+	assert(by_node.has(city.node_id), "The reminder needs the column it is going to shake")
+
+	# Firing it plays the gentler NAG, never the day-end SHAKE.
+	_main.set("_reminder_elapsed", 999.0)
+	_main.call("_tick_reminder", 0.0)
+	assert(by_node[city.node_id].played == FoodBubbleMarker.Flourish.NAG,
+		"The reminder must play NAG, not the day-end SHAKE")
+	assert(_main.get("_reminder_elapsed") < 1.0, "Firing must reset the reminder's clock")
+
+	# A paying settlement is never nagged.
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
+	}
+	_main.call("_render_grid")
+	assert(not (_main.get("_nagging_nodes") as Array).has(city.node_id),
+		"A settlement that paid must not be nagged")
+
+	# Without a day behind it, a render plays nothing at all.
+	_main.call("_render_grid")
+	var quiet := _column_marker_at(centre, 3.0)
+	assert(quiet != null and quiet.played == FoodBubbleMarker.Flourish.NONE,
+		"A render with no day behind it must play nothing")
+
+	# A new order outranks any delivery: one flourish per column, never both.
+	var both: Dictionary = _main.get("_pending_pops")
+	both[city.node_id] = true
+	_main.set("_day_just_ran", true)
+	_main.call("_render_grid")
+	var popped := _column_marker_at(centre, 3.0)
+	assert(popped != null and popped.played == FoodBubbleMarker.Flourish.POP,
+		"A pending pop must outrank the delivery flourish")
+	assert(popped.scale.x < 1.0, "A popped column must start scaled down")
+
+	state.active_orders.erase(city.node_id)
+	state.last_settlement_status.erase(city.node_id)
+	_main.call("_render_grid")
+	print("Flourishes (items 57-61): pop/hop/nudge/shake fire once each, the payout label survives a re-render, and only unpaid settlements get the recurring nag.")
+
+func _clear_children(node: Node) -> void:
+	for child in node.get_children():
+		node.remove_child(child)
+		child.free()
+
+func _column_marker_at(centre: Vector3, radius: float) -> FoodBubbleMarker:
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < radius:
+			return child
+	return null
+
+## The SubViewport size of the single column marker near `centre`.
+func _column_viewport_at(centre: Vector3, radius: float) -> Vector2i:
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < radius:
+			return (child.get_node("SubViewport") as SubViewport).size
+	return Vector2i.ZERO
+
+func _count_bubbles_at(centre: Vector3, radius: float) -> int:
+	var visuals: Node3D = _main.get_node("GridVisuals")
+	var count := 0
+	for child in visuals.get_children():
+		if child is FoodBubbleMarker and Vector2(child.position.x, child.position.z).distance_to(Vector2(centre.x, centre.z)) < radius:
+			count += 1
+	return count
 
 ## The Upgrade tool spends money to double a source's output (DEV-03). The
 ## footprint does not change -- a source already stands on 2x1 -- so nothing

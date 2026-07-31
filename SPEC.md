@@ -80,6 +80,119 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 44. **A settlement's type now decides how much it can ever want.** Village/Town/City were a free-text `kind` label with no mechanical weight, so a "City" was a village that happened to be spelled differently. Each type now carries a **demand cap** -- Village 2, Town 4, City 5 -- alongside the footprint it already had from item 41, so size on the map and appetite on the ledger say the same thing. The cap is 5 rather than the 8 first proposed because there are only five foods in the game and a settlement cannot want the same one twice; City E wanting **all five** is what "the late objective" can actually mean. `GameEnums.SettlementType` and `NodeData.settlement_type` carry the rule, with `kind` demoted to a display label -- a cap keyed off free text is no rule at all. Nothing enforces the cap at runtime: the order book only ever opens lines that are already authored, so `MapData.validate()` is the whole enforcement, and it now rejects a settlement written past its type. Town D and City E were filled to their budgets, which is what makes the cap mean anything: **Town D gains grain (20) and City E gains grain (30) and bread (30)**, taking the region from 12 demand lines to 15. That is what turns source upgrades (item 42) from a single-purpose fix into an economy: grain goes to 85 against the Farm's 80 and bread to 95 against the Bakery's 80, so three of the five sources -- Farm, Bakery, Garden -- now have demand they cannot meet un-upgraded. Milk and seafood keep their slack; reaching them would mean raising an authored amount rather than adding a line, which is a balance decision rather than a structural one. See §4.8, §12.
 
+45. **The region becomes the stage: region 1 is retired to a tutorial, and the main game is a roster of climates.** One region was always the MVP's scope, not the game's, and it has now taught everything it can -- every system in §4 is reachable on it, so the endless efficiency chase (item 0.2.5) is the only thing left to do there. The main game is a **roster of regions**, each unlocked by grading well on the last, each keeping its own best grade/score and its own treasury (a region is a run, not a save file the player carries between maps).
+    What separates one region from another is deliberately **not** which city it depicts. The obvious model here is a map roster themed on cities, where each map's flavour is a street/coast/river silhouette; copying that would make this a city game with food trucks, and it also throws away the one axis this game has and that one does not -- **cargo that degrades, at rates that differ 12x across the food set** (grain 0.5/tile, seafood 6.0). So a region is a **landscape and a climate**, and the climate reaches into the freshness maths: `MapData.climate_decay_mult` scales every food's per-tile decay for the whole map, so the same five foods play differently region to region. A cold region is where seafood finally travels; a hot one is where cool storage stops being optional and short beats clever. Regions are named for the land, not the town (§12.1).
+    Three supporting changes make the roster authorable. First, **terrain becomes a per-cell grid** rather than `river_col`, an int from which `get_terrain(x, _y)` derived a whole column while ignoring `y` entirely -- region 1's river is now authored into that grid like anything else, and `river_col` is retired (§8.1). Second, **§8's original terrain table is superseded**: it gave Mountain "high cost *and* more decay", which is strictly worse than plains in both terms, so no player would ever route through it -- that is a wall, and water is already the game's wall. Mountain is now expensive to build but **preserving** (cold air), which makes the short expensive path genuinely compete with the long cheap one; Snow keeps the cost and gains a **capacity** penalty, which is an axis no other terrain touches (§8.2). Third, a `BLOCKED` terrain gives a map author unbuildable non-water ground -- cliffs, and the walls that turn Oldwall's City into a gated funnel (§8.4).
+    Region 1 itself is **unchanged in content**: same grid, same nodes, same demand, same opening lines. It is relabelled the tutorial region and its river is re-authored into the terrain grid, and nothing about how it plays moves. The §6 chapter list stays the full-game teaching order it always was; the roster is what actually delivers it, one region per lesson rather than one chapter per unlock. See §8, §12.1.
+
+46. **A scripted tutorial stage, gated on doing rather than on pressing Next.** Item 45 labelled region 1 the tutorial, which was true of its difficulty and false of everything else: it teaches nothing. Nine build rules have accreted onto the route drag alone (items 15, 18-22) -- press and *hold* an anchor, and only a source, a hub or an unestablished tile; release only on a hub, a settlement or an unestablished tile; every cell between must be empty ground -- and a player meets all of them at once, on a map showing five sources, five settlements and a 60-second clock. **Millbrook** is a new, smaller region 0 that introduces them one at a time, and region 1 becomes the first free-play region rather than the tutorial (revising item 45's roster on that one point; the roster is otherwise unchanged).
+    **Steps complete when the player does the thing, never on a tap.** Each of the nine steps names a condition over game state -- this road is established, this line filled, this line came in green, no tile is over capacity -- and ends the moment it holds. This is item 40's rule applied to teaching: that item deleted a tap-to-advance because the plaques "were read as something to wait out rather than something to press", and a Next button is the same object with a clearer label. It also means a step cannot be dismissed unread, and that the tutorial is impossible to desynchronise from the map, since the map *is* the progress bar.
+    **The whole step machine is a read-only observer.** Every condition it needs is already tracked: `GameState.filled_lines` (already latched, item 38), `last_settlement_status`, `last_congestion`, `connections`, and `NodeData.upgraded`. No new simulation state, and nothing in `SimulationEngine` learns that a tutorial exists. Completion latches for the same reason `filled_lines` does -- bulldozing a step-1 road on step 7 must not throw the player back to step 1 -- but a broken condition on the *current* step re-shows its instruction, so a mistake made now is still corrected now.
+    **It cannot be failed or lost.** There is no bankruptcy or loss condition anywhere in the build, so this costs nothing to guarantee. Tools are *revealed* step by step rather than disabled with an error, the clock stays off until the step that introduces it, and Bulldoze is available from step 1 as the escape hatch. It is skippable from region select and replayable afterwards, and skipping still unlocks region 1 -- a tutorial that gates content is a toll.
+    Millbrook is authored so the lessons fall out of the map's own numbers rather than being narrated: milk to Village B lands **amber at 68%** on eight tiles, so the player succeeds and is shown that succeeding is not the ceiling; Cool Storage takes the same run to **89%** and green. Grain 65/day down one Dirt trunk against a 60 cap teaches capacity, and milk demand 45 against the Dairy's 40 teaches source upgrades -- two different foods, so "the road cannot carry it" and "the farm cannot make it" are never the same day's problem. `MapData.opening_lines` holds exactly one line here, not item 39's three: that argument was about a free-play map giving the player nothing to weigh, and a scripted tutorial supplies the weighing itself. The order book's deepen/expand alternation (item 40) is disabled on this map, since the step list decides what opens and when. See §12.2.
+
+47. **The map's default layer is glyphs; the bubbles come back on hover or tap.** Every node floated a full balloon per open order, permanently -- and past a couple of orders that buries the thing the balloons are describing. A settlement drew one balloon per line, two to a row (`Main._bubble_column_offset`), so City E's five wrapped into three rows over its own footprint, beside Town D's four; the roads, terrain and route overlay underneath were what paid for it. At rest a node now draws a compact **glyph strip** -- one food silhouette per open order on a small dark plate, each carrying its ✕/!/✓ status mark -- and the full balloons, numbers and freshness bar and all, come back for whichever node the player is hovering or has tapped.
+    **A food had no name on the map, only a colour, and colour could not do the job.** `set_settlement` took an icon colour and an amount and no food name at all, so a single coloured dot was the entire identity of five foods -- and the palette does not support that: milk (`#EDEFE6`) against the cream bubble body (`#F7F0DE`) is a contrast ratio of about **1.02:1**, meaning the milk dot was effectively invisible, and grain (`#D9C36A`) against bread (`#C89A5B`) are adjacent mid-golds. So shape takes over identity. Each food gets one silhouette -- **a wheat ear, a loaf, a carrot, a bottle, a fish** -- used everywhere that food appears, on the source sign and the settlement balloon as well as the strip, which is what makes it learnable rather than decorative: the mark on the Harbor's sign is the mark on City E's bubble. Every glyph is stroked as well as filled, and that stroke is what rescues milk: a near-white bottle on cream stays legible by its edge when its fill does not.
+    **Severity decides the order.** Red, then amber, then green, ties broken by the shortfall as a fraction of what was asked for -- so a village 5 short of 10 outranks a city 5 short of 40, being the closer to failing. The leftmost glyph on a strip, and the first balloon in an expanded stack, is therefore always the line most worth acting on; before this the order was whatever the demand dictionary happened to iterate. This also extends item 30's existing language rather than inventing one, since green already recedes there by washing lighter and outlining thinner.
+    **The strip is not interactive, and nothing new is.** Expansion rides the hover/tap that already opens the info tip (§10.6, §0.4.1) -- there is no new tap target, no picking against billboards, and no sub-rect hit-testing inside a baked texture. Bubbles have never had picking of any kind and still do not.
+    **This is a collapse, which item 37 removed once, and it is a bigger one than that was -- so note honestly what it costs.** "All fresh" hid a settlement's numbers only when every line was green, which is to say it hid good news at the moment it was earned, and it hid it inconsistently while other settlements stayed loud. This hides the delivered/requested figures and the freshness bar at *every* node until one is inspected. Three things carry it. The status mark still gives the verdict -- green is the full amount at or above that settlement's own bonus freshness, which is the same question the bar's tick was answering. It is uniform, so no node is being singled out. And the **Bubbles control becomes three-state -- Glyphs / All / Off** -- so the old dense view is one click away for a player who wants every number on screen at once, which costs almost nothing because both renderers are the same scene. Mobile pays more than desktop here, since hover is free and a tap is deliberate; that asymmetry is real, and the All mode is the answer to it.
+    A node with one open order draws a one-glyph strip, and sources -- one food each (item 0.2.6) -- always do. A source's strip carries no status mark: spent-versus-stocked is already said by the glyph fading, and a ✓ beside it would read as a delivery verdict a source never has. See §10.1, §16.
+
+48. **Icons get four times bigger, a source is always its glyph, and a settlement's text tip is retired.** Three follow-ups to item 47, all from seeing it on a phone.
+    **Size.** A one-glyph strip came to roughly ten screen pixels on a phone-width view of the whole region -- below the point at which any silhouette resolves, so the glyphs were unreadable in exactly the situation they exist for. `STRIP_GLYPH_RADIUS` goes from 19 to **76**. The increase is *native*, not a sprite scale: `setup_glyph_strip` now sizes the marker's SubViewport to fit its contents, so a bigger glyph is drawn at a bigger resolution and stays sharp rather than being a magnified small texture, and a one-glyph source stops carrying a texture wide enough for five. Gap and padding grow well under 4x deliberately -- at full 4x a five-order City would have spanned about four tiles, and keeping the spacing tight holds the widest strip near three while making the row read as one object instead of separate badges.
+    **A source is always its big glyph.** The dark slate sign on a post is retired outright -- `set_source`, `_draw_source`, the outgoing-supply arrow, the stem/foot and the whole `SOURCE_*` palette are deleted, since nothing calls them once a source never expands. A source's identity is the food it makes, and a glyph says that faster and smaller than a sign printing "21/80". What that sign uniquely carried -- how much of today's produce has actually been drawn -- would otherwise have been lost, since the map glyph only distinguishes spent from stocked by going grey, so it moves to the source's hover tip as a "Drawn today: 21/80" line. The source tip stays for a second reason: it is where the player discovers source upgrades exist at all (item 42).
+    **The settlement's detailed description is retired.** Hovering or tapping a settlement expanded its glyph strip into full balloons *and* opened a text panel repeating the same delivery in words -- the balloons already carry delivered/requested, the freshness percentage, and the bar ticked at that settlement's own bonus threshold, so the panel was saying it twice. `_settlement_tip_text` is deleted and a settlement no longer opens the tip at all; the balloons are the detail view. Sources, routes, storage, hubs and bridges keep their tips.
+    Note what the text panel took with it, because the balloons do not carry all of it: the settlement's **`min_freshness`** (the reject threshold -- the bar still ticks `bonus_freshness`, which is the line that pays), the **"May order later"** list of demand lines not yet opened (item 36), and the **"N arrived too spoiled to accept"** rejection figure. The first is inferable from a rejected delivery, but the other two are genuinely gone from the map and now exist only in the day report. If the still-to-come list turns out to be load-bearing for planning, it wants somewhere better than a hover panel anyway. See §10.1, §10.6.
+
+49. **One design language: a vertical column of status-coloured chips, expanding into balloons that share their palette.** Item 48's horizontal strip and item 30's cream balloon were two unrelated looks bolted together, and the strip had a shape problem besides.
+    **The collapsed view is a vertical column of chips, one per open order.** Horizontal was wrong for the map: a five-order City spanned three-plus tiles sideways, straight across whichever neighbour sat beside it -- and settlements crowd each other horizontally far more than vertically, because the space *above* a node is usually empty map. Stacking downward costs nothing anyone else was using. Severity still orders them, so the **top** chip is the line most worth acting on.
+    **A chip is a food glyph on a status-coloured background.** The colour is the point: red, amber and green are readable as a *background* at map distance in a way a corner badge never was. Note this is allowed here precisely because a chip carries **no text** -- item 30 kept status off the balloon body because a saturated ground under dark text forces every status pale enough to read on, which is exactly what made red and green converge. The tint is pulled 42% from slate toward the status colour, which keeps it dark enough that every food glyph holds its contrast: the worst cases are a green carrot on a green chip and gold grain on an amber one, and both survive on the strength of the glyph's light outline (item 47's stroke rule, earning its keep a second time). The ✕/!/✓ mark stays even though the background now says the same thing, because shape is the colourblind guarantee and it should not depend on hue at all.
+    **The balloon takes the same palette.** It was cream with dark text; it is now the chip's dark, status-tinted ground with light text, so the thing a hover expands into is visibly the chip it grew from -- which is what "consistent" has to mean if one turns into the other. Inverting to light-on-dark is also what lets the tint be strong: the constraint item 30 was working around only exists for dark text. `BUBBLE_COLOR`, `STATUS_WASH_ALPHA` and `GREEN_WASH_ALPHA` are gone with the cream.
+    **A source is a different object, by shape as well as colour.** A settlement chip is heavily rounded, status-tinted and carries a status mark; a source chip is **near-square, neutral slate, and carries no status anything** -- a source has no delivery to be judged on and must not look like it does. That reinstates the corner-radius language the retired balloon/sign pair used to carry (item 30), now as the only thing distinguishing two chips rather than two whole silhouettes. See §10.1, §16.
+
+50. **Collapsed and expanded are one column at two widths.** The chips and the balloons were laid out by unrelated machinery -- chips as rows inside one baked texture, balloons as N separate world-space markers -- so their row pitches were computed in different units and could only be lined up by hand. Worse, the balloons' pitch had to fight the camera: at a -60 degree pitch a world-Y step buys only half its length in *screen* separation, which is the whole reason `CAMERA_VERTICAL_COMPENSATION` existed. **Both are now one baked texture**, and the compensation problem is deleted rather than managed -- `STACK_SPACING`, `COLUMN_SPACING`, `CAMERA_VERTICAL_COMPENSATION`, `WORLD_WIDTH`/`WORLD_HEIGHT` and `Main._bubble_column_offset` all go with it.
+    **The layout rule is that nothing the eye tracks moves.** A row is the same height and sits at the same pitch in both states; the food glyph occupies the same leftmost square cell of a row either way; the status mark stays pinned to that cell rather than sliding to the far edge when the row widens. Expanding only *adds* -- the amount, the freshness percentage and the bar, in space a chip does not have. `BubbleCanvas.column_size(count, expanded)` deliberately returns the same height for both, so row *i* lands at the same screen height whichever state it is in, and the balloon column is nudged right by `column_x_shift()` -- exactly half the width it gained -- because the sprite is centre-anchored and widening it would otherwise slide every glyph left. The result reads as the chip unfurling to the right rather than one object being swapped for another, with no animation involved.
+    **One tail per column, not one per row.** Five balloons meant five tails pointing at nothing in particular. The column now hangs a single tail, and it hangs from the *glyph cell's* centre rather than the panel's, so it keeps pointing at the node when an expanded panel widens. It takes the bottom row's colour, since it reads as part of that row; overall severity is already the top chip's job. Sources get no tail at all -- that is a settlement's tell, the way the post used to be a source's.
+    **The expanded column is narrower than what it replaces.** Five orders used to occupy a 2x3 grid roughly 6.2 world units wide; one column is about 3.1 wide and 7.4 tall. Taller, but width is what costs on this map -- settlements crowd each other horizontally, and the space above a node is usually empty. The tallest case is a five-order City at roughly 3.7 tiles, and it is transient. If that proves too much in play the answer is an accordion, expanding only the row under the pointer -- which needs per-row hit-testing, the billboard-picking problem every version of this feature has deliberately avoided. See §10.1, §16.
+
+51. **The freshness bar was unreadable, and reported as "freshness looks 0".** Two faults, both introduced by the redesign rather than by the bar's own logic. **Size:** `BAR_HEIGHT` stayed at the 9px it was authored at for the old 310x150 balloon while rows went 4x bigger and `pixel_size` dropped from 0.01 to 0.0072 -- leaving the bar about 28% *smaller on screen* than before the redesign, inside a row four times the size. It is now 24px. **Contrast:** item 49 inverted the palette to light-on-dark and flipped the bar's colours to translucent white without re-tuning them, leaving the track at 0.17 alpha and the not-yet-counting fill at 0.34 -- two near-identical washes, so a 90% bar looked like an empty one. The track is now a dark recess (black 0.30) cut into the tinted body, and the inert fill lifts to 0.58, which puts a real step between them. The dead `BAR_INSET` (superseded when the bar started taking an explicit rect) goes too.
+    Worth recording what was *not* a bug, since it prompted the report: a line reading "25/30, 90% fresh" with a **red** ✕ is correct. Red means the order came up **short**, not spoiled -- and per §9 a short order pays nothing at all however fresh what arrived was, so that line earned zero. But red beside "90% fresh" reads as a contradiction, and item 52 is why. See §10.1.
+
+52. **A row says how much arrived too spoiled to accept, and how spoiled it was.** The contradiction in item 51's "25/30, 90% fresh, red" was not a display fault -- it was a display *gap*, and the missing number explains the whole row. Two facts about `SimulationEngine.run_day` combine to produce it:
+    - **The freshness shown averages only what was accepted.** `fresh_sum` accumulates in the non-rejected branch alone, so cargo turned away for arriving under `min_freshness` is invisible in that percentage. A line can read 90% while a third of its shipment was binned at 32%.
+    - **A rejected shipment still consumes the day's demand.** `need -= amt` runs *before* the accept/reject branch, so spoiled cargo eats that part of the order and no later candidate path refills it.
+    **How much of a line this can affect is bounded by the map, and that bound was initially got wrong here.** A line gets one candidate path per *source producing that food*, so on a map where every food has exactly one source -- which region 1 is -- a line has exactly one candidate, one freshness value, and is therefore **wholly accepted or wholly rejected**. A row can never show a delivered amount *and* spoiled cargo at once. This item was first written claiming "25/30, 90% fresh" was explained by 5 units spoiling; that is not reachable on region 1, where such a row means the line ran out of supply or hit route capacity with nothing rejected at all. What the rejected line genuinely explains today is the **total** rejection -- "0/25, 25 spoiled at 18%" -- where the whole shipment failed the floor and the row would otherwise say only that nothing arrived. Mixed accept/reject becomes reachable the moment a map gives one food two sources, which the roster already plans (Cold Coast's two Harbors, §12.1).
+    An expanded row now carries a third line -- **"5 spoiled at 32%"** -- in the red accent whatever the row's own status is, since it is unambiguously bad news. The amount alone would say a shipment was lost; the freshness with it says *how far* under the line it came, which is the difference between a route that is marginally too long and one that was never going to work. A row with nothing rejected is unchanged, and a total rejection ("0/25, 25 spoiled at 18%") drops the accepted-freshness line entirely, there being nothing accepted to average.
+    This needs one new field: `rejected_fresh_sum` on `last_settlement_status`, amount-weighted exactly like `fresh_sum`. It also restores, in a better place, one of the three things item 48 knowingly dropped when the settlement's text tip was retired -- that tip's "N arrived too spoiled to accept" line. `BALLOON_ROW_WIDTH` widens 420 -> 560 to fit the third line at a readable size; the row has vertical room to spare and none horizontally, and this only affects the hovered node. See §10.1, §16.
+
+53. **The freshness bar marks the refusal floor as well as the bonus target.** The bar carried one tick, at `bonus_freshness` -- so it said where the *bonus* starts while saying nothing about where *refusal* starts, which is the line item 52's spoiled cargo actually failed. Both numbers are per-settlement and neither is guessable: a Village refuses under 35 and pays a bonus over 80, City E refuses under 55 and pays over 90, so "78% fresh" is a comfortable pass at one and a near miss at the other. A bar showing only one of the two lines is answering half the question it exists to answer (item 30's original argument for having the tick at all).
+    **The floor is drawn as a zone, not a second tick.** Two marks of the same kind sitting on one bar would be ambiguous -- nothing would say which was which, and the two mean opposite things (one is a floor you must clear, the other a target you want to beat). So `min_freshness` gets a translucent red band from the bar's left edge up to the threshold, closed by a crisp red edge, while `bonus_freshness` keeps its bare pale tick. The shading is what tells them apart at a glance: the mark with a band to its left is the floor. The band is painted **over** the fill rather than under it, so it stays visible however full the bar is -- otherwise it would vanish exactly on the healthy lines where the player is checking how much headroom they have.
+    Needs `min_freshness` plumbed to the row alongside `bonus_freshness`; both were already on `NodeData` and only `bonus_freshness` was being passed. See §10.1.
+
+54. **A row prints what it earned, because the colour was already the payment tier and never said so.** The three row colours have always been the three payout states of §9 -- red earns nothing, amber earns the line, green earns the line plus `FRESHNESS_BONUS_RATE` again -- and nothing on screen ever used the word. So a red row beside "90% fresh" read as a verdict on *freshness*, which is the number sitting next to it, rather than on *earnings*. That misreading is what items 51-53 were each circling without naming.
+    The freshness line now carries the money beside it: **"94% fresh · +§187"**, **"68% fresh · +§150"**, **"90% fresh · §0"**. The two facts share a line deliberately -- pairing them is what stops the freshness reading as the reason on its own -- and only the money half is tinted, green when the line paid and red when it did not, so the colour of the number matches the colour of the row that number explains.
+    A short line also names what it gave up, as **"§240 withheld"**, on the same third line item 52 uses for spoiled cargo. The two never both appear: when cargo was rejected that is the more actionable diagnosis and it wins, since it says *why* the line came up short rather than merely what the shortfall cost.
+    **The figures are recorded by the simulation, not re-derived by the UI.** `run_day`'s payout block already computed exactly this per line; it now writes `earned` and `withheld` onto `last_settlement_status` as it goes. Re-deriving them in `main.gd` would mean maintaining a second copy of the payout rule, and the failure mode of that is a row confidently stating a payment the treasury never made. `verify_mvp` asserts the reconciliation directly: per-line earnings sum to `report.income`, per-line withheld to `report.withheld_income`, a line never records both, and a short line earns nothing while a full one always earns something.
+    Worth noting what this does *not* change: the mapping itself. A proposal to invert it -- green for the unpaid case, red for the bonus -- was declined. The rest of the map already reads red as a problem (congestion markers go orange at 90% of capacity and red at 100%; the report prints losses in red), and item 30's emphasis logic runs on the same convention, red drawing a halo to catch the eye while green recedes by washing lighter and outlining thinner. Inverting only the settlement rows would make the map contradict itself and would make the best outcome shout while the failure faded. See §9, §10.1.
+
+55. **The hover/tap detail panel is retired everywhere, and a source prints its own draw-down.** The brown panel that followed the cursor described whatever was under it -- a source's produce, a route's capacity and upkeep, a hub's last-run split, storage protection, the river's crossing price. On a map this dense it covered the very thing it was describing, and item 48 had already retired it for settlements on the grounds that the rows say it better. The same argument finishes the job: `_tip_panel`, `_tip_label` and every branch that built their text are gone, for sources, routes, storage, hubs, bridges and the river alike.
+    **What the hover still does is set the focus.** `_update_tip` becomes `_update_hover`, keeping the part that matters -- deciding which node is being inspected, which is what swaps a settlement's chips for its full rows. Only the panel was removed, not the interaction.
+    **A source chip now carries "21/80"** -- drawn today over daily produce -- under its glyph. That figure has been homeless twice: it lived on the sign item 48 retired, moved to the tip, and the tip is now gone too, so the chip is the only place left and is where it belonged anyway. Without it the map distinguished a spent source from a stocked one only by the glyph going grey, which says *whether* anything is left but never *how much*. The glyph shrinks to 0.68 and lifts 12px to make room; a first pass at 0.74 and 20px printed the number straight over the wheat's tail and the bottle's body, so the band is now worked back from the chip's own geometry rather than guessed.
+    **What this costs, stated plainly.** The panel was the only home for several things, and they do not all come back: a route's capacity/upkeep readout and its "Build Hub could go here" / "Bridge could span this" prompts, the hub-cap and bridge-cap warnings, storage upkeep and protection distance, the river's §40 notice, and -- most substantially -- **HUB-07 entirely**, the hub's last-delivery split by source, which existed nowhere else. Congestion still shows as map markers and the day report still carries the aggregate figures, but per-tile inspection is gone from the game.
+    Two things it does *not* cost, both checked: source upgrades stay discoverable, because the Upgrade tool's hint bar already says a source can be expanded (now with the §300 price added), and `_do_upgrade_source` already toasts "already expanded" and "not enough treasury" without the panel's help. See §10.1, §10.7.
+
+56. **A source row prints its figure at the settlement's size, which means it has to be a row.** Item 55 stacked the draw-down under a shrunken glyph inside the square chip, at 36px against the settlement amount's `int(192 * 0.34)` = **65px** -- so the two numbers on the map were nearly half a size apart. Matching them is not a constant change: at 65px `"21/80"` measures **174px** and an upgraded source's `"110/180"` measures **248px**, against a square chip's 168px interior. Stacked, something had to give, and both candidates were wrong -- shrinking the glyph undoes the 4x it was given for legibility (item 48), and shrinking the figure is the thing being matched.
+    So a source chip becomes a **row**, laid out exactly like an expanded settlement row: full-size glyph in the leftmost square cell, figure to its right, sized by the *same expression* the settlement uses so the two cannot drift apart. `SOURCE_ROW_WIDTH` is 480 -- the widest figure a source can ever show is `"180/180"` at 248px and the text band is 248px wide at 468, so twelve more is there purely so font-metric variation cannot push that case into a shrink.
+    This also removes a small asymmetry rather than adding one: a source row and the settlement row beside it are now the same object at two purposes, glyph-then-numbers either way, and a source is still told apart by what item 49 gave it -- neutral slate instead of a status tint, near-square corners, no status mark, no tail. `column_size` and `column_width` take a `source` flag, and `setup_glyph_column` takes `is_settlement` rather than `has_tail`, since the tail and the width are two consequences of the same fact. See §10.1.
+
+57. **A new order pops its column in.** Filling an order opens the next one immediately (§6), announced by a toast -- but the toast is in the corner and the thing that actually changed is a new chip on a settlement somewhere on the map, which appeared with no more ceremony than a re-render. The column now springs in from 0.55 scale with a slight overshoot, over 0.34s, scaled about the marker's own origin so it grows **up out of the settlement** rather than inflating around its own middle.
+    **This is not the thing item 30 ruled out, and the distinction is the whole justification.** That item kept the red halo static because on day one every settlement is red and a screen of pulsing bubbles is worse than no emphasis at all. A pop marks a **discrete, earned, rare** event -- one per order the player just filled -- and stops on its own. Nothing here repeats, idles or draws attention to a state the player is already living with.
+    **The bookkeeping is the part that can break, so it is what the dev check covers.** `_render_grid` destroys and rebuilds every marker on each hover change, day and build, so a pending pop that is never cleared would re-fire constantly and leave the map twitching whenever the pointer crossed a node. `_pending_pops` is therefore filled where the order opens and **cleared whole by the next render**, whether or not that render drew anything -- a pop the player could not have seen (bubbles off) is spent, not banked for whenever they switch them back on. `verify_main` asserts all three: the column starts scaled down, the pending set is empty afterwards, and a later render draws it at rest.
+    Fixed alongside, because it was noise this same machinery introduced: `BubbleCanvas` was authored with full-rect anchors *and* explicitly resized by `_apply`, which drew a "non-equal opposite anchors will have their size overridden" warning on **every marker built** -- 241 of them in one dev run. Full-rect anchors would size the canvas from the SubViewport a layout pass later, which is a pass too late when the bake is immediate, so the anchors go and the explicit size stands alone. See §10.1.
+
+58. **A bigger pop, and a small hop for a line that paid its bonus.** The pop starts from 0.30 scale over 0.42s rather than 0.55 over 0.34s. Starting smaller does two things at once, since `TRANS_BACK`'s kick is proportional to the range it interpolates: the travel is longer *and* the overshoot deeper, peaking near 1.07 where 0.55 only reached about 1.045.
+    **Green gets its own verb.** A settlement holding a line delivered in full at or above its bonus freshness -- the tier that pays 25% extra (§9) -- hops on the render that follows the day: up 0.5 world units over 0.16s, back down over 0.22s with a bounce on the landing. **Scale is the pop's verb and position is the hop's**, deliberately, so a new order and a good delivery never look like variants of one another.
+    The height is small by design and the camera makes it smaller: at a -60 degree pitch the up vector is (0, 0.5, -0.866), so a +0.5 world-Y step reads as **0.25 units of screen rise** against a 1.38-unit chip -- about 18%. That is what keeps five settlements hopping at once reading as a flourish rather than a disturbance, which is the failure mode item 30 warned about when it kept the red halo static.
+    **A pop outranks a hop**: one flourish per column, never both, since playing them together on one marker just reads as a stumble.
+    **The green test is not recomputed.** `_day_just_ran` is a flag rather than a second pending-set, because `_render_settlement_bubbles` already derives each line's status; deriving it again here would be a second copy of a rule §9 owns, which is exactly how a display starts disagreeing with the treasury. Like `_pending_pops`, the flag is cleared by the render it arms -- otherwise every settlement with a green line would hop again on every hover, day and build. `verify_main` asserts the hop fires, the flag is consumed, and a pending pop suppresses the hop.
+    **Note this fires every day a line is green, not only when one first turns green.** That is the reading of "a small jump for green icons", and it makes the day rollover a small payday beat. If it proves too busy late on, when most lines are green most days, the tighter version is to hop only on a line that was *not* green yesterday -- which needs a per-line previous status kept on `GameState` and is a different feature. See §10.1.
+
+59. **Every tier gets a flourish, and they form a vocabulary rather than three settings of one motion.** Red and amber had nothing; only green hopped. Adding two more amplitudes of the same hop would have said the three outcomes differ by degree, and §9's do not -- amber and green are neighbours (both paid, one paid more) while red is a different kind of day (paid nothing at all). So **the axis carries the meaning**:
+    | Flourish | Motion | Means |
+    | --- | --- | --- |
+    | POP | scale, springing from 0.18 | a new order opened |
+    | HOP | up 1.1 world units, bounce landing | the line paid its bonus |
+    | NUDGE | up 0.45, soft landing | the line paid, no bonus |
+    | SHAKE | 4 damped swings, ±0.40 horizontal | the line paid nothing |
+    Vertical says *this paid* and its height says how well; horizontal says *this did not pay* and is deliberately the odd one out. Scale stays reserved for POP so a new order never reads as a variant of a delivery.
+    **Everything is bigger.** Pop starts at 0.18 rather than 0.30 (which lengthens the travel *and* deepens the overshoot, `TRANS_BACK`'s kick being proportional to its range); the hop doubles to 1.1 world units, about 40% of a chip's screen height once the camera's -60 degree pitch has taken its half. The shake needs no such compensation -- the camera has no yaw, so horizontal offsets map 1:1 onto screen X and read at their stated size.
+    **The flourish is chosen by the column's worst line**, `entries[0]` -- the same sort that decides which chip sits on top, so the column's motion and its top chip always describe the same line. One flourish per column, and a pending pop outranks all three.
+    **The risk worth naming: red is not only an outcome, it is the resting state of anything not yet connected.** A settlement with an open order and no road is red every day until the player reaches it, so early on, and after every expansion, several columns will shake on every rollover. That is much closer to what item 30 refused than the hop is. If it grates, the fix is to shake only a line that *regressed* -- green or amber yesterday, red today -- which needs a per-line previous status on `GameState` and is a different feature from this one.
+    A note on the check: `verify_main` now asserts what a marker was **asked** to play, via `FoodBubbleMarker.played`, not its transform. A tween applies nothing until it processes, so a column is still exactly at rest on the frame it was told to hop -- and item 58's assertion compared `position.y` against the *node centre* rather than the marker's real rest height of centre + 3.1, so it passed regardless of what happened. The decision is the part that can break; the interpolation is Godot's. See §10.1.
+
+60. **A settlement floats what it earned when the day resolves.** `+§337` rises beside the column over 1.5s and fades out. The expanded row already prints per-line earnings (item 54), but that needs a hover held at the right moment; this is the at-a-glance version, and it appears at the one instant the number actually changes.
+    **Only a settlement that earned anything gets a label.** `+§0` would be a second way of saying the nothing the shake already says, and five zeroes floating up a map the player is still wiring together is noise rather than feedback.
+    **Effects need somewhere that survives a re-render.** `_render_grid` clears `GridVisuals` wholesale on every hover, day and build, so a label parented there would vanish mid-flight the first time the pointer moved. A sibling `Effects` node holds one-shot visuals instead, and they free themselves when their tween ends. `verify_main` asserts exactly that: a label appears, and a second render does not destroy it.
+    The figure is summed from the per-line `earned` the simulation recorded (item 54), not recomputed -- the same reason that item put it there. The label draws with depth testing off and a raised render priority, since a payout that slips behind a chip for half its flight reads as a glitch rather than a flourish. See §10.1.
+
+61. **Red repeats; the others do not.** A settlement whose worst open line earned nothing shakes again every **20 real seconds**, at a little over half the day-end amplitude and one swing fewer -- recognisably the same complaint, quiet enough to live with.
+    **Replaying every flourish on a timer was considered and rejected.** At one firing per 10s that is six a day per settlement, roughly thirty a minute across region 1, replaying information that has not changed since the day resolved. The specific casualty would be the shake: it is a *warning*, and a warning that repeats regardless of anything changing becomes wallpaper within a session. That is item 30's objection almost word for word. Red is the one status worth saying twice, because amber and green are verdicts already delivered while red is a standing call to action -- and it is also the resting state of every settlement the player has not reached yet, which is exactly what a reminder should point at.
+    **Timed in real seconds, unscaled by `DAY_SPEEDS`.** This is a claim on the player's attention, not an event in the simulation, so it should not arrive three times as often because they set the clock to 4x. It shares the day clock's guard -- a stopped clock means the game is not running, and nagging someone who has deliberately paused is pestering -- and does nothing when bubbles are off.
+    **It shakes markers directly rather than re-rendering.** `_render_grid` rebuilds every visual on the map; doing that every 20 seconds to move a handful of columns would be absurd. So the render records `_columns_by_node` and `_nagging_nodes` as it draws, and the reminder reads those. `_nagging_nodes` is filled from `entries[0].status` -- the worst line, the same one the column already expresses -- so the reminder never re-derives a rule §9 owns. Both are cleared at the top of each render, since the markers they point at are about to be freed. See §10.1.
+
+62. **The payout label is sized against what sits beside it.** Cap height on screen is `font_size * pixel_size`, and the first version came to `88 * 0.004` = **0.35 world units** -- against a 1.38-unit chip, and smaller than the 0.47-unit amount text printed *inside* a row. It was smaller than the number it was announcing, which is why it read as an afterthought. Now `128 * 0.0075` = **0.96**, about 70% of a chip and twice the text inside one. Kept as a large font at a small `pixel_size` rather than the reverse, since `font_size` is what the glyphs are actually rasterised at. Rise and duration grow with it (2.3 units over 1.7s) so the motion does not look cramped under bigger type, and a short scale-in from 0.65 lets a label this size arrive rather than blink on.
+    **Left-aligned, not centred, and that is the part worth recording.** Centred text was tried first and looked fine on `+§187` -- but the overlap scales with the amount, because half of a longer string reaches further back: `+§1870` grew straight over the chip's right edge. Anchoring the label's *left* edge just past the chip's half-width (208px * 0.0072 / 2 = 0.75, so an offset of 0.95) makes the clearance identical whatever the settlement earned. Verified by screenshotting the real scene with a short amount, a long one, and the busiest node on the map, rather than by arithmetic alone. See §10.1.
+
+63. **A column wraps rather than growing, and a rule now checks that no two can overlap.** Chips from neighbouring settlements ran into each other on a played map. The cause is arithmetic, not chance: a column is bottom-anchored above its node and grows upward, while the camera turns one tile of world Z into only `2 * 0.866` = **1.73 units of screen rise**. So a column needs `height / 1.73` tiles of clear space above it --
+    | Chips | Column height | Tiles of Z needed |
+    | ---: | ---: | ---: |
+    | 3 | 4.68 | 2.7 |
+    | 4 | 6.15 | 3.6 |
+    | 5 | 7.62 | 4.4 |
+    -- and region 1 does not have that anywhere it matters: Village C sits 3 tiles above Town D (4 lines), and Town D 3.5 above City E (5 lines), with all three within a column-width horizontally. **Moving the nodes was rejected**: item 41 already established that re-anchoring a settlement silently changes its delivery distances and therefore its difficulty, and these are shipped positions the whole `difficulty_of` ranking is calibrated against.
+    So the column is bounded instead. `MAX_COLUMN_ROWS = 3`, and further chips flow into a second column rather than a taller one. **Nothing is hidden** -- every open order still has its chip, severity order still puts the worst top-left, and the height stops at 4.68 units, needing 2.7 tiles, which every pair on the map clears. Width grows in exchange, and width is the cheap axis: two columns collide only when they overlap on **both**, so settlements far enough apart vertically never do however wide they get.
+    **The rule itself is now a check.** `verify_main._test_columns_never_overlap` opens every authored demand line at once and asserts no two nodes' column rectangles intersect. It is exact rather than approximate: columns are billboards, so their extent in the camera plane is precisely `pixels * pixel_size`, and an orthographic camera with no yaw puts a world point in that plane at its dot product with the camera basis. Raising `MAX_COLUMN_ROWS` back to 5 makes it fail and name **villageC and townD** -- the same pair that collided on screen. This matters most for the region roster (§12.1): a new map can be authored into this the moment two settlements are placed a few tiles apart, and now it will say so. See §10.1, §12.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1099,11 +1212,18 @@ satisfaction = demand_fulfillment_score
 
 The game should introduce systems gradually.
 
+Progression runs at two scales. **Within** a region, the order book below paces
+demand one line at a time. **Across** regions, the roster in §12.1 unlocks a
+new landscape and climate each time the player grades well on the last; the
+chapter list at the end of this section is the teaching order that roster
+delivers.
+
 ### Gradual demand: orders open as deliveries earn them (added in v0.6, revised in items 38-40)
 
-The chapter list below is the full-game shape. On the single MVP region the
+The chapter list below is the full-game shape. On any free-play region the
 same intent is delivered by the order book, which paces one map instead of
-six levels:
+six levels (the scripted tutorial, §12.2, is the exception -- there the step
+list decides what opens, and the alternation is switched off):
 
 ```text
 fill an order  ->  a new order opens, straight away
@@ -1378,7 +1498,7 @@ D: poor delivery quality
 
 Terrain should support routing decisions but not dominate the game.
 
-### MVP terrain types
+### Original MVP terrain types (SUPERSEDED by §8.2, kept for history)
 
 | Terrain | Cost effect | Freshness effect | Design purpose |
 |---|---:|---:|---|
@@ -1388,18 +1508,126 @@ Terrain should support routing decisions but not dominate the game.
 | River | Bridge required | Normal | Creates chokepoints |
 | Snow | Medium-high cost | More decay for fresh foods | Supports storage puzzles |
 
+Only Plains and River were ever built (TERR-01). The rest were never
+implemented, and when the roster in §12.1 came to need them the table above
+turned out not to describe decisions the player would ever actually take --
+see §8.2 for what replaces it and why.
+
+### 8.1 Per-cell terrain grid (added in v0.6 item 45)
+
+Terrain is a **per-cell grid on `MapData`**, not a derived property:
+
+```text
+MapData.terrain : PackedByteArray   # grid_size.x * grid_size.y, row-major
+MapData.terrain_at(x, y) -> TerrainType
+```
+
+This replaces `river_col`, an exported int from which `get_terrain(x, _y)`
+answered for a whole column while ignoring `y` outright. That was exactly
+enough terrain for one region with one straight river down it, and no more:
+a ridge, a coastline, a delta or a wall cannot be expressed as "column N".
+Region 1's river is re-authored as WATER cells in its own grid, so it stays
+identical on screen while ceasing to be a special case in code. `river_col`
+and `is_river(x, y)` are retired; the water test is
+`terrain_at(x, y) == WATER`.
+
+`GameEnums.TerrainType` keeps `PLAINS = 0` and `RIVER = 1` at their existing
+values so authored data does not shift under the change (`RIVER` is aliased
+to `WATER`, its clearer name now that it covers sea inlets and delta
+channels too), and appends `FOREST`, `MOUNTAIN`, `SNOW`, `BLOCKED`.
+
+**Validation** (`MapData.validate()`, run by the dev checks, not at runtime)
+gains three rules, because a terrain map can be authored into an unplayable
+state in ways a node list cannot:
+
+- `terrain.size()` must equal `grid_size.x * grid_size.y`.
+- No node footprint may sit on WATER or BLOCKED ground.
+- **Every node must have at least one buildable orthogonal neighbour.** A
+  source walled in by cliffs can never be connected to anything, and the
+  order book would then offer lines against it forever.
+
+Note `MapData.difficulty_of` still ranks lines by *straight-line* distance to
+the nearest producing source, and so does not know a mountain is in the way.
+That stays deliberate and stays correct for its purpose: it ranks the problems
+a map poses, and on a terrain map the ranking is simply coarser than the
+routes the player will actually draw.
+
+### 8.2 Terrain modifiers (supersedes the original table)
+
+| Terrain | Build cost | Upkeep | Decay | Capacity | Design purpose |
+|---|---:|---:|---:|---:|---|
+| Plains | 1.0x | 1.0x | 1.0x | 1.0x | Default |
+| Forest | 0.75x | 1.0x | 1.15x | 1.0x | Cheap ground that costs a little freshness |
+| Mountain | 3.0x | 1.5x | **0.6x** | 1.0x | Short and expensive vs. long and cheap |
+| Snow | 1.2x | 1.5x | **0.5x** | **0.6x** | Preserves well, moves badly |
+| Water | unbuildable except at a crossing (flat §40, `RIVER_BRIDGE_COST`) | — | 1.0x | 1.0x | Chokepoints |
+| Blocked | unbuildable, no exception | — | — | — | Cliffs, walls, gated approaches |
+
+These plug into the multipliers §4.1 already writes down and has never used
+(`terrain_cost_multiplier`, `terrain_decay_multiplier`), plus an upkeep and a
+capacity multiplier on the same per-tile basis.
+
+**Why Mountain now preserves food.** The original table charged mountain
+ground more money *and* more freshness. Nothing is traded there -- it is worse
+on both axes than going around, so a rational player never builds on it and
+the terrain is functionally a wall. Water is already the game's wall, and it
+is a better one because a crossing is purchasable. Making mountain ground
+expensive but **cold** turns it into the game's first genuine cost/quality
+trade: a milk or seafood run over a ridge can beat the valley detour on
+freshness while losing on money, and which one wins depends on the food, the
+distance, and whether the settlement pays a bonus tier -- a decision, not a
+no-brainer. It also gives §4.3's storage a rival, since terrain becomes a
+second way to protect cargo.
+
+**Why Snow is not a second mountain.** Both preserve, so Snow needs its own
+identity: it is the only terrain that touches **capacity**. A snow tile moves
+60% of its level's rated throughput (36 / 96 / 240 for Dirt / Paved / Main),
+which pressures route upgrades and parallel roads instead of the treasury.
+
+**Forest is unchanged in intent** -- cheap ground bought with a little decay,
+already a trade-off as originally written.
+
+### 8.3 Regional climate (added in v0.6 item 45)
+
+```text
+MapData.climate_decay_mult : float = 1.0    # scales every food's per-tile decay
+```
+
+Applied once, on top of per-terrain decay, for the whole map. This is the
+roster's main instrument (§12.1): the food set is fixed at five, and a
+multiplier on decay re-ranks all five at once without authoring a single new
+food. At 0.75 a cold region makes seafood (6.0/tile) routable across a map for
+the first time; at 1.4 a hot one puts grain in the position seafood normally
+occupies. Region 1 is 1.0 and plays exactly as it does today.
+
+Deliberately a single scalar rather than a per-food table: per-food would let a
+region quietly redefine what a food *is*, and the point is that the player's
+knowledge of the food set carries between regions while the answer changes.
+
+### 8.4 Blocked ground
+
+`BLOCKED` is unbuildable ground that is not water, so it has no crossing price
+and no bridge -- there is no version of the map where a route gets through it.
+Water says "pay §40 or go around"; blocked ground says "go around". It exists
+so a map can shape an approach rather than merely tax it, which is what makes
+Oldwall's gates (§12.1) a funnel instead of a toll.
+
 ### Terrain example
 
 ```text
 Direct mountain route:
-Short, expensive, higher freshness loss.
+Short, expensive to build and maintain, but the cargo arrives fresher.
 
 Valley route:
-Longer, cheaper, lower freshness loss.
+Longer, cheap, and every extra tile costs freshness.
 
 Cool Storage route:
-Extra building cost, better delivered quality.
+Extra building cost, better delivered quality, works on any terrain.
 ```
+
+The three now genuinely compete, which the original version of this example
+did not: with mountains costing both money and freshness, the valley route
+won on every axis and the choice was decorative.
 
 ---
 
@@ -1460,8 +1688,67 @@ The main screen should show:
 - Route congestion or capacity warnings
 - Freshness warnings
 - Hub last-delivery hover details
-- Settlement last-delivery info on hover/tap
+- Settlement last-delivery detail, as balloons on hover/tap (§10.1)
 - Top-left zoom/pan controls (§10.7)
+
+#### The map layer: chips at rest, balloons on inspection (v0.6 items 47-49)
+
+At rest every node draws a **vertical column of chips** -- one food glyph per
+open order on a status-coloured background. The full balloon comes back only
+for the node the player is hovering or has tapped.
+
+```text
+   collapsed                 expanded (hover/tap)
+   ,-------.                 ,-------.--------------.
+   | ✕fish |                 | ✕fish |  0/25        |
+   `-------'                 `-------'--------------'
+   ,-------.                 ,-------.--------------.
+   | ✕wheat|                 | ✕wheat| 25/30        |
+   `-------'                 `-------' 90% fresh    |
+                                       5 spoiled at |
+                                       32%  [#=|==] |
+   ,-------.                 ,-------.--------------.
+   | ✓loaf |                 | ✓loaf | 30/30        |
+   `---v---'                 `---v---'--------------'
+   Village C                 Village C
+
+   Same row height, same pitch, same glyph cell, same tail. Expanding
+   only widens each row to the right -- nothing already on screen moves.
+   On the bar, # is the refusal floor (min_freshness, shaded from the
+   left edge) and | is the bonus target (bonus_freshness).
+```
+
+- **A glyph, not a colour, says which food.** A balloon carries no food name,
+  so colour alone identified all five -- and it cannot: milk on the old cream
+  body was a contrast ratio of about 1.02:1, and grain and bread are adjacent
+  golds. Each food has one silhouette: **wheat ear, loaf, carrot, bottle,
+  fish**, stroked as well as filled so a pale or same-hued glyph still reads.
+- **The chip's background says the status.** Red, amber and green read as a
+  background at map distance in a way a corner badge does not. Allowed here
+  because a chip carries no text -- item 30's rule against a saturated body
+  exists only under *dark* text. The ✕/!/✓ mark stays regardless: shape is
+  the colourblind guarantee and must not depend on hue.
+- **Collapsed and expanded are one column at two widths** (item 50). Same row
+  height, same pitch, same glyph cell, same tail -- expanding only widens each
+  row rightward to add the amount, the freshness and the bar. Both are a
+  single baked texture, which is what makes that alignment exact rather than
+  hand-tuned.
+- **Order is severity**: red, then amber, then green, ties broken by the
+  shortfall as a fraction requested. The **top** chip is the line most worth
+  acting on.
+- **Vertical, not horizontal.** A five-order City spanned three-plus tiles
+  sideways and crossed its neighbours; the space above a node is usually
+  empty map.
+- **A source is a different object**: near-square corners, neutral slate, no
+  status tint, no status mark and no tail -- it has no delivery to be judged
+  on. It never expands, and its used/produced figure lives in the hover tip.
+- **A settlement opens no text tip** (item 48). The balloons are the detail
+  view. Sources, routes, storage, hubs and bridges keep theirs.
+- **Nothing new is tappable.** Expansion rides the hover/tap that already
+  opens the info tip (§10.6).
+- **Bubbles is a three-state control -- Glyphs / All / Off.** All restores
+  always-on balloons for every node, for a player who wants every number on
+  screen at once.
 
 ### 10.2 Route drawing UI
 
@@ -1562,7 +1849,7 @@ Top to bottom:
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
-- **Bubbles On/Off (added in v0.4):** a toggle button hides or shows every source/settlement speech bubble (§10.1/UI-01) at once. A busy network can crowd many bubbles together; toggling them off leaves the routes, storage, and hubs visible without needing to zoom out or pan away.
+- **Bubbles: Glyphs / All / Off (added in v0.4, made three-state in v0.6 item 47):** cycles the map's node layer. **Glyphs** is the default -- a compact glyph strip per node, with the full balloons appearing only for whichever node is hovered or tapped. **All** restores the older behaviour of every balloon being on screen at once, for a player who wants every number visible while optimising. **Off** hides the layer entirely, leaving routes, storage and hubs clear without zooming out.
 - **Legend:** collapsed by default, since it is reference material rather than a control. Expanding it scrolls it into view.
 
 None of this depends on a mouse wheel or keyboard, so the game stays playable and testable from a phone browser. These controls work identically with mouse and touch input. They coexist with the existing tap-to-build and hover/tap-to-inspect interactions -- pressing a control never triggers a tile action underneath it. World-tile input handling relies solely on Godot's touch-to-mouse emulation (the default `emulate_mouse_from_touch` project setting); the raw touch event is not independently routed to tile actions, since it bypasses Control consumption and would otherwise leak through pressed buttons.
@@ -1634,6 +1921,10 @@ Profit increased by 18%.
 ## 12. MVP Scope
 
 The first playable version should be small.
+
+This section describes **region 1 only**, which is now the first free-play
+region. The main game's stages are a roster of further regions (§12.1), and
+the scripted tutorial that precedes them all is §12.2.
 
 ### MVP map
 
@@ -1737,6 +2028,286 @@ it (§4.4).
 The first playable version has no save persistence, delivery animation,
 chapter tutorial sequence, Central Hub, source upgrades, or random events. It
 does retain last-day flow records in memory for hub and settlement popups.
+
+---
+
+## 12.1 Region Roster: the main-game stages (added in v0.6 item 45)
+
+§12's single region was the MVP's scope, not the game's. Every system in §4 is
+now reachable on it, which means it has taught everything it can and only the
+endless efficiency chase is left there. The main game is a **roster of
+regions** fronted by a scripted tutorial stage (§12.2); region 1 is unchanged
+in content and becomes the first free-play region.
+
+### 12.1.1 What separates one region from another
+
+A region is a **landscape and a climate**, not a place. The nearby model for a
+map roster is one themed on cities, where each map's character is a street,
+coast or river silhouette; following that would make this a city game that
+happens to move food, and it would leave unused the one axis this game has and
+that model does not -- **cargo that degrades, at rates differing 12x across the
+food set**. So each region combines:
+
+1. **A climate** (`climate_decay_mult`, §8.3), which re-ranks all five foods at
+   once. This is the primary instrument. The same five foods, the same player
+   knowledge, a different answer.
+2. **A landscape** (the terrain grid, §8.1-8.4), which decides where roads can
+   go and what they cost.
+3. **A binding constraint** -- exactly one system per region promoted from
+   background detail to the thing the map is about. Region 1's is freshness;
+   the others take turns.
+
+Regions are named for the land. Each keeps **its own best grade, best score and
+7-day average** (§7.5, §12's endless chase), and **its own treasury**: a region
+is a run, not a save the player carries between maps. Nothing unlocks
+permanently across regions -- every map starts at `STARTING_FUNDS`, which is
+what keeps a late region a puzzle rather than a formality funded by an earlier
+one.
+
+Each region authors its own `opening_lines`; the order book (§6) paces it from
+there with no further authoring, exactly as it does today.
+
+### 12.1.2 The roster
+
+| # | Region | Climate | Grid | Landscape | Binding constraint | Teaches |
+|---:|---|---:|---|---|---|---|
+| 0 | **Millbrook** *(tutorial)* | 1.0 | 15x11 | Open plains, one river | — (scripted) | Every rule, one at a time (§12.2) |
+| 1 | **Ashfield Plain** | 1.0 | 21x14 | Open plains, one river | Freshness | The whole vocabulary, unsupervised |
+| 2 | **The Terraces** | 0.9 | 21x16 | Mountain ridge, 3 passes | Cost vs. quality | Terrain as a second storage |
+| 3 | **Cold Coast** | 0.75 | 24x14 | Fjords, narrow crossings | Chokepoints | Seafood, and the cold chain |
+| 4 | **The Delta** | 1.0 | 22x16 | Braided channels, islands | Network topology | When *not* to connect |
+| 5 | **Oldwall** | 1.1 | 20x14 | Walled city, 3 gates | Route capacity | Upgrades and trunk roads |
+| 6 | **The Flats** | 1.4 | 24x16 | Nothing at all | Everything at once | The exam |
+
+**0. Millbrook** *(the scripted tutorial)*. 15x11, two sources, four
+settlements, climate 1.0. Nine steps, each ending when the player does the
+thing rather than when they press Next, introducing the route drag, the day
+clock, bubbles, freshness, Cool Storage, hubs, capacity, the river crossing
+and source upgrades in that order. Fully specified in §12.2.
+
+**1. Ashfield Plain** *(shipped, unchanged)*. 21x14, five sources, five
+settlements, one river column, climate 1.0. Its river moves into the terrain
+grid (§8.1) and nothing else about it changes: same nodes, same demand, same
+opening lines, same difficulty ranking. It is the **first free-play region**
+-- everything Millbrook scripted, now unsupervised and on a map four times
+the size -- and the one a returning player replays to warm up. Item 45
+called it the tutorial; item 46 gave that job to Millbrook, which is the only
+part of the roster that changed.
+
+**2. The Terraces.** A mountain ridge runs the length of the map with three
+passes through it. Lowland sources west (Farm, Bakery, Garden), upland
+settlements east, and a Dairy high on the ridge itself. Climate 0.9.
+*The hook* is §8.2's inverted mountain: a pass costs 3x to build and 1.5x to
+maintain, and preserves cargo at 0.6x decay. So the short expensive road over
+the ridge and the long cheap road around it are genuinely different answers,
+and which is right depends on whether the food is grain (barely decays -- go
+around) or milk (go over). The hub cap bites here too, since three passes and
+two hubs per network is a real budget.
+*Why second:* it is the first region where terrain is a tool rather than an
+obstacle, and it says so in one screen.
+
+**3. Cold Coast.** Sea inlets cut deep from the east, leaving fingers of land;
+two Harbors and a Dairy on headlands, settlements inland. Water is unbuildable
+except at authored **narrows**, one cell wide, which take the §40 crossing.
+Climate 0.75.
+*The hook* is that a cold map is the only place seafood (6.0/tile, the food the
+retired Freeze Storage existed to serve -- item 28) can cross a map at all.
+Cool Storage plus a short chain is the answer, and the narrows decide where the
+chain can physically go, so `RIVER_BRIDGE_COST` stops being a footnote and
+becomes a main cost line.
+*Why third:* it makes good on PROG-05's promise (§6 Chapter 5), which lost its
+answer when Freeze Storage was retired.
+
+**4. The Delta.** Braided channels fragment the map into islands, each holding
+a source or a settlement or two. Climate 1.0, flat ground throughout.
+*The hook* costs nothing to build, because the rules already do it: hub and
+bridge caps are **per connected road network** (§4.4), so a fragmented map
+hands the player a dozen small networks each with its own 2-hub budget.
+Bridging two islands into one network halves their combined hub allowance.
+Deciding *not* to connect two roads is a move the single-landmass region 1 has
+never once asked for, and here it is the whole map.
+*Why fourth:* it needs the player to already understand what a network is, and
+it re-reads a rule they think they know.
+
+**5. Oldwall.** The one nod to a dense-city map, reframed so it is not a street
+grid. A 3x3 City sits inside a ring of `BLOCKED` wall with exactly **three
+gate cells**; villages and sources ring the outside. Climate 1.1.
+*The hook* is that every delivery to the City eventually funnels through three
+tiles, so **route capacity** (60 / 160 / 400) becomes the binding constraint
+instead of freshness -- the first map that forces Main routes and parallel
+trunk roads rather than merely permitting them. A gate is also the obvious
+place for a hub, and there are three gates and two hubs.
+*Why fifth:* capacity is the least-exercised system in the game and wants a
+map of its own; it also satisfies the dense-city instinct with a chokepoint
+puzzle rather than by drawing streets.
+
+**6. The Flats.** No terrain features whatsoever, sources pushed to the far
+corners, and climate 1.4 -- everything spoils half again as fast. Nothing to
+blame, nothing to exploit, no clever crossing to find.
+*The hook* is that it is the exam: pure optimisation against the efficiency
+grade, and the natural permanent home for the endless chase (§18). A player
+who cannot hold an A here has a gap somewhere in §4.
+*Why last:* it is only interesting once the player has real instincts to test.
+
+### 12.1.3 Unlock and region select
+
+- A region unlocks by reaching **grade A** (§7.5, score >= 75) on the region
+  before it, on any single day. A grade rather than a day count, for the same
+  reason the order book gates on delivery rather than the calendar (§6): a
+  clock measures patience, and the roster should measure play.
+- A region-select screen lists each region with its landscape, climate, best
+  grade, best score and 7-day average; locked regions show their unlock
+  condition rather than being hidden, so the roster reads as a plan.
+- **Millbrook (region 0) is unlocked from the start**, and completing *or
+  skipping* it unlocks Ashfield Plain. Gating region 1 behind a finished
+  tutorial would make the tutorial a toll; it earns its place by being worth
+  playing, not by standing in the doorway. Once unlocked, nothing ever
+  re-locks.
+- Millbrook is replayable from region select, and carries no grade or score
+  of its own -- it is a lesson, not a run, and scoring it would invite the
+  player to optimise the one map whose numbers are authored to teach rather
+  than to be beaten.
+- Progress is per region and persists; nothing else does.
+
+### 12.1.4 Relationship to §6's chapters
+
+§6's six chapters remain the full-game teaching order they always described.
+The roster is what delivers them -- one region per lesson rather than one
+chapter per unlock -- and the mapping is close but not exact, because a region
+has to be a place before it is a lesson: Chapter 1 is the scripted tutorial
+(§12.2), Chapter 5's long-distance seafood lands on Cold Coast, Chapter 6's
+city supply on Oldwall, and Chapters 2-4 are all reachable on Ashfield Plain,
+which is why it can stay the first free-play map.
+
+---
+
+## 12.2 The tutorial stage: Millbrook (region 0, added in v0.6 item 46)
+
+Item 45 called region 1 the tutorial, which described its difficulty and
+nothing else -- it teaches no system, and a new player meets every rule at
+once. **Millbrook** is a smaller, scripted region 0 that introduces them one
+at a time; region 1 becomes the first free-play region.
+
+### 12.2.1 The rule: a step ends when the player does the thing
+
+Every step names a **condition over game state** and completes the moment it
+holds. There is no Next button, no "tap to continue", and no timed dismissal.
+
+This is item 40's finding applied to teaching. That item removed a
+tap-to-accept offer because the plaques "were read as something to wait out
+rather than something to press"; a Next button is the same object with a
+clearer label, and it lets a player click past an instruction they have not
+read and then be stuck with no way back. Gating on the map instead means the
+instruction is on screen for exactly as long as it is untrue, and the map is
+the progress bar.
+
+**Conditions are read-only over state the game already keeps**, so the step
+machine adds nothing to `SimulationEngine`:
+
+| Condition | Reads |
+|---|---|
+| `route_established(source_id, node_id)` | `SimulationEngine.established_route_cells` |
+| `days_simulated(n)` | `GameState.day` |
+| `node_inspected(node_id)` | the info-tip handler (§10.6) |
+| `line_filled(node_id, food_id)` | `GameState.filled_lines` (already latched) |
+| `line_green(node_id, food_id)` | `last_settlement_status` vs `bonus_freshness` |
+| `structure_built(kind)` | `GameState.grid` |
+| `no_tile_over_capacity` | `GameState.last_congestion` |
+| `source_upgraded(node_id)` | `NodeData.upgraded` |
+
+Conditions are evaluated after a player action and after a day simulates --
+not per frame.
+
+**Completion latches**, for the same reason `filled_lines` does: bulldozing
+the step-1 road while on step 7 must not throw the player back to step 1.
+But if the *current* step's condition breaks before it has ever held, its
+instruction simply stays up, so a mistake made now is corrected now.
+
+### 12.2.2 It cannot be failed
+
+There is no bankruptcy, loss or game-over condition anywhere in the build, so
+this is free to guarantee and worth stating:
+
+- **Tools are revealed, not disabled.** Each step adds its tool to the panel
+  (§10.7). Nothing is greyed out with an error, because a disabled button the
+  player wants to press teaches only that the game is refusing them.
+- **Bulldoze is available from step 1**, alongside Route, as the escape hatch.
+  It is never itself a step -- undoing a mistake is not a lesson.
+- **The clock is off until step 2 introduces it.** Learning the drag gesture
+  under a 60-second countdown is the one place the auto-clock (§3.5) actively
+  hurts. From step 2 it runs normally at 1x.
+- **Days report through the compact card**, never the blocking modal (§3.3),
+  so a day rolling over never interrupts a step.
+- **Skippable and replayable.** Skipping from region select still unlocks
+  region 1 -- a tutorial that gates content is a toll, not a tutorial.
+
+### 12.2.3 Map
+
+**15x11, climate 1.0**, plains with a single river at **column 9**, dividing a
+western area (steps 1-7) from an eastern one (steps 8-9).
+
+| Node | Type | Cells | Food |
+|---|---|---|---|
+| Farm | Source | (2,2)-(3,2) | grain **100**/day |
+| Dairy | Source | (2,8)-(3,8) | milk **40**/day |
+| Village A | Village | (6,2) | grain 20 |
+| Village B | Village | (7,4) | milk 20 |
+| Village C | Village | (6,6) | grain 45 |
+| Town D | Town | (11,6)-(12,6) | grain 20, milk 25 |
+
+`opening_lines` holds **one** line: Village A's grain. Item 39 raised region 1
+to three because a single opening order left a free-play player nothing to
+weigh; a scripted tutorial supplies the weighing itself, and one bubble is
+what step 1 wants on screen. The order book's deepen/expand alternation
+(item 40) is **disabled on this map** -- the step list decides what opens.
+
+**The numbers carry the lessons**, so no step has to assert anything the map
+does not demonstrate:
+
+- Village A is **3 tiles** from the Farm; grain decays 0.5/tile, so it lands
+  at 98.5% and green. The first road works perfectly, on purpose.
+- Village B is **8 tiles** from the Dairy; milk decays 4.0/tile, so it lands
+  at **68% -- amber**, above the village's 35% minimum and below its 80%
+  bonus line. The player succeeds and is shown that succeeding is not the
+  ceiling. Cool Storage placed early on that run (protection 8 covers all
+  8 tiles, 0.35x) takes it to **89% and green**.
+- Grain to Village A (20) plus Village C (45) is **65/day down one shared
+  Dirt trunk against a 60 cap** -- a capacity problem, with the Farm's 100
+  leaving supply comfortably clear of it.
+- Milk to Village B (20) plus Town D (25) is **45/day against the Dairy's
+  40** -- a supply problem, on a trunk far under capacity.
+
+Those last two are deliberately on **different foods**, so "the road cannot
+carry it" and "the farm cannot make it" are never the same day's problem --
+which is exactly the confusion a tutorial exists to prevent.
+
+### 12.2.4 The nine steps
+
+| # | Teaches | Instruction | Reveals | Completes when |
+|---:|---|---|---|---|
+| 1 | The route drag | "Press and **hold** the Farm, drag to Village A, and let go." | Route, Bulldoze | `route_established(farm, villageA)` |
+| 2 | The day clock | "Deliveries happen when a day ends. Run the day." | Clock panel, Run Day Now | `days_simulated(1)` |
+| 3 | Reading a bubble | "Village A got its whole order, fresh. Tap it to see the detail." | — | `node_inspected(villageA)` |
+| 4 | Distance costs freshness | "The Dairy is further out. Run milk to Village B." | — (opens `villageB/milk`) | `line_filled(villageB, milk)` |
+| 5 | Cool Storage | "That milk arrived at 68% -- amber pays the order, green pays 25% more. Put Cool Storage early on the run." | Normal, Cool | `line_green(villageB, milk)` |
+| 6 | Hubs | "Village C wants grain too, and the road out of the Farm is already there. Build a hub where they share it." | Hub | `structure_built(hub)` **and** `line_filled(villageC, grain)` |
+| 7 | Route capacity | "That trunk is carrying 65 a day down a 60 road. Upgrade it." | Upgrade | `no_tile_over_capacity` |
+| 8 | Crossing the river | "Town D is across the water. A route tile on the river costs §40 extra -- or go the long way round." | — (opens `townD/grain`) | `line_filled(townD, grain)` |
+| 9 | Source upgrades | "Town D wants milk as well. That's 45 a day, and the Dairy makes 40." | — (opens `townD/milk`) | `source_upgraded(dairy)` **and** `line_filled(townD, milk)` |
+
+Then: *"That's the whole game. Ashfield Plain is open."*
+
+**What is deliberately not taught.** Bridges (§4.1's placed road-over-road
+deck) and the bulldoze/upgrade sweep (item 26) are left to be discovered: a
+bridge is a capped, expensive, situational structure that a tutorial would
+have to invent a reason to need, and the sweep is a convenience on a tool the
+player already knows. Nine steps is already long, and every step past the
+point the player has got it is a step they resent.
+
+**Step 8 keeps the detour honest.** The river is crossable for §40 or
+avoidable for roughly four more tiles of road and upkeep, and the instruction
+says so. Teaching a cost as a toll teaches the player to pay it; teaching it
+as a choice is the actual skill the rest of the game asks for.
 
 ---
 

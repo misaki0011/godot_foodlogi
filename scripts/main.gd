@@ -70,7 +70,7 @@ const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map 
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
 	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
-	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it instead: it doubles its daily output.",
+	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it for §300 instead: it doubles its daily output, once.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
@@ -95,7 +95,73 @@ var _tool := "route"
 var _nodes_by_pos: Dictionary = {}
 var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
-var _bubbles_visible := true
+var _fx_layer: Node3D
+
+## How much of a node's order book is drawn on the map at rest.
+##
+## GLYPHS is the default and the reason this enum exists: a full balloon per
+## open order buries the map under its own UI once more than a couple are
+## open (see the crowding a 5-line City produced). At rest a node now draws a
+## compact glyph strip -- one food silhouette per order, each with a status
+## mark -- and the balloons come back for whichever node the player is
+## hovering or has tapped.
+##
+## ALL restores the old always-on balloons for every node, because the strip
+## trades away the delivered/requested numbers and the freshness bar, and a
+## player mid-optimisation may well want those on screen at once. Keeping
+## both renderers costs almost nothing: they are the same scene.
+enum BubblesMode { GLYPHS, ALL, OFF }
+const BUBBLES_MODE_LABELS := {
+	BubblesMode.GLYPHS: "Glyphs",
+	BubblesMode.ALL: "All",
+	BubblesMode.OFF: "Off",
+}
+var _bubbles_mode: BubblesMode = BubblesMode.GLYPHS
+## Which node is showing its full balloons because the pointer is over it (or
+## it was tapped). Empty when the pointer is on terrain. Only ever affects
+## rendering -- nothing in the simulation knows about it.
+var _focused_node_id: String = ""
+
+## Settlements that opened an order this day and should pop their column in
+## on the next render (item 57). Consumed by that render and cleared whole,
+## so a pop fires exactly once per order and never re-fires on the many
+## renders a hover or a build triggers afterwards.
+var _pending_pops: Dictionary = {}
+
+## True for exactly one render: the one _run_day triggers after simulating.
+## A settlement holding a green line hops on that render (item 58). Kept as a
+## flag rather than a second pending-set because the green test already exists
+## inside _render_settlement_bubbles -- recomputing it here would be a second
+## copy of a rule §9 owns, which is how a display starts disagreeing with the
+## treasury.
+var _day_just_ran := false
+
+## ---------- the red reminder (item 61) ----------
+##
+## Settlements whose worst open line earned nothing shake again, gently, every
+## REMINDER_SEC. Red is the only status worth repeating: amber and green are
+## verdicts already delivered and saying them twice adds nothing, while red is
+## a standing call to action -- and it is also the resting state of every
+## settlement not yet reached, which is exactly the thing a player wants
+## pointing at.
+##
+## Replaying ALL the flourishes on a timer was considered and rejected: at 6
+## firings a day across five settlements the shake stops registering as a
+## warning within a session, which is item 30's objection almost word for word
+## -- a repeated alert is wallpaper.
+##
+## Timed in REAL seconds, unscaled by DAY_SPEEDS: this is a claim on the
+## player's attention rather than an event in the simulation, so it should not
+## come three times as often because they set the clock to 4x.
+const REMINDER_SEC := 20.0
+var _reminder_elapsed := 0.0
+## node_id -> its column marker, rebuilt by each render. The reminder shakes
+## these directly rather than re-rendering, which would rebuild every visual
+## on the map to move five of them.
+var _columns_by_node: Dictionary = {}
+## Settlements whose worst open line came out red, recorded during the render
+## that drew them -- so the reminder never re-derives a status rule §9 owns.
+var _nagging_nodes: Array[String] = []
 
 var _funds_label: Label
 var _day_label: Label
@@ -106,8 +172,6 @@ var _hint_label: Label
 var _toast: Label
 var _bubbles_button: Button
 var _tool_buttons: Dictionary = {}
-var _tip_panel: PanelContainer
-var _tip_label: RichTextLabel
 var _clock_day_label: Label
 var _clock_time_label: Label
 var _clock_bar: ProgressBar
@@ -253,6 +317,13 @@ func _ready() -> void:
 	_grid_visuals = Node3D.new()
 	_grid_visuals.name = "GridVisuals"
 	add_child(_grid_visuals)
+	# One-shot effects live outside GridVisuals because _render_grid clears
+	# that whole node on every hover, day and build -- a payout label parented
+	# there would be destroyed mid-flight the moment the pointer moved. These
+	# free themselves when their tween ends.
+	_fx_layer = Node3D.new()
+	_fx_layer.name = "Effects"
+	add_child(_fx_layer)
 	_drag_preview_visuals = Node3D.new()
 	_drag_preview_visuals.name = "DragPreviewVisuals"
 	add_child(_drag_preview_visuals)
@@ -277,6 +348,7 @@ func _process(delta: float) -> void:
 		_zoom_dir = 0.0
 		return
 	_tick_day_clock(delta)
+	_tick_reminder(delta)
 	if _zoom_dir != 0.0:
 		_camera.size = clampf(_camera.size + _zoom_dir * ZOOM_SPEED * delta, ZOOM_MIN, ZOOM_MAX)
 	if _pan_dir != Vector2.ZERO:
@@ -292,7 +364,7 @@ func _process(delta: float) -> void:
 		_camera.position = new_pos
 	if _press_eligible and not _drag_active and Time.get_ticks_msec() - _press_start_msec >= HOLD_TO_DRAG_MSEC:
 		_drag_active = true
-		_tip_panel.visible = false
+		_set_focused_node("")
 		_drag_path = [_press_cell]
 		_recompute_drag_validity()
 		_update_drag_preview()
@@ -312,7 +384,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _drag_active:
 			_extend_drag_path(_screen_to_cell(event.position))
 		elif not _press_eligible:
-			_update_tip(_screen_to_cell(event.position), event.position)
+			_update_hover(_screen_to_cell(event.position))
 
 func _start_press(screen_position: Vector2) -> void:
 	var cell := _screen_to_cell(screen_position)
@@ -344,7 +416,7 @@ func _start_press(screen_position: Vector2) -> void:
 	if SWEEP_TOOLS.has(_tool) and _cell_in_bounds(cell) and node == null:
 		_drag_kind = "sweep"
 		_drag_active = true
-		_tip_panel.visible = false
+		_set_focused_node("")
 		_drag_path = [cell]
 		_recompute_sweep()
 		_update_drag_preview()
@@ -734,12 +806,13 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_upgrade_source(n)
 			return
 		# Otherwise sources and settlements are informational, not buildable
-		# -- tapping (mobile has no hover) shows the same info tip a mouse
-		# hover would. Nothing on the map ever needs a tap to advance the
-		# game: orders open themselves as deliveries land (DEV-01).
-		_update_tip(cell, screen_position)
+		# -- tapping (mobile has no hover) focuses the node exactly as a mouse
+		# hover does, expanding a settlement's column into its full rows.
+		# Nothing on the map ever needs a tap to advance the game: orders
+		# open themselves as deliveries land (DEV-01).
+		_update_hover(cell)
 		return
-	_tip_panel.visible = false
+	_set_focused_node("")
 	match _tool:
 		"route":
 			_do_tap_route(cell)
@@ -1018,6 +1091,21 @@ func _tick_day_clock(delta: float) -> void:
 	_apply_day_cycle()
 	_update_clock_ui()
 
+## Nudges every still-unpaid settlement, on the same guard as the day clock:
+## a stopped clock means the game is not running, and nagging a player who has
+## deliberately paused is just pestering.
+func _tick_reminder(delta: float) -> void:
+	if not _state.auto_run or _state.clock_paused or _bubbles_mode == BubblesMode.OFF:
+		return
+	_reminder_elapsed += delta
+	if _reminder_elapsed < REMINDER_SEC:
+		return
+	_reminder_elapsed = 0.0
+	for node_id in _nagging_nodes:
+		var column = _columns_by_node.get(node_id)
+		if is_instance_valid(column):
+			column.play(FoodBubbleMarker.Flourish.NAG)
+
 ## ---------- time-of-day lighting (LOOP-08) ----------
 
 ## How far through the current day the clock is, 0 at its start and 1 as it
@@ -1042,6 +1130,9 @@ func _run_day() -> void:
 	# moment the delivery does.
 	for order in OrderBook.record_day(_state, _map_data, _map_data.node_placements):
 		_announce_order(order)
+		# Popped on the _render_grid at the end of this function, which is the
+		# first render that will actually draw the new chip.
+		_pending_pops[order.get("node_id", "")] = true
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
 	if _state.auto_run:
@@ -1050,6 +1141,7 @@ func _run_day() -> void:
 	else:
 		_report_advances_day = true
 		_show_report(report)
+	_day_just_ran = true
 	_render_grid()
 	_update_ui()
 
@@ -1162,126 +1254,34 @@ func _show_day_summary(r: DayReportData) -> void:
 
 ## ---------- hover tooltip ----------
 
-func _update_tip(cell: Vector2i, mouse_pos: Vector2) -> void:
+## Which node the pointer is over, and nothing else. This used to also build
+## and position a text panel describing whatever was under the cursor -- a
+## source's produce, a route's capacity and upkeep, a hub's last-run split,
+## storage protection, the river's crossing price. That panel is retired
+## (v0.6 item 55): the map's own marks carry the state now, and a brown box
+## following the cursor over a map this dense was covering the thing it was
+## describing.
+func _update_hover(cell: Vector2i) -> void:
 	if not _cell_in_bounds(cell):
-		_tip_panel.visible = false
+		_set_focused_node("")
 		return
 	var n := _node_at(cell)
-	var cell_data = _state.grid.get(cell)
-	var text := ""
-	if n:
-		if n.node_type == GameEnums.NodeType.SOURCE:
-			var parts := []
-			for food_id in n.produces:
-				parts.append("%s (%d/day)" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
-			text = "[b]%s[/b]\nProduces: %s" % [n.display_name, ", ".join(parts)]
-			# The upgrade is only reachable through the Upgrade tool, so the
-			# tip is where the player finds out it exists at all (DEV-03).
-			if n.can_upgrade():
-				text += "\n[color=#C9A227]Upgrade §%d with the Upgrade tool — doubles daily output.[/color]" % roundi(GameBalance.SOURCE_UPGRADE_COST)
-			else:
-				text += "\n[color=#8A8375]Already expanded.[/color]"
-		else:
-			text = _settlement_tip_text(n)
-	elif cell_data:
-		if cell_data.kind == "route":
-			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
-			if cell_data.has("bridge_axis"):
-				# A bridge tile carries two roads and can host nothing else, so
-				# it replaces the plain route tip outright rather than annotating
-				# it -- none of the "you could build X here" hints apply.
-				text = "[b]Bridge over %s Route[/b]\nCapacity: %d/day, shared by both roads\nUpkeep ×%.1f +§%d for the deck\nDeck runs %s: a route drawn straight over it never joins the road below.\n[color=orange]Crossing the deck costs %.0f× the usual freshness decay[/color]" % [
-					lvl.label,
-					roundi(lvl.cap),
-					lvl.upkeep_mult,
-					roundi(GameBalance.BRIDGE_UPKEEP),
-					"east-west" if cell_data.bridge_axis.x != 0 else "north-south",
-					GameBalance.BRIDGE_DECK_DECAY_MULT,
-				]
-			else:
-				text = "[b]%s Route[/b]\nCapacity: %d/day\nUpkeep ×%.1f" % [lvl.label, roundi(lvl.cap), lvl.upkeep_mult]
-				if SimulationEngine.network_at_hub_cap(_state, cell):
-					text += "\n[color=orange]⚠ This road already has %d hub%s -- the cap is reached[/color]" % [GameBalance.HUB_CAP_PER_NETWORK, "" if GameBalance.HUB_CAP_PER_NETWORK == 1 else "s"]
-				else:
-					text += "\n[color=#4FA8A0]⚙ Build Hub tool can place a Small Hub here for §%d[/color]" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)
-				# Only advertise the Bridge tool where it would actually take:
-				# a straight through-run, on a network under its bridge cap.
-				if _deck_axis_for(cell) != Vector2i.ZERO:
-					if SimulationEngine.network_at_bridge_cap(_state, cell):
-						text += "\n[color=orange]⚠ This road network already has %d bridge%s -- the cap is reached[/color]" % [GameBalance.BRIDGE_CAP_PER_NETWORK, "" if GameBalance.BRIDGE_CAP_PER_NETWORK == 1 else "s"]
-					else:
-						text += "\n[color=#4FA8A0]⌒ Bridge tool can span this tile for §%d, so another route can cross over[/color]" % roundi(GameBalance.BRIDGE_BUILD_COST)
-		elif cell_data.kind == "storage":
-			var st = GameBalance.STORAGE_TYPES[cell_data.stype]
-			text = "[b]%s[/b]\nUpkeep: §%d/day\nProtects next %d tiles at %d%% decay" % [st.name, roundi(st.upkeep), st.protection, roundi(st.mult * 100)]
-		elif cell_data.kind == "hub":
-			var ht = GameBalance.HUB_TYPES[cell_data.htype]
-			text = "[b]%s[/b]\nUpkeep: §%d/day\nDiscounts adjacent routes %d%%" % [ht.name, roundi(ht.upkeep), roundi(ht.discount * 100)]
-			var split := SimulationEngine.hub_split_summary(_state, cell)
-			if split.total > 0.0:
-				var lines := []
-				for src_id in split.by_source:
-					var src: NodeData = _nodes_by_id.get(src_id)
-					var pct := roundi(split.by_source[src_id] / split.total * 100.0)
-					lines.append("%s: %d (%d%%)" % [src.display_name if src else src_id, roundi(split.by_source[src_id]), pct])
-				text += "\n\n[b]Last run split (%d total):[/b]\n%s" % [roundi(split.total), "\n".join(lines)]
-			else:
-				text += "\n\n[i]No deliveries routed through here yet.[/i]"
-		for c in _state.last_congestion:
-			if c.pos == cell:
-				text += ("\n[color=orange]! Hit 100%%+ capacity on the last run -- deliveries were capped here[/color]" if c.over
-					else "\n[color=orange]! Ran 90%+ of capacity on the last run -- close to a bottleneck[/color]")
-	elif _map_data.is_river(cell.x, cell.y):
-		text = "[b]River[/b]\nBuilding here requires a bridge (+§%d)." % GameBalance.RIVER_BRIDGE_COST
-	if text == "":
-		_tip_panel.visible = false
+	# Inspecting a settlement is what expands it from a glyph column into full
+	# rows, so the same pointer that used to open the tip drives the map layer.
+	_set_focused_node(n.node_id if n else "")
+
+## Re-renders only when the focused node actually changes. _render_grid
+## rebuilds every visual on the map, so calling it per mouse-motion event
+## would be untenable -- but crossing into or out of a node's footprint is
+## rare, and only that crossing changes what is drawn.
+func _set_focused_node(node_id: String) -> void:
+	if node_id == _focused_node_id:
 		return
-	_tip_label.text = text
-	_tip_panel.visible = true
-	_tip_panel.position = mouse_pos + Vector2(16, 12)
-
-## ---------- settlement tip ----------
-
-func _settlement_tip_text(n: NodeData) -> String:
-	# The tip works from the open orders, not the settlement's eventual
-	# appetite (DEV-01) -- promising a food it will not buy for another ten
-	# days would send the player building a road that earns nothing. What is
-	# still to come is listed separately, as the plan it is.
-	var demand := OrderBook.active_demand(_state, n)
-	var parts := []
-	for food_id in demand:
-		parts.append("%s %d" % [GameBalance.food_types()[food_id].display_name, roundi(demand[food_id])])
-	var text := "[b]%s[/b] -- %s\n" % [n.display_name, n.kind]
-	if parts.is_empty():
-		text += "[i]Not ordering yet -- this settlement starts buying later.[/i]\n"
-	else:
-		text += "Orders: %s\nMin freshness: %d%% · Bonus at: %d%%+\n" % [", ".join(parts), roundi(n.min_freshness), roundi(n.bonus_freshness)]
-
-	var later := []
-	for food_id in n.demand:
-		if not demand.has(food_id):
-			later.append(GameBalance.food_types()[food_id].display_name)
-	if not later.is_empty():
-		text += "[color=#8A8375]May order later: %s[/color]\n" % ", ".join(later)
-
-	var status = _state.last_settlement_status.get(n.node_id)
-	if status == null or demand.is_empty():
-		text += "\n[i]No deliveries yet -- run a day to see what's getting through.[/i]"
-		return text
-	text += "\n[b]Last delivery:[/b]\n"
-	for food_id in demand:
-		var s = status.get(food_id, {"requested": demand[food_id], "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0})
-		var done: bool = s.delivered >= s.requested - 0.5
-		var partial: bool = not done and s.delivered > 0.0
-		var icon := "✓" if done else ("◐" if partial else "✗")
-		var color := "#5C8A5C" if done else ("#D98E4A" if partial else "#C4573A")
-		var fresh_text := ""
-		if s.delivered > 0.0:
-			fresh_text = " · %d%% fresh" % roundi(s.fresh_sum / s.delivered)
-		text += "[color=%s]%s[/color] %s: %d/%d%s\n" % [color, icon, GameBalance.food_types()[food_id].display_name, roundi(s.delivered), roundi(s.requested), fresh_text]
-		if s.rejected > 0.0:
-			text += "  [color=#C4573A]%d arrived too spoiled to accept[/color]\n" % roundi(s.rejected)
-	return text
+	_focused_node_id = node_id
+	# In ALL or OFF mode nothing about a node's rendering depends on focus,
+	# so the rebuild would be pure waste.
+	if _bubbles_mode == BubblesMode.GLYPHS:
+		_render_grid()
 
 ## ---------- daily report ----------
 
@@ -1334,6 +1334,10 @@ func _show_report(r: DayReportData) -> void:
 
 func _render_grid() -> void:
 	_clear_children(_grid_visuals)
+	# Both are rebuilt by this render; the markers they point at are about to
+	# be freed, so holding last frame's would be holding freed instances.
+	_columns_by_node.clear()
+	_nagging_nodes.clear()
 	for pos in _state.grid:
 		var cell = _state.grid[pos]
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
@@ -1361,8 +1365,13 @@ func _render_grid() -> void:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
 	_render_established_routes()
-	if _bubbles_visible:
+	if _bubbles_mode != BubblesMode.OFF:
 		_render_supply_bubbles()
+	# Cleared whether or not anything drew: a flourish the player could not
+	# have seen (bubbles off) is spent, not banked for whenever they turn
+	# them back on.
+	_pending_pops.clear()
+	_day_just_ran = false
 
 ## Continuously overlays a bright gold line along every tile that lies on a
 ## complete source->settlement path (an "established route"), so the player
@@ -1521,23 +1530,59 @@ func _node_center(n: NodeData) -> Vector3:
 	var far: Vector3 = _terrain.map_to_local(Vector3i(far_cell.x, 0, far_cell.y))
 	return (near + far) * 0.5
 
+## Whether this settlement draws its full balloons rather than the compact
+## glyph strip: either the player is inspecting it, or they have asked for
+## every balloon at once. Sources never consult this -- a source is always
+## its big food glyph now (v0.6 item 48).
+func _shows_full_bubbles(n: NodeData) -> bool:
+	return _bubbles_mode == BubblesMode.ALL or _focused_node_id == n.node_id
+
+## `is_settlement` decides the tail and the row width both -- a source row is
+## wider, carrying its draw-down beside a full-size glyph rather than under a
+## shrunken one (item 56).
+func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, flourish := FoodBubbleMarker.Flourish.NONE) -> FoodBubbleMarker:
+	if entries.is_empty():
+		return null
+	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+	_grid_visuals.add_child(column)
+	column.position = base_pos
+	column.setup_glyph_column(entries, is_settlement)
+	column.play(flourish)
+	return column
+
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
 	# The source's crate model is shorter than the settlement pin, so its
 	# bubble sits a little lower than the settlement stack's start height.
 	var base_pos: Vector3 = _node_center(n) + Vector3(0, 2.5, 0)
-	var stack := 0
+	# A source is ALWAYS its big food glyph, inspected or not. The dark slate
+	# sign it used to expand into is retired: a source's identity is the food
+	# it makes, and a glyph says that faster and smaller than a sign printing
+	# "21/80" ever did. That used/produced figure moved to the hover tip,
+	# which is now the only place it lives.
+	var entries: Array = []
 	for food_id in n.produces:
 		var produced: float = n.produces[food_id]
 		var used: float = 0.0
 		if status.has(food_id):
 			used = status[food_id].used
 		var bubble_status := FoodBubbleMarker.Status.MUTED if used >= produced - 0.01 else FoodBubbleMarker.Status.DEFAULT
-		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(0, stack * FoodBubbleMarker.SOURCE_STACK_SPACING, 0)
-		bubble.setup_source(foods[food_id], used, produced, bubble_status)
-		stack += 1
+		# A source's glyph carries no status mark: MUTED/DEFAULT is "spent
+		# today" vs "still has stock", which the glyph already says by going
+		# grey, and a ✓ beside it would read as a delivery verdict this node
+		# never has.
+		entries.append({
+			"food_id": food_id,
+			"color": (BubbleCanvas.MUTED_ICON_COLOR if bubble_status == FoodBubbleMarker.Status.MUTED
+				else foods[food_id].color),
+			"status": bubble_status,
+			# Drawn today out of the daily produce. This lived on the retired
+			# sign, then the retired hover tip; the chip is now the only place
+			# it can be, and the glyph going grey alone said whether anything
+			# was left but never how much (v0.6 item 55).
+			"amount_text": "%d/%d" % [roundi(used), roundi(produced)],
+		})
+	_spawn_glyph_column(base_pos, entries, false)
 
 ## A settlement can demand up to 3 foods (Town D, City E), and some
 ## settlements sit only 3 tiles from a neighbor -- stacking every bubble
@@ -1576,12 +1621,30 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 		var requested: float = demand[food_id]
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
+		var rejected: float = 0.0
+		var rejected_fresh: float = 0.0
+		var earned: float = 0.0
+		var withheld: float = 0.0
 		var s = status.get(food_id)
 		if s != null:
 			requested = s.requested
 			delivered = s.delivered
 			if delivered > 0.0:
 				avg_fresh = s.fresh_sum / delivered
+			# Cargo min_freshness turned away. It still consumed the day's
+			# demand (SimulationEngine drops `need` before deciding whether to
+			# accept), so this is very often the whole reason a line came up
+			# short -- and the delivered freshness above cannot show it,
+			# averaging only what was let in.
+			rejected = s.get("rejected", 0.0)
+			if rejected > 0.0:
+				rejected_fresh = s.get("rejected_fresh_sum", 0.0) / rejected
+			# What the line paid, and what a short one gave up. The row's
+			# colour has always encoded the payment tier (§9) and never said
+			# so -- which is why a red row beside "90% fresh" read as a
+			# freshness verdict rather than an earnings one.
+			earned = s.get("earned", 0.0)
+			withheld = s.get("withheld", 0.0)
 
 		var bubble_status: FoodBubbleMarker.Status
 		if delivered < requested - 0.01:
@@ -1597,36 +1660,179 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"requested": requested,
 			"status": bubble_status,
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
+			"rejected": rejected,
+			"rejected_freshness_pct": roundi(rejected_fresh) if rejected > 0.0 else -1,
+			"earned": earned,
+			"withheld": withheld,
 		})
 
-	for index in entries.size():
-		var e: Dictionary = entries[index]
-		var row: int = index / 2
-		var bubble: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
-		_grid_visuals.add_child(bubble)
-		bubble.position = base_pos + Vector3(
-			_bubble_column_offset(index, entries.size()),
-			row * FoodBubbleMarker.STACK_SPACING,
-			0,
-		)
-		bubble.setup_settlement(
-			foods[e.food_id],
-			e.delivered,
-			e.requested,
-			e.status,
-			e.freshness_pct,
-			n.bonus_freshness,
-		)
+	# Worst first, so the leftmost glyph on the strip -- and the first
+	# balloon in an expanded stack -- is the line most worth acting on. Red
+	# before amber before green, ties broken by how far short the delivery
+	# fell as a fraction of what was asked for. Without this the order was
+	# whatever the demand dictionary happened to iterate.
+	entries.sort_custom(_worse_first)
 
-## Where a bubble sits across the 2-column stack. A row holding a single
-## bubble centres it over the settlement instead of leaving it hanging in the
-## left column: with orders opening one at a time (DEV-01), a settlement
-## showing exactly one bubble is now the common case rather than an edge one.
-func _bubble_column_offset(index: int, count: int) -> float:
-	var row_start: int = (index / 2) * 2
-	if count - row_start == 1:
+	# One marker either way. The collapsed chips and the expanded rows are the
+	# same column at two widths (BubbleCanvas's shared column geometry), so a
+	# hover widens the panel around glyphs that do not move -- which is only
+	# possible because both are a single baked texture rather than a set of
+	# separately-positioned billboards.
+	var glyphs: Array = []
+	for e in entries:
+		glyphs.append({
+			"food_id": e.food_id,
+			"color": foods[e.food_id].color,
+			"status": e.status,
+			"delivered": e.delivered,
+			"requested": e.requested,
+			"freshness_pct": e.freshness_pct,
+			"rejected": e.rejected,
+			"rejected_freshness_pct": e.rejected_freshness_pct,
+			"earned": e.earned,
+			"withheld": e.withheld,
+		})
+
+	# One flourish per column, chosen by the same rule that decides which chip
+	# sits on top: entries are sorted worst-first, so entries[0] is the line
+	# most worth acting on and its status is what the column should express.
+	# A new order outranks any delivery -- it is the larger event, and playing
+	# both on one column would just read as a stumble.
+	var flourish := FoodBubbleMarker.Flourish.NONE
+	if _pending_pops.has(n.node_id):
+		flourish = FoodBubbleMarker.Flourish.POP
+	elif _day_just_ran and not entries.is_empty():
+		flourish = _flourish_for(entries[0].status)
+
+	# The day's takings for this settlement, summed from the same per-line
+	# figures run_day recorded (item 54) rather than recomputed here.
+	if _day_just_ran:
+		var earned := 0.0
+		for e in entries:
+			earned += e.earned
+		_spawn_payout(base_pos, earned)
+
+	# Recorded for the reminder, which shakes these without re-deriving a
+	# status: entries[0] is the worst line, the same one the column expresses.
+	if not entries.is_empty() and entries[0].status == FoodBubbleMarker.Status.RED:
+		_nagging_nodes.append(n.node_id)
+
+	if not _shows_full_bubbles(n):
+		_columns_by_node[n.node_id] = _spawn_glyph_column(base_pos, glyphs, true, flourish)
+		return
+
+	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
+	_grid_visuals.add_child(column)
+	column.position = base_pos
+	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
+	column.play(flourish)
+	_columns_by_node[n.node_id] = column
+
+## ---------- payout labels ----------
+## What a settlement earned that day, floating up beside its column and
+## fading. The row already prints per-line earnings when expanded (item 54),
+## but that needs a hover; this is the at-a-glance version, and it appears at
+## the one moment the number changes.
+## Sized against the things beside it rather than picked: cap height on screen
+## is font_size * pixel_size, so 128 * 0.0075 = 0.96 world units against a
+## 1.38-unit chip and the row's own 0.47-unit amount text -- about 70% of a
+## chip, and twice the text inside one. The first version came to 0.35,
+## smaller than the number it was announcing, which is why it read as an
+## afterthought. Kept as a large font at a small pixel_size rather
+## than the reverse, since font_size is what the glyphs are rasterised at.
+const PAYOUT_RISE := 2.3
+const PAYOUT_SEC := 1.7
+const PAYOUT_FONT_SIZE := 128
+const PAYOUT_PIXEL_SIZE := 0.0075
+const PAYOUT_OUTLINE_SIZE := 28
+## A short scale-in so a label this size arrives rather than blinks on. It
+## overlaps the first fifth of the rise, so the whole thing still reads as one
+## movement.
+const PAYOUT_PUNCH_FROM := 0.65
+const PAYOUT_PUNCH_SEC := 0.22
+const PAYOUT_COLOR := Color("9fd8a8")
+const PAYOUT_OUTLINE := Color(0.06, 0.08, 0.07, 0.95)
+
+## Offset from the column's centre, and the label is LEFT-aligned so it grows
+## rightward from there. Centred text was tried first and the overlap scales
+## with the amount: "+§187" cleared the chip but "+§1870" grew back over its
+## right edge, because half of a longer string reaches further in. Anchoring
+## the left edge just past the chip's half-width (208px * 0.0072 / 2 = 0.75)
+## makes the clearance the same whatever the settlement earned.
+const PAYOUT_OFFSET := Vector3(0.95, 0.8, 0.0)
+
+func _spawn_payout(base_pos: Vector3, earned: float) -> void:
+	# Nothing earned is not worth a label: that settlement is already shaking,
+	# and "+§0" would be a second way of saying the same nothing.
+	if earned <= 0.0:
+		return
+	var label := Label3D.new()
+	label.text = "+§%d" % roundi(earned)
+	label.font_size = PAYOUT_FONT_SIZE
+	label.pixel_size = PAYOUT_PIXEL_SIZE
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	label.modulate = PAYOUT_COLOR
+	label.outline_size = PAYOUT_OUTLINE_SIZE
+	label.outline_modulate = PAYOUT_OUTLINE
+	# Drawn over whatever it passes in front of. A payout that disappears
+	# behind a chip for half its flight reads as a glitch.
+	label.no_depth_test = true
+	label.render_priority = 4
+	label.outline_render_priority = 3
+	_fx_layer.add_child(label)
+	label.position = base_pos + PAYOUT_OFFSET
+
+	label.scale = Vector3.ONE * PAYOUT_PUNCH_FROM
+
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(label, "scale", Vector3.ONE, PAYOUT_PUNCH_SEC) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(label, "position", label.position + Vector3(0.0, PAYOUT_RISE, 0.0), PAYOUT_SEC) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.tween_property(label, "modulate:a", 0.0, PAYOUT_SEC) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.chain().tween_callback(label.queue_free)
+
+## Which flourish a column plays for its worst line's status. The axis is the
+## meaning: vertical says the line paid and its height says how well, while
+## horizontal says it did not pay at all -- §9's real break is between red and
+## the other two, not between amber and green.
+static func _flourish_for(status: FoodBubbleMarker.Status) -> FoodBubbleMarker.Flourish:
+	match status:
+		FoodBubbleMarker.Status.GREEN:
+			return FoodBubbleMarker.Flourish.HOP
+		FoodBubbleMarker.Status.AMBER:
+			return FoodBubbleMarker.Flourish.NUDGE
+		FoodBubbleMarker.Status.RED:
+			return FoodBubbleMarker.Flourish.SHAKE
+	return FoodBubbleMarker.Flourish.NONE
+
+## Severity order for a settlement's open lines: red, then amber, then
+## green, with the biggest shortfall first inside a tier.
+static func _worse_first(a: Dictionary, b: Dictionary) -> bool:
+	var rank_a := _status_rank(a.status)
+	var rank_b := _status_rank(b.status)
+	if rank_a != rank_b:
+		return rank_a < rank_b
+	return _shortfall(a) > _shortfall(b)
+
+static func _status_rank(status: FoodBubbleMarker.Status) -> int:
+	match status:
+		FoodBubbleMarker.Status.RED:
+			return 0
+		FoodBubbleMarker.Status.AMBER:
+			return 1
+	return 2
+
+## As a fraction of what was asked for, so a village 5 short of 10 outranks a
+## city 5 short of 40 -- the small order is the one closer to failing.
+static func _shortfall(e: Dictionary) -> float:
+	var requested: float = e.requested
+	if requested <= 0.0:
 		return 0.0
-	return ((index % 2) - 0.5) * FoodBubbleMarker.COLUMN_SPACING
+	return clampf((requested - e.delivered) / requested, 0.0, 1.0)
 
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
 ## so a route tile always uses the same unrotated scene regardless of its
@@ -1768,9 +1974,11 @@ func _set_tool(tool: String) -> void:
 			button.button_pressed = key == tool
 	_hint_label.text = TOOL_HINTS.get(tool, "")
 
-func _on_bubbles_toggled(pressed: bool) -> void:
-	_bubbles_visible = pressed
-	_bubbles_button.text = "On" if pressed else "Off"
+## Three states rather than a checkbox, so the compact default and the old
+## dense view are both reachable without a second control.
+func _on_bubbles_pressed() -> void:
+	_bubbles_mode = ((_bubbles_mode + 1) % BubblesMode.size()) as BubblesMode
+	_bubbles_button.text = BUBBLES_MODE_LABELS[_bubbles_mode]
 	_render_grid()
 
 func _update_ui() -> void:
@@ -1830,17 +2038,6 @@ func _build_ui() -> void:
 	_toast.visible = false
 	root.add_child(_toast)
 
-	_tip_panel = PanelContainer.new()
-	_tip_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_tip_panel.add_theme_stylebox_override("panel", _panel_style(Color("2c2418"), 0.95))
-	_tip_panel.visible = false
-	root.add_child(_tip_panel)
-	_tip_label = RichTextLabel.new()
-	_tip_label.bbcode_enabled = true
-	_tip_label.fit_content = true
-	_tip_label.custom_minimum_size = Vector2(210, 0)
-	_tip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_tip_panel.add_child(_tip_label)
 
 	_build_control_panel(root)
 	_build_day_clock(root)
@@ -2017,11 +2214,9 @@ func _build_map_section(box: VBoxContainer) -> void:
 	bubbles_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	bubbles_row.add_child(bubbles_label)
 	_bubbles_button = Button.new()
-	_bubbles_button.toggle_mode = true
-	_bubbles_button.button_pressed = true
-	_bubbles_button.text = "On"
-	_bubbles_button.custom_minimum_size = Vector2(48, 32)
-	_bubbles_button.toggled.connect(_on_bubbles_toggled)
+	_bubbles_button.text = BUBBLES_MODE_LABELS[_bubbles_mode]
+	_bubbles_button.custom_minimum_size = Vector2(62, 32)
+	_bubbles_button.pressed.connect(_on_bubbles_pressed)
 	bubbles_row.add_child(_bubbles_button)
 
 ## Reference material, so it starts collapsed and the panel stays short.
