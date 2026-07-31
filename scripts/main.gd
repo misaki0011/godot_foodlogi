@@ -1485,17 +1485,14 @@ func _shows_full_bubbles(n: NodeData) -> bool:
 ## `is_settlement` decides the tail and the row width both -- a source row is
 ## wider, carrying its draw-down beside a full-size glyph rather than under a
 ## shrunken one (item 56).
-func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, popping := false, jumping := false) -> void:
+func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, flourish := FoodBubbleMarker.Flourish.NONE) -> void:
 	if entries.is_empty():
 		return
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
 	column.setup_glyph_column(entries, is_settlement)
-	if popping:
-		column.pop()
-	elif jumping:
-		column.jump()
+	column.play(flourish)
 
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
@@ -1640,28 +1637,40 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"withheld": e.withheld,
 		})
 
-	var popping: bool = _pending_pops.has(n.node_id)
-	# A new order outranks a good delivery: the pop is the larger event, and
-	# playing both on one column would just read as a stumble.
-	var jumping := false
-	if not popping and _day_just_ran:
-		for e in entries:
-			if e.status == FoodBubbleMarker.Status.GREEN:
-				jumping = true
-				break
+	# One flourish per column, chosen by the same rule that decides which chip
+	# sits on top: entries are sorted worst-first, so entries[0] is the line
+	# most worth acting on and its status is what the column should express.
+	# A new order outranks any delivery -- it is the larger event, and playing
+	# both on one column would just read as a stumble.
+	var flourish := FoodBubbleMarker.Flourish.NONE
+	if _pending_pops.has(n.node_id):
+		flourish = FoodBubbleMarker.Flourish.POP
+	elif _day_just_ran and not entries.is_empty():
+		flourish = _flourish_for(entries[0].status)
 
 	if not _shows_full_bubbles(n):
-		_spawn_glyph_column(base_pos, glyphs, true, popping, jumping)
+		_spawn_glyph_column(base_pos, glyphs, true, flourish)
 		return
 
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
 	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
-	if popping:
-		column.pop()
-	elif jumping:
-		column.jump()
+	column.play(flourish)
+
+## Which flourish a column plays for its worst line's status. The axis is the
+## meaning: vertical says the line paid and its height says how well, while
+## horizontal says it did not pay at all -- §9's real break is between red and
+## the other two, not between amber and green.
+static func _flourish_for(status: FoodBubbleMarker.Status) -> FoodBubbleMarker.Flourish:
+	match status:
+		FoodBubbleMarker.Status.GREEN:
+			return FoodBubbleMarker.Flourish.HOP
+		FoodBubbleMarker.Status.AMBER:
+			return FoodBubbleMarker.Flourish.NUDGE
+		FoodBubbleMarker.Status.RED:
+			return FoodBubbleMarker.Flourish.SHAKE
+	return FoodBubbleMarker.Flourish.NONE
 
 ## Severity order for a settlement's open lines: red, then amber, then
 ## green, with the biggest shortfall first inside a tier.

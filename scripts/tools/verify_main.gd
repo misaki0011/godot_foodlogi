@@ -49,7 +49,7 @@ func _report() -> void:
 
 	_test_multi_tile_settlement_draws_one_stack(map_data)
 	_test_glyph_column_collapses_and_expands(map_data)
-	_test_new_order_pops_once(map_data)
+	_test_flourishes_fire_once(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
 	var farm: NodeData = _node_by_id(map_data, "farm")
@@ -725,8 +725,8 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 	_main.call("_render_grid")
 	print("Glyph column (UI-04): one marker either way, same height collapsed and expanded, sorted worst-first.")
 
-## A newly opened order pops its column in exactly ONCE, and a green line
-## hops exactly once, and the two never play together (items 57-58).
+## Each status plays its own flourish exactly once on the render after a day,
+## and a new order's pop suppresses all of them (items 57-59).
 ##
 ## The pop is a tween on a marker that _render_grid destroys and rebuilds on
 ## every hover change, day and build -- so the thing that can silently break
@@ -734,7 +734,7 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 ## cleared would re-fire on every subsequent render, leaving the map twitching
 ## whenever the pointer crosses a node. Neither failure shows up in a
 ## screenshot.
-func _test_new_order_pops_once(map_data: MapData) -> void:
+func _test_flourishes_fire_once(map_data: MapData) -> void:
 	var state: GameState = _main.get("_state")
 	var city := _node_by_id(map_data, "cityE")
 	var centre: Vector3 = _main.call("_node_center", city)
@@ -765,36 +765,51 @@ func _test_new_order_pops_once(map_data: MapData) -> void:
 		"A pop must be cleared even when bubbles are off, not saved up")
 	_main.set("_bubbles_mode", 0)  # BubblesMode.GLYPHS
 
-	# A green line hops on the render after a day (item 58), and the flag that
-	# arms it is consumed by that same render -- otherwise every settlement
-	# holding a green line would hop again on each hover.
-	state.last_settlement_status[city.node_id] = {
-		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
-			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
-	}
-	_main.set("_day_just_ran", true)
-	_main.call("_render_grid")
-	var hopped := _column_marker_at(centre, 2.5)
-	assert(hopped != null and hopped.position.y > _main.call("_node_center", city).y,
-		"A settlement holding a green line must hop on the render after a day")
-	assert(not _main.get("_day_just_ran"),
-		"The render must consume _day_just_ran, or every hover re-hops the map")
+	# Each status gets its own flourish on the render after a day, picked from
+	# the column's WORST line -- the same entries[0] the chip order uses.
+	#
+	# Asserted on what the marker was ASKED to play, not on its transform: a
+	# tween applies nothing until it processes, so the column is still exactly
+	# at rest on the frame it was told to hop. (An earlier version of this
+	# check compared position.y against the node centre rather than the
+	# marker's real rest height of centre + 3.1, so it passed no matter what.)
+	for probe in [
+		{"fresh": 1000.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.HOP, "label": "green must hop"},
+		{"fresh": 500.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NUDGE, "label": "amber must nudge"},
+		{"fresh": 0.0, "delivered": 0.0, "want": FoodBubbleMarker.Flourish.SHAKE, "label": "red must shake"},
+	]:
+		state.last_settlement_status[city.node_id] = {
+			"seafood": {"requested": 10.0, "delivered": probe.delivered, "fresh_sum": probe.fresh,
+				"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 0.0},
+		}
+		_main.set("_day_just_ran", true)
+		_main.call("_render_grid")
+		var m := _column_marker_at(centre, 3.0)
+		assert(m != null, "%s -- no column drawn" % probe.label)
+		assert(m.played == probe.want, "%s, got %d" % [probe.label, m.played])
+		assert(not _main.get("_day_just_ran"),
+			"The render must consume _day_just_ran, or every hover re-plays the map")
 
-	# A new order outranks a good delivery: one flourish per column, never both.
+	# Without a day behind it, a render plays nothing at all.
+	_main.call("_render_grid")
+	var quiet := _column_marker_at(centre, 3.0)
+	assert(quiet != null and quiet.played == FoodBubbleMarker.Flourish.NONE,
+		"A render with no day behind it must play nothing")
+
+	# A new order outranks any delivery: one flourish per column, never both.
 	var both: Dictionary = _main.get("_pending_pops")
 	both[city.node_id] = true
 	_main.set("_day_just_ran", true)
 	_main.call("_render_grid")
-	var popped_not_hopped := _column_marker_at(centre, 2.5)
-	assert(popped_not_hopped != null and popped_not_hopped.scale.x < 1.0,
-		"With both pending, the column must pop")
-	assert(is_equal_approx(popped_not_hopped.position.y, _main.call("_node_center", city).y + 3.1),
-		"A popping column must not also be mid-hop")
+	var popped := _column_marker_at(centre, 3.0)
+	assert(popped != null and popped.played == FoodBubbleMarker.Flourish.POP,
+		"A pending pop must outrank the delivery flourish")
+	assert(popped.scale.x < 1.0, "A popped column must start scaled down")
 
 	state.active_orders.erase(city.node_id)
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
-	print("Flourishes (items 57-58): pop and hop each fire once, are consumed by the render, and never stack.")
+	print("Flourishes (items 57-59): pop/hop/nudge/shake each fire once, are consumed by the render, and never stack.")
 
 func _column_marker_at(centre: Vector3, radius: float) -> FoodBubbleMarker:
 	var visuals: Node3D = _main.get_node("GridVisuals")

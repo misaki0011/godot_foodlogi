@@ -33,33 +33,52 @@ const COLUMN_SCALE := 0.72
 ## the delivered freshness rates against that settlement's own thresholds.
 enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 
-## A newly opened order pops its column in, once. Scaled about the marker's
-## own origin, which sits at the node, so the column springs UP out of the
-## settlement rather than inflating around its own middle.
+## ---------- flourishes ----------
 ##
-## Item 30 ruled out animating the red halo, on the grounds that on day one
-## every settlement is red and a screen of pulsing bubbles is worse than no
-## emphasis at all. This is the opposite case and the distinction is the
-## point: a pop marks a discrete, rare event -- one per order the player just
-## earned -- and stops on its own. Nothing here ever repeats or idles.
-## Starting smaller both enlarges the travel and deepens the overshoot:
-## TRANS_BACK's kick is proportional to the interpolated range, so 0.30 peaks
-## near 1.07 where 0.55 only reached about 1.045.
-const POP_FROM_SCALE := 0.30
-const POP_SEC := 0.42
+## One per column per day, and they form a vocabulary rather than three
+## settings of one motion:
+##
+##   POP     scale, springing up from nothing -- a new order (§6)
+##   HOP     a full vertical bounce -- a line paid its bonus
+##   NUDGE   a shallow vertical lift -- a line paid, no bonus
+##   SHAKE   a horizontal wobble -- a line paid nothing
+##
+## The axis carries the meaning. Vertical is "this paid", and its height says
+## how well; horizontal is "this did not pay" and is the odd one out on
+## purpose, because that is the categorical break in §9's tiers -- amber and
+## green are neighbours, red is a different kind of day. Scale is reserved for
+## POP so a new order never reads as a variant of a delivery.
+##
+## Item 30 kept the red halo static because on day one every settlement is red
+## and a screen of pulsing bubbles is worse than no emphasis at all. These are
+## one-shot and event-driven rather than idling, which is the distinction --
+## but SHAKE is the one that most tests it, since red is also the resting
+## state of anything not yet connected. See the note in SPEC.md item 59.
+enum Flourish { NONE, POP, HOP, NUDGE, SHAKE }
 
-## A settlement that delivered a line at bonus freshness hops, once, on the
-## render that follows the day. Scale is the pop's verb and position is the
-## jump's, so the two events never look like variants of each other.
-##
-## Height is in world units and the camera eats more than half of it: at a
-## -60 degree pitch the up vector is (0, 0.5, -0.866), so a +0.5 world-Y step
-## reads as 0.25 units of SCREEN rise -- about 18% of a 1.38-unit chip. Small,
-## which is what was asked for, and what keeps five of them at once reading as
-## a flourish rather than a disturbance.
-const JUMP_HEIGHT := 0.5
-const JUMP_UP_SEC := 0.16
-const JUMP_DOWN_SEC := 0.22
+## Springing from nearly nothing both lengthens the travel and deepens the
+## overshoot: TRANS_BACK's kick is proportional to the range it interpolates.
+const POP_FROM_SCALE := 0.18
+const POP_SEC := 0.50
+
+## Heights are world units and the camera eats more than half of each: at a
+## -60 degree pitch the up vector is (0, 0.5, -0.866), so a +1.1 world-Y step
+## reads as 0.55 units of SCREEN rise against a 1.38-unit chip -- about 40%.
+## The nudge is deliberately well under half the hop, so "paid" and "paid
+## well" are the same gesture at two amplitudes.
+const HOP_HEIGHT := 1.1
+const HOP_UP_SEC := 0.18
+const HOP_DOWN_SEC := 0.26
+const NUDGE_HEIGHT := 0.45
+const NUDGE_UP_SEC := 0.14
+const NUDGE_DOWN_SEC := 0.18
+
+## Horizontal offsets map 1:1 onto screen X -- the camera has no yaw -- so the
+## shake needs no compensation and reads at its stated size.
+const SHAKE_OFFSET := 0.40
+const SHAKE_STEP_SEC := 0.075
+const SHAKE_SWINGS := 4
+const SHAKE_DECAY := 0.62
 
 @onready var _canvas: BubbleCanvas = $SubViewport/BubbleCanvas
 @onready var _viewport: SubViewport = $SubViewport
@@ -120,25 +139,56 @@ func _apply(px: Vector2i, shift_x: float) -> void:
 	_sprite.pixel_size = BASE_PIXEL_SIZE * COLUMN_SCALE
 	_sprite.offset = Vector2(shift_x, px.y * 0.5)
 
-## Springs the column in from POP_FROM_SCALE with a slight overshoot. Called
-## by main.gd on the one render that follows an order opening; a marker is
-## rebuilt from scratch on every render, so there is nothing to reset and no
-## way for two pops to stack on one marker.
-func pop() -> void:
+## What play() was last asked for. Recorded because a tween applies nothing
+## until it processes, so a marker's position is still at rest on the frame it
+## was told to hop -- there is no synchronous way to observe the motion. The
+## decision is the part that can break anyway (which flourish for which
+## status, once only, pop first); the interpolation is Godot's.
+var played: Flourish = Flourish.NONE
+
+## Plays one flourish. Called by main.gd on the single render that follows a
+## day or an order opening, on a marker rebuilt from scratch -- so there is
+## nothing to reset and no way for two to stack on one marker.
+func play(flourish: Flourish) -> void:
+	played = flourish
+	match flourish:
+		Flourish.POP:
+			_pop()
+		Flourish.HOP:
+			_rise(HOP_HEIGHT, HOP_UP_SEC, HOP_DOWN_SEC, Tween.TRANS_BOUNCE)
+		Flourish.NUDGE:
+			_rise(NUDGE_HEIGHT, NUDGE_UP_SEC, NUDGE_DOWN_SEC, Tween.TRANS_SINE)
+		Flourish.SHAKE:
+			_shake()
+
+func _pop() -> void:
 	scale = Vector3.ONE * POP_FROM_SCALE
 	create_tween().tween_property(self, "scale", Vector3.ONE, POP_SEC) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-## A small hop, up and back with a bounce on the landing. Like pop(), called
-## on the one render that follows a day, on a marker rebuilt from scratch --
-## so there is nothing to reset and no way for two to stack.
-func jump() -> void:
+## Up and back. The landing transition is what separates a hop from a nudge
+## as much as the height does: BOUNCE lands with a little settle, SINE just
+## sets the column back down.
+func _rise(height: float, up_sec: float, down_sec: float, landing: Tween.TransitionType) -> void:
 	var rest := position
 	var tween := create_tween()
-	tween.tween_property(self, "position", rest + Vector3(0.0, JUMP_HEIGHT, 0.0), JUMP_UP_SEC) \
+	tween.tween_property(self, "position", rest + Vector3(0.0, height, 0.0), up_sec) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(self, "position", rest, JUMP_DOWN_SEC) \
-		.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(self, "position", rest, down_sec) \
+		.set_trans(landing).set_ease(Tween.EASE_OUT)
+
+## A damped left-right wobble, each swing shorter than the last so it reads as
+## settling rather than stopping dead.
+func _shake() -> void:
+	var rest := position
+	var tween := create_tween()
+	var swing := SHAKE_OFFSET
+	for i in SHAKE_SWINGS:
+		var dir := 1.0 if i % 2 == 0 else -1.0
+		tween.tween_property(self, "position", rest + Vector3(swing * dir, 0.0, 0.0), SHAKE_STEP_SEC) \
+			.set_trans(Tween.TRANS_SINE)
+		swing *= SHAKE_DECAY
+	tween.tween_property(self, "position", rest, SHAKE_STEP_SEC).set_trans(Tween.TRANS_SINE)
 
 func _ratio_text(current: float, max_amount: float) -> String:
 	return "%d/%d" % [roundi(current), roundi(max_amount)]
