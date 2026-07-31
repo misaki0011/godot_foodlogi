@@ -129,7 +129,7 @@ func setup_settlement_column(entries: Array, bonus_freshness: float, min_freshne
 			"earned": e.get("earned", 0.0),
 			"withheld": e.get("withheld", 0.0),
 		})
-	_apply(BubbleCanvas.column_size(rows.size(), true), BubbleCanvas.column_x_shift())
+	_apply(BubbleCanvas.column_size(rows.size(), true), BubbleCanvas.column_x_shift(rows.size()))
 	_canvas.set_settlement_column(rows)
 	_bake()
 

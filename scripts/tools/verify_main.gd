@@ -50,6 +50,7 @@ func _report() -> void:
 	_test_multi_tile_settlement_draws_one_stack(map_data)
 	_test_glyph_column_collapses_and_expands(map_data)
 	_test_flourishes_fire_once(map_data)
+	_test_columns_never_overlap(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
 	var farm: NodeData = _node_by_id(map_data, "farm")
@@ -695,7 +696,7 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 		"Collapsed and expanded columns must be the same height (%d vs %d)" % [collapsed.y, expanded.y])
 	assert(expanded.x > collapsed.x,
 		"Expanding must widen the column (%d vs %d)" % [collapsed.x, expanded.x])
-	assert(is_equal_approx(BubbleCanvas.column_x_shift(), (expanded.x - collapsed.x) * 0.5),
+	assert(is_equal_approx(BubbleCanvas.column_x_shift(3), (expanded.x - collapsed.x) * 0.5),
 		"The expanded column must be nudged right by half the width it gained, or the glyphs slide")
 
 	# Severity order: red, then amber, then green.
@@ -724,6 +725,68 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
 	print("Glyph column (UI-04): one marker either way, same height collapsed and expanded, sorted worst-first.")
+
+## No two nodes\' columns may overlap on screen, at their WORST case: every
+## demand line open at once.
+##
+## This is a distance rule derived from the chip geometry rather than guessed.
+## Columns are billboards, so their extent in the camera plane is exactly
+## pixels * pixel_size -- and the camera is orthographic with no yaw, so a
+## world point\'s position in that plane is just its dot product with the
+## camera basis. Two columns collide when those rectangles intersect.
+##
+## It failed before MAX_COLUMN_ROWS existed: a five-chip City E column stood
+## 7.62 units tall and needed 4.4 tiles of clear space above it, where Town D
+## sits 3.5 away and Village C is 3 above Town D. Capping the rows bounds the
+## height at 4.68 and the map clears it. The check matters most for the region
+## roster (§12.1) -- a new map can be authored into this the moment two
+## settlements are placed a few tiles apart.
+func _test_columns_never_overlap(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var camera: Camera3D = _main.get_node("Camera3D")
+	var right := camera.global_transform.basis.x
+	var up := camera.global_transform.basis.y
+	var pixel := FoodBubbleMarker.BASE_PIXEL_SIZE * FoodBubbleMarker.COLUMN_SCALE
+
+	# Worst case: every authored line open at every settlement.
+	var saved := state.active_orders.duplicate(true)
+	for node in map_data.node_placements:
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			state.active_orders[node.node_id] = node.demand.duplicate()
+	_main.call("_render_grid")
+
+	var rects: Array[Dictionary] = []
+	for node in map_data.node_placements:
+		var count := 1
+		if node.node_type == GameEnums.NodeType.SETTLEMENT:
+			count = node.demand.size()
+		var is_source := node.node_type == GameEnums.NodeType.SOURCE
+		var px: Vector2i = BubbleCanvas.column_size(count, false, is_source)
+		var base: Vector3 = _main.call("_node_center", node)
+		base.y += 2.5 if is_source else 3.1
+		# Billboards face the camera, so the sprite spans exactly px * pixel
+		# in the camera plane, anchored by its bottom edge.
+		var u := base.dot(right)
+		var v := base.dot(up)
+		rects.append({
+			"id": node.node_id,
+			"rect": Rect2(u - px.x * pixel * 0.5, v, px.x * pixel, px.y * pixel),
+		})
+
+	for i in rects.size():
+		for j in range(i + 1, rects.size()):
+			var a: Dictionary = rects[i]
+			var b: Dictionary = rects[j]
+			assert(not (a.rect as Rect2).intersects(b.rect),
+				"%s and %s overlap on screen at full demand: %s vs %s -- move them apart or lower MAX_COLUMN_ROWS" % [
+					a.id, b.id, a.rect, b.rect,
+				])
+
+	state.active_orders = saved
+	_main.call("_render_grid")
+	print("Column spacing: all %d nodes clear of each other with every line open (max %d rows)." % [
+		rects.size(), BubbleCanvas.MAX_COLUMN_ROWS,
+	])
 
 ## Each status plays its own flourish exactly once on the render after a day,
 ## and a new order's pop suppresses all of them (items 57-59).

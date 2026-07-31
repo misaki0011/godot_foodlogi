@@ -259,6 +259,26 @@ const CHIP_STATUS_BACKING := Color(0.08, 0.09, 0.11, 0.92)
 ## units and could not be held in line. Folding the balloons into one canvas
 ## deletes that problem rather than compensating for it.
 
+## A column wraps into a second (and third) column rather than growing
+## without limit. Height is what collides between neighbours: the camera turns
+## one tile of world Z into 2 * 0.866 = 1.73 units of screen rise, so a
+## five-chip column at 7.62 units needs 4.4 tiles of clear space above its
+## node -- more than region 1 has anywhere (Village C to Town D is 3, Town D
+## to City E is 3.5), which is why their chips ran into each other.
+##
+## Capping the ROWS and flowing the rest sideways bounds the height at 4.68
+## units, needing 2.7 tiles, which every pair on the map clears. Width grows
+## instead, and width is the cheap axis here: two columns only collide if they
+## overlap on BOTH axes, and settlements far enough apart vertically never do.
+## Nothing is hidden -- every open order still has its chip.
+const MAX_COLUMN_ROWS := 3
+
+static func columns_for(count: int) -> int:
+	return maxi(1, ceili(float(maxi(count, 1)) / float(MAX_COLUMN_ROWS)))
+
+static func rows_for(count: int) -> int:
+	return mini(maxi(count, 1), MAX_COLUMN_ROWS)
+
 ## Outer size of one row: a chip is exactly this square.
 static func row_size() -> float:
 	return CHIP_GLYPH_RADIUS * 2.0 + CHIP_PADDING * 2.0
@@ -281,17 +301,21 @@ static func column_width(expanded: bool, source := false) -> float:
 ## `expanded`, so a column occupies the same vertical space collapsed or not
 ## and row i lands at the same screen height in both.
 static func column_size(count: int, expanded: bool, source := false) -> Vector2i:
-	var n := maxi(count, 1)
+	var rows := rows_for(count)
+	var cols := columns_for(count)
+	var row_w := column_width(expanded, source) - CHIP_MARGIN * 2.0
 	return Vector2i(
-		ceili(column_width(expanded, source)),
-		ceili(n * row_size() + (n - 1) * CHIP_GAP + CHIP_MARGIN * 2.0 + TAIL_HEIGHT),
+		ceili(cols * row_w + (cols - 1) * CHIP_GAP + CHIP_MARGIN * 2.0),
+		ceili(rows * row_size() + (rows - 1) * CHIP_GAP + CHIP_MARGIN * 2.0 + TAIL_HEIGHT),
 	)
 
 ## How far right an expanded column must be nudged for its glyph cell to land
 ## exactly where the collapsed column's chips were. Both canvases are centred
 ## on the marker, so widening one would otherwise slide the glyphs left.
-static func column_x_shift() -> float:
-	return (column_width(true) - column_width(false)) * 0.5
+## Takes the count because wrapping (MAX_COLUMN_ROWS) makes both widths depend
+## on how many orders are open.
+static func column_x_shift(count: int) -> float:
+	return (column_size(count, true).x - column_size(count, false).x) * 0.5
 
 ## Centre of the glyph cell within a row, measured from the canvas's left
 ## edge. Identical in both states -- this is the anchor the whole layout is
@@ -367,13 +391,16 @@ func _draw_column() -> void:
 	var source := not _expanded and not _has_tail
 	var row_w := column_width(_expanded, source) - CHIP_MARGIN * 2.0
 	var glyph_r := CHIP_GLYPH_RADIUS
-	# The glyph cell is always the leftmost row_h square of a row, so the
-	# glyph lands at the same place in both states.
-	var cell_cx := CHIP_MARGIN + row_h * 0.5
 
-	var y := CHIP_MARGIN
+	var index := -1
 	for entry in _entries:
-		var rect := Rect2(Vector2(CHIP_MARGIN, y), Vector2(row_w, row_h))
+		index += 1
+		# Column-major: fill the first column top-down, then flow sideways.
+		# Severity order therefore still puts the worst line at the top left.
+		var col := index / MAX_COLUMN_ROWS
+		var row := index % MAX_COLUMN_ROWS
+		var y := CHIP_MARGIN + row * (row_h + CHIP_GAP)
+		var rect := Rect2(Vector2(CHIP_MARGIN + col * (row_w + CHIP_GAP), y), Vector2(row_w, row_h))
 		var status: FoodBubbleMarker.Status = entry.status
 		var judged := _is_delivery_status(status)
 		var accent := status_color(status)
@@ -390,7 +417,7 @@ func _draw_column() -> void:
 		var border_width := GREEN_BORDER_WIDTH if status == FoodBubbleMarker.Status.GREEN else CHIP_BORDER_WIDTH
 		_draw_body(rect, radius, fill, border, border_width)
 
-		var cell_centre := Vector2(cell_cx, y + row_h * 0.5)
+		var cell_centre := Vector2(rect.position.x + row_h * 0.5, y + row_h * 0.5)
 		# Stroked in the chip's light ink: this outline is the only thing
 		# separating a pale milk bottle -- or a green carrot on a green-tinted
 		# row -- from the ground behind it (FoodGlyphs), so it cannot be a hint.
@@ -402,7 +429,7 @@ func _draw_column() -> void:
 		var amount: String = entry.get("amount_text", "")
 		if source and amount != "":
 			var spent: bool = status == FoodBubbleMarker.Status.MUTED
-			var text_x := cell_cx + row_h * 0.5 + ROW_TEXT_GAP
+			var text_x := rect.position.x + row_h + ROW_TEXT_GAP
 			_draw_fitted(
 				amount,
 				text_x,
@@ -417,23 +444,25 @@ func _draw_column() -> void:
 		# layout is that nothing the eye is tracking moves.
 		if judged:
 			var sr := row_h * CHIP_STATUS_RATIO * 0.5
-			var sc := Vector2(cell_cx + row_h * 0.5, y + row_h) - Vector2(sr, sr) - Vector2(CHIP_BORDER_WIDTH, CHIP_BORDER_WIDTH)
+			var sc := Vector2(rect.position.x + row_h, y + row_h) - Vector2(sr, sr) - Vector2(CHIP_BORDER_WIDTH, CHIP_BORDER_WIDTH)
 			draw_circle(sc, sr * 1.06, CHIP_STATUS_BACKING)
 			_draw_status_mark(status, sc, sr, accent)
 
 		if _expanded:
-			_draw_row_detail(entry, rect, cell_cx + row_h * 0.5, accent)
-		y += row_h + CHIP_GAP
+			_draw_row_detail(entry, rect, rect.position.x + row_h, accent)
 
-	# One tail for the whole column, hung from the glyph cell rather than the
-	# panel's centre -- so it keeps pointing at the node when an expanded
-	# panel widens to the right. Sources get none: a tail is a settlement's
-	# tell, the way the post used to be a source's.
+	# One tail for the whole column, hung from the FIRST column's glyph cell
+	# rather than the panel's centre -- so it keeps pointing at the node when
+	# an expanded panel widens, or when a wrapped one grows a second column.
+	# Sources get none: a tail is a settlement's tell, the way the post used
+	# to be a source's.
 	if _has_tail:
 		# The bottom row's colour, not the worst row's: the tail hangs off
 		# that row and reads as part of it. Overall severity is already the
 		# top chip's job.
-		_draw_column_tail(y - CHIP_GAP, status_color(_entries[-1].status))
+		var last_row := rows_for(_entries.size())
+		var bottom := CHIP_MARGIN + last_row * row_h + (last_row - 1) * CHIP_GAP
+		_draw_column_tail(bottom, status_color(_entries[mini(last_row, _entries.size()) - 1].status))
 
 ## The right-hand part of an expanded row: the amount, the freshness
 ## percentage under it, and the bar. Everything here lives in the space a
