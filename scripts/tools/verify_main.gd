@@ -725,7 +725,8 @@ func _test_glyph_column_collapses_and_expands(map_data: MapData) -> void:
 	_main.call("_render_grid")
 	print("Glyph column (UI-04): one marker either way, same height collapsed and expanded, sorted worst-first.")
 
-## A newly opened order pops its column in exactly ONCE (item 57).
+## A newly opened order pops its column in exactly ONCE, and a green line
+## hops exactly once, and the two never play together (items 57-58).
 ##
 ## The pop is a tween on a marker that _render_grid destroys and rebuilds on
 ## every hover change, day and build -- so the thing that can silently break
@@ -764,9 +765,36 @@ func _test_new_order_pops_once(map_data: MapData) -> void:
 		"A pop must be cleared even when bubbles are off, not saved up")
 	_main.set("_bubbles_mode", 0)  # BubblesMode.GLYPHS
 
-	state.active_orders.erase(city.node_id)
+	# A green line hops on the render after a day (item 58), and the flag that
+	# arms it is consumed by that same render -- otherwise every settlement
+	# holding a green line would hop again on each hover.
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
+	}
+	_main.set("_day_just_ran", true)
 	_main.call("_render_grid")
-	print("New-order pop (item 57): fires once, consumed by the render, not banked when hidden.")
+	var hopped := _column_marker_at(centre, 2.5)
+	assert(hopped != null and hopped.position.y > _main.call("_node_center", city).y,
+		"A settlement holding a green line must hop on the render after a day")
+	assert(not _main.get("_day_just_ran"),
+		"The render must consume _day_just_ran, or every hover re-hops the map")
+
+	# A new order outranks a good delivery: one flourish per column, never both.
+	var both: Dictionary = _main.get("_pending_pops")
+	both[city.node_id] = true
+	_main.set("_day_just_ran", true)
+	_main.call("_render_grid")
+	var popped_not_hopped := _column_marker_at(centre, 2.5)
+	assert(popped_not_hopped != null and popped_not_hopped.scale.x < 1.0,
+		"With both pending, the column must pop")
+	assert(is_equal_approx(popped_not_hopped.position.y, _main.call("_node_center", city).y + 3.1),
+		"A popping column must not also be mid-hop")
+
+	state.active_orders.erase(city.node_id)
+	state.last_settlement_status.erase(city.node_id)
+	_main.call("_render_grid")
+	print("Flourishes (items 57-58): pop and hop each fire once, are consumed by the render, and never stack.")
 
 func _column_marker_at(centre: Vector3, radius: float) -> FoodBubbleMarker:
 	var visuals: Node3D = _main.get_node("GridVisuals")

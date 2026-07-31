@@ -42,8 +42,24 @@ enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 ## emphasis at all. This is the opposite case and the distinction is the
 ## point: a pop marks a discrete, rare event -- one per order the player just
 ## earned -- and stops on its own. Nothing here ever repeats or idles.
-const POP_FROM_SCALE := 0.55
-const POP_SEC := 0.34
+## Starting smaller both enlarges the travel and deepens the overshoot:
+## TRANS_BACK's kick is proportional to the interpolated range, so 0.30 peaks
+## near 1.07 where 0.55 only reached about 1.045.
+const POP_FROM_SCALE := 0.30
+const POP_SEC := 0.42
+
+## A settlement that delivered a line at bonus freshness hops, once, on the
+## render that follows the day. Scale is the pop's verb and position is the
+## jump's, so the two events never look like variants of each other.
+##
+## Height is in world units and the camera eats more than half of it: at a
+## -60 degree pitch the up vector is (0, 0.5, -0.866), so a +0.5 world-Y step
+## reads as 0.25 units of SCREEN rise -- about 18% of a 1.38-unit chip. Small,
+## which is what was asked for, and what keeps five of them at once reading as
+## a flourish rather than a disturbance.
+const JUMP_HEIGHT := 0.5
+const JUMP_UP_SEC := 0.16
+const JUMP_DOWN_SEC := 0.22
 
 @onready var _canvas: BubbleCanvas = $SubViewport/BubbleCanvas
 @onready var _viewport: SubViewport = $SubViewport
@@ -112,6 +128,17 @@ func pop() -> void:
 	scale = Vector3.ONE * POP_FROM_SCALE
 	create_tween().tween_property(self, "scale", Vector3.ONE, POP_SEC) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+## A small hop, up and back with a bounce on the landing. Like pop(), called
+## on the one render that follows a day, on a marker rebuilt from scratch --
+## so there is nothing to reset and no way for two to stack.
+func jump() -> void:
+	var rest := position
+	var tween := create_tween()
+	tween.tween_property(self, "position", rest + Vector3(0.0, JUMP_HEIGHT, 0.0), JUMP_UP_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(self, "position", rest, JUMP_DOWN_SEC) \
+		.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
 
 func _ratio_text(current: float, max_amount: float) -> String:
 	return "%d/%d" % [roundi(current), roundi(max_amount)]

@@ -127,6 +127,14 @@ var _focused_node_id: String = ""
 ## renders a hover or a build triggers afterwards.
 var _pending_pops: Dictionary = {}
 
+## True for exactly one render: the one _run_day triggers after simulating.
+## A settlement holding a green line hops on that render (item 58). Kept as a
+## flag rather than a second pending-set because the green test already exists
+## inside _render_settlement_bubbles -- recomputing it here would be a second
+## copy of a rule §9 owns, which is how a display starts disagreeing with the
+## treasury.
+var _day_just_ran := false
+
 var _funds_label: Label
 var _day_label: Label
 var _best_grade_label: Label
@@ -1082,6 +1090,7 @@ func _run_day() -> void:
 	else:
 		_report_advances_day = true
 		_show_report(report)
+	_day_just_ran = true
 	_render_grid()
 	_update_ui()
 
@@ -1303,9 +1312,11 @@ func _render_grid() -> void:
 	_render_established_routes()
 	if _bubbles_mode != BubblesMode.OFF:
 		_render_supply_bubbles()
-	# Cleared whether or not anything drew: a pop the player could not have
-	# seen (bubbles off) is spent, not banked for whenever they turn them on.
+	# Cleared whether or not anything drew: a flourish the player could not
+	# have seen (bubbles off) is spent, not banked for whenever they turn
+	# them back on.
 	_pending_pops.clear()
+	_day_just_ran = false
 
 ## Continuously overlays a bright gold line along every tile that lies on a
 ## complete source->settlement path (an "established route"), so the player
@@ -1474,7 +1485,7 @@ func _shows_full_bubbles(n: NodeData) -> bool:
 ## `is_settlement` decides the tail and the row width both -- a source row is
 ## wider, carrying its draw-down beside a full-size glyph rather than under a
 ## shrunken one (item 56).
-func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, popping := false) -> void:
+func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool, popping := false, jumping := false) -> void:
 	if entries.is_empty():
 		return
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
@@ -1483,6 +1494,8 @@ func _spawn_glyph_column(base_pos: Vector3, entries: Array, is_settlement: bool,
 	column.setup_glyph_column(entries, is_settlement)
 	if popping:
 		column.pop()
+	elif jumping:
+		column.jump()
 
 func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var status: Dictionary = _state.last_source_status.get(n.node_id, {})
@@ -1628,9 +1641,17 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 		})
 
 	var popping: bool = _pending_pops.has(n.node_id)
+	# A new order outranks a good delivery: the pop is the larger event, and
+	# playing both on one column would just read as a stumble.
+	var jumping := false
+	if not popping and _day_just_ran:
+		for e in entries:
+			if e.status == FoodBubbleMarker.Status.GREEN:
+				jumping = true
+				break
 
 	if not _shows_full_bubbles(n):
-		_spawn_glyph_column(base_pos, glyphs, true, popping)
+		_spawn_glyph_column(base_pos, glyphs, true, popping, jumping)
 		return
 
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
@@ -1639,6 +1660,8 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
 	if popping:
 		column.pop()
+	elif jumping:
+		column.jump()
 
 ## Severity order for a settlement's open lines: red, then amber, then
 ## green, with the biggest shortfall first inside a tier.
