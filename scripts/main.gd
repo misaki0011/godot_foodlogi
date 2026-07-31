@@ -1733,16 +1733,33 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 ## fading. The row already prints per-line earnings when expanded (item 54),
 ## but that needs a hover; this is the at-a-glance version, and it appears at
 ## the one moment the number changes.
-const PAYOUT_RISE := 1.6
-const PAYOUT_SEC := 1.5
-const PAYOUT_FONT_SIZE := 88
+## Sized against the things beside it rather than picked: cap height on screen
+## is font_size * pixel_size, so 128 * 0.0075 = 0.96 world units against a
+## 1.38-unit chip and the row's own 0.47-unit amount text -- about 70% of a
+## chip, and twice the text inside one. The first version came to 0.35,
+## smaller than the number it was announcing, which is why it read as an
+## afterthought. Kept as a large font at a small pixel_size rather
+## than the reverse, since font_size is what the glyphs are rasterised at.
+const PAYOUT_RISE := 2.3
+const PAYOUT_SEC := 1.7
+const PAYOUT_FONT_SIZE := 128
+const PAYOUT_PIXEL_SIZE := 0.0075
+const PAYOUT_OUTLINE_SIZE := 28
+## A short scale-in so a label this size arrives rather than blinks on. It
+## overlaps the first fifth of the rise, so the whole thing still reads as one
+## movement.
+const PAYOUT_PUNCH_FROM := 0.65
+const PAYOUT_PUNCH_SEC := 0.22
 const PAYOUT_COLOR := Color("9fd8a8")
 const PAYOUT_OUTLINE := Color(0.06, 0.08, 0.07, 0.95)
 
-## Offset from the column's centre. Pushed clear of the widest collapsed
-## settlement column so the label never sits on top of the chips it is
-## describing.
-const PAYOUT_OFFSET := Vector3(1.35, 0.6, 0.0)
+## Offset from the column's centre, and the label is LEFT-aligned so it grows
+## rightward from there. Centred text was tried first and the overlap scales
+## with the amount: "+§187" cleared the chip but "+§1870" grew back over its
+## right edge, because half of a longer string reaches further in. Anchoring
+## the left edge just past the chip's half-width (208px * 0.0072 / 2 = 0.75)
+## makes the clearance the same whatever the settlement earned.
+const PAYOUT_OFFSET := Vector3(0.95, 0.8, 0.0)
 
 func _spawn_payout(base_pos: Vector3, earned: float) -> void:
 	# Nothing earned is not worth a label: that settlement is already shaking,
@@ -1752,10 +1769,11 @@ func _spawn_payout(base_pos: Vector3, earned: float) -> void:
 	var label := Label3D.new()
 	label.text = "+§%d" % roundi(earned)
 	label.font_size = PAYOUT_FONT_SIZE
-	label.pixel_size = 0.004
+	label.pixel_size = PAYOUT_PIXEL_SIZE
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.modulate = PAYOUT_COLOR
-	label.outline_size = 18
+	label.outline_size = PAYOUT_OUTLINE_SIZE
 	label.outline_modulate = PAYOUT_OUTLINE
 	# Drawn over whatever it passes in front of. A payout that disappears
 	# behind a chip for half its flight reads as a glitch.
@@ -1765,8 +1783,12 @@ func _spawn_payout(base_pos: Vector3, earned: float) -> void:
 	_fx_layer.add_child(label)
 	label.position = base_pos + PAYOUT_OFFSET
 
+	label.scale = Vector3.ONE * PAYOUT_PUNCH_FROM
+
 	var tween := create_tween()
 	tween.set_parallel(true)
+	tween.tween_property(label, "scale", Vector3.ONE, PAYOUT_PUNCH_SEC) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_property(label, "position", label.position + Vector3(0.0, PAYOUT_RISE, 0.0), PAYOUT_SEC) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tween.tween_property(label, "modulate:a", 0.0, PAYOUT_SEC) \
