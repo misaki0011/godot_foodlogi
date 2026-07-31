@@ -790,6 +790,33 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 		assert(not _main.get("_day_just_ran"),
 			"The render must consume _day_just_ran, or every hover re-plays the map")
 
+	# The payout label lives outside GridVisuals, or _render_grid would destroy
+	# it mid-flight the first time the pointer moved. It also only appears for
+	# a settlement that actually earned: "+§0" would say nothing the shake has
+	# not already said.
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
+	}
+	var fx: Node3D = _main.get_node("Effects")
+	_clear_children(fx)
+	_main.set("_day_just_ran", true)
+	_main.call("_render_grid")
+	assert(fx.get_child_count() > 0, "A paying settlement must float a payout label")
+	assert(fx.get_child(0).text.begins_with("+§"), "The payout label must read as money, got '%s'" % fx.get_child(0).text)
+	_main.call("_render_grid")
+	assert(fx.get_child_count() > 0, "A re-render must not destroy a payout label in flight")
+
+	_clear_children(fx)
+	state.last_settlement_status[city.node_id] = {
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0,
+			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 100.0},
+	}
+	_main.set("_day_just_ran", true)
+	_main.call("_render_grid")
+	assert(fx.get_child_count() == 0, "A settlement that earned nothing must not float a label")
+	_clear_children(fx)
+
 	# Without a day behind it, a render plays nothing at all.
 	_main.call("_render_grid")
 	var quiet := _column_marker_at(centre, 3.0)
@@ -810,6 +837,11 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
 	print("Flourishes (items 57-59): pop/hop/nudge/shake each fire once, are consumed by the render, and never stack.")
+
+func _clear_children(node: Node) -> void:
+	for child in node.get_children():
+		node.remove_child(child)
+		child.free()
 
 func _column_marker_at(centre: Vector3, radius: float) -> FoodBubbleMarker:
 	var visuals: Node3D = _main.get_node("GridVisuals")

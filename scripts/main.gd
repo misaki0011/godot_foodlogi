@@ -95,6 +95,7 @@ var _tool := "route"
 var _nodes_by_pos: Dictionary = {}
 var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
+var _fx_layer: Node3D
 
 ## How much of a node's order book is drawn on the map at rest.
 ##
@@ -289,6 +290,13 @@ func _ready() -> void:
 	_grid_visuals = Node3D.new()
 	_grid_visuals.name = "GridVisuals"
 	add_child(_grid_visuals)
+	# One-shot effects live outside GridVisuals because _render_grid clears
+	# that whole node on every hover, day and build -- a payout label parented
+	# there would be destroyed mid-flight the moment the pointer moved. These
+	# free themselves when their tween ends.
+	_fx_layer = Node3D.new()
+	_fx_layer.name = "Effects"
+	add_child(_fx_layer)
 	_drag_preview_visuals = Node3D.new()
 	_drag_preview_visuals.name = "DragPreviewVisuals"
 	add_child(_drag_preview_visuals)
@@ -1648,6 +1656,14 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	elif _day_just_ran and not entries.is_empty():
 		flourish = _flourish_for(entries[0].status)
 
+	# The day's takings for this settlement, summed from the same per-line
+	# figures run_day recorded (item 54) rather than recomputed here.
+	if _day_just_ran:
+		var earned := 0.0
+		for e in entries:
+			earned += e.earned
+		_spawn_payout(base_pos, earned)
+
 	if not _shows_full_bubbles(n):
 		_spawn_glyph_column(base_pos, glyphs, true, flourish)
 		return
@@ -1657,6 +1673,51 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	column.position = base_pos
 	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
 	column.play(flourish)
+
+## ---------- payout labels ----------
+## What a settlement earned that day, floating up beside its column and
+## fading. The row already prints per-line earnings when expanded (item 54),
+## but that needs a hover; this is the at-a-glance version, and it appears at
+## the one moment the number changes.
+const PAYOUT_RISE := 1.6
+const PAYOUT_SEC := 1.5
+const PAYOUT_FONT_SIZE := 88
+const PAYOUT_COLOR := Color("9fd8a8")
+const PAYOUT_OUTLINE := Color(0.06, 0.08, 0.07, 0.95)
+
+## Offset from the column's centre. Pushed clear of the widest collapsed
+## settlement column so the label never sits on top of the chips it is
+## describing.
+const PAYOUT_OFFSET := Vector3(1.35, 0.6, 0.0)
+
+func _spawn_payout(base_pos: Vector3, earned: float) -> void:
+	# Nothing earned is not worth a label: that settlement is already shaking,
+	# and "+§0" would be a second way of saying the same nothing.
+	if earned <= 0.0:
+		return
+	var label := Label3D.new()
+	label.text = "+§%d" % roundi(earned)
+	label.font_size = PAYOUT_FONT_SIZE
+	label.pixel_size = 0.004
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.modulate = PAYOUT_COLOR
+	label.outline_size = 18
+	label.outline_modulate = PAYOUT_OUTLINE
+	# Drawn over whatever it passes in front of. A payout that disappears
+	# behind a chip for half its flight reads as a glitch.
+	label.no_depth_test = true
+	label.render_priority = 4
+	label.outline_render_priority = 3
+	_fx_layer.add_child(label)
+	label.position = base_pos + PAYOUT_OFFSET
+
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(label, "position", label.position + Vector3(0.0, PAYOUT_RISE, 0.0), PAYOUT_SEC) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.tween_property(label, "modulate:a", 0.0, PAYOUT_SEC) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.chain().tween_callback(label.queue_free)
 
 ## Which flourish a column plays for its worst line's status. The axis is the
 ## meaning: vertical says the line paid and its height says how well, while
