@@ -217,9 +217,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 67. **The board becomes a bar of chocolate, and the countryside moves on top of it.** The terrain blocks were chunky cubes with modelled detail baked into every one -- a grass cap, four corner tufts, raised water ripples, cobbles on the paved road -- sitting on a plinth six units deep. Every tile therefore said the same small thing 294 times, and the repetition is what made it read as texture noise rather than as ground.
     **Tiles are flat plates now** (§8.5): a light coloured top face over a chamfered darker rim, over a full-footprint skirt. Route tiles are built the same way (§4.1), so a road and the ground it crosses are visibly the same kind of object, and the tiers separate by colour -- sand, orange, umber -- rather than by which pattern is stamped on them, with Main reusing Paved's deck a long way down the value ramp rather than carrying a design of its own.
     **The rim is the grid line, and it has to be colour rather than shading.** Two tiles put their rims together and the seam reads as a dark groove. Letting the chamfer's own shading do that work looked right on desktop and would have failed everywhere else: shadows are desktop-only (§3.6), and with them off a shading-only groove leaves the whole board a single flat green sheet. The skirt is structural for a related reason -- the body is only its full width across a band at its middle, so with nothing full-footprint beneath it the groove between two tiles is a hole the camera sees straight through.
-    **What the tiles gave up, the ground gained.** A tree or a bush now stands on roughly a third of the free plains cells, from four props scattered with a small random yaw, size and offset. Detail moves from *inside* every tile to *on* a minority of them, which is what turns 294 identical squares into countryside.
+    **What the tiles gave up, the ground gained.** A tree or a bush now stands on roughly a third of the free plains cells, from four props -- two trees, and two bushes that are rounded blocks sitting straight on the grass, one square and one rectangular, with leaves sprouting out of the top and nothing underneath them. Detail moves from *inside* every tile to *on* a minority of them, which is what turns 294 identical squares into countryside.
     **The breakable part is the bookkeeping, again.** `_render_grid` rebuilds the map on every hover, day and build, so the scatter is a pure function of the cell coordinates rather than a seeded RNG -- anything re-rolled per render makes the forest crawl. Props stand on buildable ground, so the same render hides those on cells in `GameState.grid` and shows the rest; driving it off the whole grid rather than at each build site makes a drag, a sweep, an upgrade and a bulldoze all correct without any of them knowing about it. Nothing grows on a node's footprint or the eight cells around it, since a prop is tall enough to cut across a node's order chips from this camera's fixed angle.
-    **Planters are plum, not the reference art's terracotta.** Red is spoken for on this map (§10.5), and a field of small red dots scattered over open ground reads as a board covered in warnings.
     **Nothing about placement moved.** A tile's top face still lands on the same surface height everything else is built around (`map_to_local(cell) + (0, 1, 0)`), so markers, road slabs, bridge decks, the established-route overlay and the click-to-cell plane are all untouched; only the *bottom* of a tile changed. See §8.5, §4.1.
 
 ### v0.2 → v0.3 — Routing and inspection playtest
@@ -1674,9 +1673,29 @@ be a hole the camera can see straight through.
 corner tufts and the water's raised ripple ridges are gone; the plate is plain
 colour. What replaces them is **vegetation standing on the ground rather than
 built into it**: a tree or a bush on roughly a third of the free plains cells,
-scattered by `TerrainRenderer`. Four props (a broad round-topped tree, a
-taller slim one, a low bush, and a bush in a planter), each with a small
-random yaw, size and offset.
+scattered by `TerrainRenderer`. Four props -- a broad round-topped tree, a
+taller slim one, and two bushes -- each with a small random yaw, size and
+offset.
+
+**A bush is a rounded block sitting straight on the grass**, one square and
+one stretched into a rectangle, with a rosette of leaves sprouting out of the
+top. Nothing underneath: an earlier version stood one of them in a planter,
+which put a piece of furniture on ground the player builds roads over. The
+two shapes are the whole difference between them, so the rectangle's leaves
+gather over ONE end rather than its middle -- a long block with a centred
+rosette reads as a shrub that happens to be wide, while an off-centre cluster
+reads as a hedge with one bushy end, and that is what tells the two apart once
+both are scattered over the same field.
+
+Two things about the bush geometry are load-bearing rather than taste. Its
+corners are rounded by a fixed **fraction** of the block's smallest side, so a
+squat hedge and a tall shrub soften by the same amount visually -- and that
+fraction cannot go much past a sixth, because a chamfered box here is three
+overlapping boxes and at a third of a side the full-width band in the middle
+vanishes and the block degenerates into a plus sign. And the bush body is
+pitched **more saturated than `GRASS_TOP`, lighter than a tree canopy**: a
+green picked halfway between the two comes out almost exactly the tile's own
+colour and the bush disappears into the ground it stands on.
 
 Three rules keep the scatter from fighting the game:
 
@@ -1694,10 +1713,6 @@ Three rules keep the scatter from fighting the game:
   than at each build site, makes every path that edits a cell -- a drag, a
   sweep, an upgrade, a bulldoze -- correct without knowing about it.
 
-Planters are **plum, not the reference art's terracotta**. Red is spoken for
-on this map -- an unfilled order, an over-congested tile, a settlement in need
-(§10.5) -- and a field of small red dots scattered over open ground reads as a
-board covered in warnings from the game's own camera height.
 
 ### Terrain example
 

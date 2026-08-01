@@ -48,8 +48,8 @@ const TERRAIN_MESH_NAMES := {
 const DECOR_SCENES := [
 	preload("res://assets/Environment/glTF/Tree_Round.glb"),
 	preload("res://assets/Environment/glTF/Tree_Tall.glb"),
-	preload("res://assets/Environment/glTF/Bush_Small.glb"),
-	preload("res://assets/Environment/glTF/Bush_Planter.glb"),
+	preload("res://assets/Environment/glTF/Bush_Square.glb"),
+	preload("res://assets/Environment/glTF/Bush_Rect.glb"),
 ]
 
 ## Share of eligible cells that grow something. High enough to read as

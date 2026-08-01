@@ -24,7 +24,8 @@ on a tile at map_to_local(cell) + (0, 1, 0). Changing a tile's thickness is
 therefore only ever allowed to move its BOTTOM.
 
 Vegetation props are authored origin-at-base (y = 0 is the bottom of the
-trunk/planter), so they can be dropped straight onto that same surface.
+trunk, or of the bush itself -- a bush sits straight on the grass with
+nothing underneath it), so they can be dropped onto that same surface.
 
 Every mesh gets an explicit matte (non-metallic, fully rough) material --
 without one, Godot's glTF import falls back to a shinier default that
@@ -121,13 +122,20 @@ LEAF_MID = (124, 168, 84, 255)
 LEAF_LIGHT = (152, 194, 106, 255)
 LEAF_DARK = (106, 152, 80, 255)
 FLOWER = (246, 240, 226, 255)
-# Plum rather than the reference art's terracotta. Red is spoken for on this
-# map -- it is the colour of an unfilled order, an over-congested tile and a
-# settlement in need (see MarkerColors and Main.GRADE_COLORS) -- and a field of
-# small red dots scattered over the ground reads as a board covered in
-# warnings from the game's own camera height.
-PLANTER_CLAY = (124, 86, 138, 255)
-PLANTER_RIM = (150, 110, 164, 255)
+
+# Bushes. Lighter than a tree's canopy so a bush is not read as a tree that
+# failed to grow, but clearly more saturated than GRASS_TOP -- a bush pitched
+# between the two ends up almost exactly the tile's own colour and disappears
+# into the ground it stands on. The sprouting leaves are a yellower green
+# again, which is what carries the shape at map distance.
+BUSH_BODY = (142, 184, 96, 255)
+BUSH_LEAF = (206, 222, 108, 255)
+BUSH_LEAF_ALT = (168, 202, 96, 255)
+BUSH_CHAMFER_RATIO = 0.16  # of the block's smallest side; see _bush for the ceiling on this
+BUSH_LEAF_LENGTH = 0.38
+BUSH_LEAF_WIDTH = 0.18
+BUSH_LEAF_SPREAD = 0.75  # rosette radius as a share of a leaf's own reach; keeps leaves from merging
+BUSH_LEAF_TILT = 1.02  # radians from horizontal -- nearly upright, so leaves sprout rather than fan
 
 
 def _box(extents, translation, color) -> trimesh.Trimesh:
@@ -243,21 +251,59 @@ def _leaf(extents, translation, color, yaw, tilt) -> trimesh.Trimesh:
     return mesh
 
 
-def _sprigs(count, radius, y, color, size=(0.30, 0.05, 0.13), tilt=0.45, phase=0.0):
-    """`count` leaves arranged around a canopy at height `y`."""
+def _sprigs(count, radius, y, color, size=(0.30, 0.05, 0.13), tilt=0.45, phase=0.0, center=(0.0, 0.0)):
+    """`count` leaves arranged around a canopy at height `y`, optionally about
+    a point other than the prop's own axis (`center`, as x/z)."""
     parts = []
     for i in range(count):
         yaw = phase + i * (2 * math.pi / count)
         parts.append(
             _leaf(
                 size,
-                (math.cos(yaw) * radius, y, -math.sin(yaw) * radius),
+                (center[0] + math.cos(yaw) * radius, y, center[1] - math.sin(yaw) * radius),
                 color,
                 yaw,
                 tilt,
             )
         )
     return parts
+
+
+def _bush(extents, leaf_clusters) -> trimesh.Trimesh:
+    """A bush: one heavily rounded block sitting straight on the ground, with
+    leaves sprouting out of the top of it.
+
+    No pot, no plinth, nothing underneath -- a bush is a shape on the grass.
+
+    The chamfer is a fixed FRACTION of the block's smallest side rather than a
+    flat number, so a squat hedge and a tall shrub round off by the same
+    amount visually. It cannot be pushed much past this: `_chamfered_box` is
+    three overlapping boxes, and once the chamfer approaches a third of a side
+    the full-width band in the middle vanishes and the union degenerates from
+    a rounded block into a plus sign.
+
+    Leaves stand nearly upright (`BUSH_LEAF_TILT`) instead of fanning out
+    sideways the way a tree's do. Each is placed so its BASE sits just inside
+    the top face and its tip clears it -- a leaf centred on the surface reads
+    as lying on the bush rather than growing from it -- and the rosette is
+    pushed out past that (`BUSH_LEAF_SPREAD`) so the leaves stay separate
+    shapes instead of merging into one blob at map distance.
+    """
+    w, h, d = extents
+    chamfer = min(w, h, d) * BUSH_CHAMFER_RATIO
+    parts = _chamfered_box(extents, (0, h / 2, 0), BUSH_BODY, chamfer)
+    for cluster in leaf_clusters:
+        parts += _sprigs(
+            cluster["count"],
+            BUSH_LEAF_LENGTH * math.cos(BUSH_LEAF_TILT) * BUSH_LEAF_SPREAD,
+            h + BUSH_LEAF_LENGTH * math.sin(BUSH_LEAF_TILT) / 2 - 0.03,
+            cluster["color"],
+            size=(BUSH_LEAF_LENGTH, 0.05, BUSH_LEAF_WIDTH),
+            tilt=BUSH_LEAF_TILT,
+            phase=cluster["phase"],
+            center=cluster["center"],
+        )
+    return trimesh.util.concatenate(parts)
 
 
 def build_crate() -> trimesh.Trimesh:
@@ -381,30 +427,34 @@ def build_tree_tall() -> trimesh.Trimesh:
     return trimesh.util.concatenate(parts)
 
 
-def build_bush_small() -> trimesh.Trimesh:
-    """A low, wide bush -- the quiet filler between the trees, short enough
-    that it never competes with a node marker for attention. Origin at its
-    base."""
-    height = 0.52
-    width = 0.86
-    parts = _chamfered_box((width, height, width), (0, height / 2, 0), LEAF_MID, 0.16)
-    parts += _sprigs(3, 0.44, height - 0.1, LEAF_LIGHT, size=(0.26, 0.05, 0.11), phase=0.9)
-    return trimesh.util.concatenate(parts)
+def build_bush_square() -> trimesh.Trimesh:
+    """A rounded cube of a bush, sitting straight on the grass, with a rosette
+    of leaves sprouting out of the top. Origin at its base."""
+    return _bush(
+        (0.80, 0.76, 0.80),
+        [
+            {"count": 4, "phase": 0.35, "color": BUSH_LEAF, "center": (0.0, 0.0)},
+            {"count": 2, "phase": 1.4, "color": BUSH_LEAF_ALT, "center": (0.09, -0.08)},
+        ],
+    )
 
 
-def build_bush_planter() -> trimesh.Trimesh:
-    """A bush in a clay planter, matching the potted plants dotted around the
-    reference art. Origin at the bottom of the planter."""
-    pot_height = 0.30
-    bush_height = 0.56
-    bush_center = pot_height + bush_height / 2 - 0.04
-    parts = [
-        _box((0.78, pot_height, 0.78), (0, pot_height / 2, 0), PLANTER_CLAY),
-        _box((0.86, 0.08, 0.86), (0, pot_height - 0.02, 0), PLANTER_RIM),
-    ]
-    parts += _chamfered_box((0.68, bush_height, 0.68), (0, bush_center, 0), LEAF_LIGHT, 0.14)
-    parts += _sprigs(4, 0.36, bush_center + 0.16, LEAF_MID, size=(0.24, 0.05, 0.1), phase=0.2)
-    return trimesh.util.concatenate(parts)
+def build_bush_rect() -> trimesh.Trimesh:
+    """The same bush stretched into a rounded rectangular block -- a low hedge
+    rather than a shrub. Origin at its base.
+
+    Its leaves gather over ONE end rather than over the middle: a long block
+    with a rosette centred on it reads as a shrub that happens to be wide,
+    while an off-centre cluster reads as a hedge with one bushy end, which is
+    what the reference art does and what tells the two props apart at map
+    distance once they are both scattered over the same field."""
+    return _bush(
+        (1.18, 0.62, 0.74),
+        [
+            {"count": 4, "phase": 0.2, "color": BUSH_LEAF, "center": (-0.26, 0.0)},
+            {"count": 2, "phase": 2.1, "color": BUSH_LEAF_ALT, "center": (0.12, 0.06)},
+        ],
+    )
 
 
 def export(mesh: trimesh.Trimesh, path: str) -> None:
@@ -428,5 +478,5 @@ if __name__ == "__main__":
     export(build_main_road_block(), "assets/Blocks/glTF/Block_Road_Main.glb")
     export(build_tree_round(), "assets/Environment/glTF/Tree_Round.glb")
     export(build_tree_tall(), "assets/Environment/glTF/Tree_Tall.glb")
-    export(build_bush_small(), "assets/Environment/glTF/Bush_Small.glb")
-    export(build_bush_planter(), "assets/Environment/glTF/Bush_Planter.glb")
+    export(build_bush_square(), "assets/Environment/glTF/Bush_Square.glb")
+    export(build_bush_rect(), "assets/Environment/glTF/Bush_Rect.glb")
