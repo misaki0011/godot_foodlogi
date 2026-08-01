@@ -215,7 +215,7 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **Known limit, stated:** the pop scales the **whole column**, not the new chip alone. A column is one baked texture by design (item 50) -- which is what lets the collapsed and expanded layouts line up exactly -- so per-chip animation would mean splitting it back into separately-positioned billboards and reintroducing the camera-compensation problem that item deleted. The chip is what changed; the column is what moves. `verify_main._test_new_orders_arrive_late` asserts the column is genuinely **shorter** while the order is held (not merely still), that it plays nothing then, that the reveal restores the full column and pops it, and that a second reveal arms nothing -- so a timer firing after an early reveal cannot pop the map twice. See §10.1.
 
 67. **The board becomes a bar of chocolate, and the countryside moves on top of it.** The terrain blocks were chunky cubes with modelled detail baked into every one -- a grass cap, four corner tufts, raised water ripples, cobbles on the paved road -- sitting on a plinth six units deep. Every tile therefore said the same small thing 294 times, and the repetition is what made it read as texture noise rather than as ground.
-    **Tiles are flat plates now** (§8.5): a light coloured top face over a chamfered darker rim, over a full-footprint skirt. Route tiles are built the same way (§4.1), so a road and the ground it crosses are visibly the same kind of object, and the tiers separate by colour -- sand, orange, plum -- rather than by which pattern is stamped on them.
+    **Tiles are flat plates now** (§8.5): a light coloured top face over a chamfered darker rim, over a full-footprint skirt. Route tiles are built the same way (§4.1), so a road and the ground it crosses are visibly the same kind of object, and the tiers separate by colour -- sand, orange, umber -- rather than by which pattern is stamped on them, with Main reusing Paved's deck a long way down the value ramp rather than carrying a design of its own.
     **The rim is the grid line, and it has to be colour rather than shading.** Two tiles put their rims together and the seam reads as a dark groove. Letting the chamfer's own shading do that work looked right on desktop and would have failed everywhere else: shadows are desktop-only (§3.6), and with them off a shading-only groove leaves the whole board a single flat green sheet. The skirt is structural for a related reason -- the body is only its full width across a band at its middle, so with nothing full-footprint beneath it the groove between two tiles is a hole the camera sees straight through.
     **What the tiles gave up, the ground gained.** A tree or a bush now stands on roughly a third of the free plains cells, from four props scattered with a small random yaw, size and offset. Detail moves from *inside* every tile to *on* a minority of them, which is what turns 294 identical squares into countryside.
     **The breakable part is the bookkeeping, again.** `_render_grid` rebuilds the map on every hover, day and build, so the scatter is a pure function of the cell coordinates rather than a seeded RNG -- anything re-rolled per render makes the forest crawl. Props stand on buildable ground, so the same render hides those on cells in `GameState.grid` and shows the rest; driving it off the whole grid rather than at each build site makes a drag, a sweep, an upgrade and a bulldoze all correct without any of them knowing about it. Nothing grows on a node's footprint or the eight cells around it, since a prop is tall enough to cut across a node's order chips from this camera's fixed angle.
@@ -513,8 +513,14 @@ the same kind of object -- and the tiers are told apart by colour first:
 - **Dirt**: a plain sand plate, unmarked.
 - **Paved**: an orange decking plate, split into four panels by a darker
   seam running across both axes.
-- **Main**: a dark plum plate with a pale painted cross (both axes, not a
-  single directional line).
+- **Main**: the Paved deck again, in dark umber.
+
+Main deliberately reuses Paved's shape rather than carrying a design of its
+own. The tiers are told apart by **value** -- pale sand, mid orange, dark
+umber -- and one deck getting darker reads as a single road becoming more
+built-up, where three unrelated surfaces read as three different materials.
+It also keeps the top tier rotation-agnostic for free, which the painted
+cross it replaces had to arrange for itself.
 
 Because each of these reads identically under any 90-degree rotation, one
 mesh per level covers every route tile everywhere on the map -- a straight

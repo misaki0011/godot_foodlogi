@@ -47,7 +47,7 @@ const RIVER_CROSSING_HEIGHT := 0.16
 ## and the river crossing's own slab. Kept in step with the tile palette in
 ## tools/asset_gen/generate_blocks.py so a fallback never reads as a different
 ## art style.
-const ROUTE_LEVEL_COLORS := {"dirt": Color("E9DBB2"), "paved": Color("E8A654"), "main": Color("5C3E60")}
+const ROUTE_LEVEL_COLORS := {"dirt": Color("E9DBB2"), "paved": Color("E8A654"), "main": Color("925C28")}
 const RIVER_BRIDGE_COLOR := Color("EFE7D2")
 
 ## ---------- bridge decks ----------

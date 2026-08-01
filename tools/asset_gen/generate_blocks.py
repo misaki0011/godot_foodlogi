@@ -102,15 +102,17 @@ WATER_RIPPLE = (196, 232, 240, 255)
 
 # Route tiles (2x2 world-space footprint too; height is a thin plate on top of
 # the terrain, authored directly in world-space meters and mirrored by
-# Main.ROUTE_LEVEL_HEIGHTS). The three tiers read as sand -> orange decking ->
-# dark plum, which is the reference art's own tile palette.
+# Main.ROUTE_LEVEL_HEIGHTS). The three tiers read as plain sand -> orange
+# decking -> the same deck in dark umber.
 DIRT_ROAD_TOP = (233, 219, 178, 255)
 DIRT_ROAD_SIDE = (184, 166, 122, 255)
 PAVED_TOP = (232, 166, 84, 255)
 PAVED_SIDE = (180, 116, 48, 255)
-MAIN_TOP = (92, 62, 96, 255)
-MAIN_SIDE = (60, 38, 64, 255)
-MAIN_STRIPE = (214, 200, 216, 255)
+# Main is Paved's own deck a long way down the value ramp, not a new hue: the
+# tier that matters most has to be the one that reads first at map distance,
+# and value separates far better than hue does at this camera height.
+MAIN_TOP = (146, 92, 40, 255)
+MAIN_SIDE = (98, 58, 24, 255)
 
 # Vegetation.
 TRUNK_WARM = (150, 96, 74, 255)
@@ -319,34 +321,36 @@ def build_dirt_road_block() -> trimesh.Trimesh:
     return trimesh.util.concatenate(_route_parts(0.22, DIRT_ROAD_TOP, DIRT_ROAD_SIDE))
 
 
-def build_paved_road_block() -> trimesh.Trimesh:
-    """The middle route tier: an orange decking plate, split into four panels
-    by a darker seam running across both axes.
+def _decked_road_block(height, top_color, side_color) -> trimesh.Trimesh:
+    """A decking plate split into four panels by a darker seam running across
+    both axes -- the shape the top two route tiers share.
 
-    The seam is laid ON the top face rather than cut into it -- the meshes
-    here are concatenated, not booleaned, so there is nothing to subtract
-    with. It is the only marking, and it is symmetric on both axes, so this
-    stays rotation-agnostic like the other two tiers."""
-    height = 0.22
-    parts = _route_parts(height, PAVED_TOP, PAVED_SIDE)
+    The seam is laid ON the top face rather than cut into it: the meshes here
+    are concatenated, not booleaned, so there is nothing to subtract with. It
+    is the only marking, and it is symmetric on both axes, so a decked tile
+    stays rotation-agnostic like the plain Dirt one."""
+    parts = _route_parts(height, top_color, side_color)
     top = height / 2
-    parts.append(_box((1.82, 0.03, 0.1), (0, top, 0), PAVED_SIDE))
-    parts.append(_box((0.1, 0.03, 1.82), (0, top, 0), PAVED_SIDE))
+    parts.append(_box((1.82, 0.03, 0.1), (0, top, 0), side_color))
+    parts.append(_box((0.1, 0.03, 1.82), (0, top, 0), side_color))
     return trimesh.util.concatenate(parts)
+
+
+def build_paved_road_block() -> trimesh.Trimesh:
+    """The middle route tier: an orange decking plate."""
+    return _decked_road_block(0.22, PAVED_TOP, PAVED_SIDE)
 
 
 def build_main_road_block() -> trimesh.Trimesh:
-    """The top route tier: a dark plum plate with a pale painted cross.
+    """The top route tier: the Paved deck again, in a darker shade.
 
-    A cross (both axes, not a single directional centre line) reads the same
-    under any 90-degree rotation -- same rotation-agnostic approach as the
-    other two tiers."""
-    height = 0.24
-    parts = _route_parts(height, MAIN_TOP, MAIN_SIDE)
-    top = height / 2
-    parts.append(_box((0.2, 0.03, 1.78), (0, top, 0), MAIN_STRIPE))
-    parts.append(_box((1.78, 0.03, 0.2), (0, top, 0), MAIN_STRIPE))
-    return trimesh.util.concatenate(parts)
+    Deliberately the same shape rather than a design of its own. The tiers are
+    told apart by VALUE -- pale sand, mid orange, dark umber -- and reusing the
+    deck is what makes the ramp read as one road getting more built-up rather
+    than as three unrelated surfaces. It also keeps the top tier
+    rotation-agnostic for free, which the old painted cross had to arrange for
+    itself."""
+    return _decked_road_block(0.24, MAIN_TOP, MAIN_SIDE)
 
 
 def build_tree_round() -> trimesh.Trimesh:
