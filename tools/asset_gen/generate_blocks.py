@@ -192,6 +192,10 @@ SETTLEMENT_MAX_HEIGHT = 1.7
 WINDOW_SIZE = 0.16
 WINDOW_PITCH = 0.34
 WINDOW_MARGIN = 0.26
+## A house gets one window beside its door, a little larger than a tower pane:
+## there is exactly one of them, so it has to carry the lit-at-night read on
+## its own where a tower has a whole grid doing it.
+HOUSE_WINDOW_SIZE = 0.19
 
 
 def _box(extents, translation, color) -> trimesh.Trimesh:
@@ -547,23 +551,40 @@ def _plaza(width, depth) -> list[trimesh.Trimesh]:
     return parts
 
 
+def _window(cx, cy, z_front, width=WINDOW_SIZE, height=WINDOW_SIZE * 0.8):
+    """One pane, standing just proud of a front wall.
+
+    Windows are kept in their OWN geometry all the way through (see
+    _settlement_scene): they are the one part of a settlement that has to be
+    addressable at runtime, because they light up at night."""
+    return _box((width, height, 0.04), (cx, cy, z_front), WINDOW)
+
+
 def _house(x, z, width, depth, wall_height, roof_height, wall_color, roof_color):
     """A pitched-roof house standing on the plaza: rounded walls, a hip roof
-    overhanging them a little, and a door on the FRONT.
+    overhanging them a little, and a door with a window beside it on the FRONT.
+    Returns (body parts, window parts).
 
     Front means +Z, and that is not arbitrary -- the game camera is pitched
     down 60 degrees looking along -Z, so +Z is the only wall it can ever see.
-    A door on any other face is a door nobody will find.
+    A door on any other face is a door nobody will find, and the same goes for
+    a window that is supposed to be seen lit.
+
+    The door sits off-centre with the window beside it rather than the two
+    being symmetric about the middle. Symmetry would read as two doors or two
+    windows at map distance, where neither shape resolves; an offset pair
+    reads as a frontage.
 
     The roof overhang is what stops the roof from reading as a lid: at this
     camera angle the roof is most of what is visible, and an eave line
     separating it from the wall is the only thing that says the two are
     different parts."""
     base = PLAZA_TOP_Y
-    parts = _chamfered_box(
+    front = z + depth / 2
+    body = _chamfered_box(
         (width, wall_height, depth), (x, base + wall_height / 2, z), wall_color, 0.05
     )
-    parts.append(
+    body.append(
         _pyramid(
             width + 0.16,
             depth + 0.16,
@@ -572,17 +593,26 @@ def _house(x, z, width, depth, wall_height, roof_height, wall_color, roof_color)
             roof_color,
         )
     )
-    parts.append(
+    body.append(
         _box(
             (width * 0.28, wall_height * 0.55, 0.05),
-            (x, base + wall_height * 0.275, z + depth / 2),
+            (x - width * 0.19, base + wall_height * 0.275, front),
             DOOR,
         )
     )
-    return parts
+    windows = [
+        _window(
+            x + width * 0.24,
+            base + wall_height * 0.56,
+            front,
+            width=HOUSE_WINDOW_SIZE,
+            height=HOUSE_WINDOW_SIZE * 0.85,
+        )
+    ]
+    return body, windows
 
 
-def _windows(x, z_front, base_y, width, height, wall_color):
+def _tower_windows(x, z_front, base_y, width, height):
     """A grid of windows on a tower's front (+Z) wall -- the only wall the
     camera sees, same as a house's door.
 
@@ -591,37 +621,31 @@ def _windows(x, z_front, base_y, width, height, wall_color):
     tower. That is what makes three blocks of different heights read as three
     buildings rather than as one block scaled three ways."""
     rows = max(1, int((height - WINDOW_MARGIN) / WINDOW_PITCH))
-    parts = []
+    panes = []
     for row in range(rows):
         y = base_y + height - WINDOW_MARGIN - row * WINDOW_PITCH
         for col in (-1, 1):
-            parts.append(
-                _box(
-                    (WINDOW_SIZE, WINDOW_SIZE * 0.8, 0.04),
-                    (x + col * width * 0.22, y, z_front),
-                    WINDOW,
-                )
-            )
-    return parts
+            panes.append(_window(x + col * width * 0.22, y, z_front))
+    return panes
 
 
 def _tower(x, z, width, depth, height, wall_color):
     """A flat-roofed block with windows -- the taller, plainer buildings that
-    separate a City from a cluster of houses.
+    separate a City from a cluster of houses. Returns (body parts, window
+    parts).
 
     Capped in slate rather than roof red, so a City still reads as red-roofed
     without being five identical red pyramids. The walls are near-white on
     purpose: pitched anywhere near the plaza's own grey they merge into the
     ground they stand on and the City loses its skyline."""
     base = PLAZA_TOP_Y
-    parts = _chamfered_box(
+    body = _chamfered_box(
         (width, height, depth), (x, base + height / 2, z), wall_color, 0.05
     )
-    parts.append(
+    body.append(
         _box((width + 0.07, 0.05, depth + 0.07), (x, base + height + 0.01, z), TOWER_CAP)
     )
-    parts += _windows(x, z + depth / 2, base, width, height, wall_color)
-    return parts
+    return body, _tower_windows(x, z + depth / 2, base, width, height)
 
 
 def _settlement_tree(x, z, scale=1.0):
@@ -649,31 +673,55 @@ def _settlement_tree(x, z, scale=1.0):
     return parts
 
 
-def build_settlement_village() -> trimesh.Trimesh:
+class _Settlement:
+    """Accumulates a settlement's two geometries as its buildings are added.
+
+    They stay separate all the way to the file because the windows have to be
+    addressable at runtime -- NodeMarker turns their emission up as night falls
+    (see DayCycle.window_glow), and a mesh merged into the walls has no way to
+    light up on its own."""
+
+    def __init__(self, width, depth):
+        self.body = _plaza(width, depth)
+        self.windows = []
+
+    def add(self, built):
+        body, windows = built
+        self.body += body
+        self.windows += windows
+
+    def add_body(self, parts):
+        self.body += parts
+
+    def scene(self):
+        return _settlement_scene(self.body, self.windows)
+
+
+def build_settlement_village() -> trimesh.Scene:
     """Village: one house and a tree on a 1x1 plaza. Origin at the centre of
     the footprint, on the terrain surface."""
     width = 2.0 - 2 * PLAZA_INSET
-    parts = _plaza(width, width)
-    parts += _house(-0.30, 0.08, 0.86, 0.72, 0.46, 0.40, HOUSE_WALL, SETTLEMENT_ROOF)
-    parts += _settlement_tree(0.52, -0.34)
-    return trimesh.util.concatenate(parts)
+    place = _Settlement(width, width)
+    place.add(_house(-0.30, 0.08, 0.86, 0.72, 0.46, 0.40, HOUSE_WALL, SETTLEMENT_ROOF))
+    place.add_body(_settlement_tree(0.52, -0.34))
+    return place.scene()
 
 
-def build_settlement_town() -> trimesh.Trimesh:
+def build_settlement_town() -> trimesh.Scene:
     """Town: three houses on a 2x1 plaza. Origin at the centre of the
     footprint, on the terrain surface.
 
     The three are staggered in depth and differ in size and roof shade rather
     than being a row of identical boxes -- at this camera angle a rank of three
     matching silhouettes reads as one long building."""
-    parts = _plaza(4.0 - 2 * PLAZA_INSET, 2.0 - 2 * PLAZA_INSET)
-    parts += _house(-1.16, 0.16, 0.88, 0.74, 0.46, 0.40, HOUSE_WALL, SETTLEMENT_ROOF)
-    parts += _house(0.04, -0.24, 0.80, 0.68, 0.54, 0.44, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK)
-    parts += _house(1.16, 0.20, 0.92, 0.76, 0.42, 0.38, HOUSE_WALL, SETTLEMENT_ROOF)
-    return trimesh.util.concatenate(parts)
+    place = _Settlement(4.0 - 2 * PLAZA_INSET, 2.0 - 2 * PLAZA_INSET)
+    place.add(_house(-1.16, 0.16, 0.88, 0.74, 0.46, 0.40, HOUSE_WALL, SETTLEMENT_ROOF))
+    place.add(_house(0.04, -0.24, 0.80, 0.68, 0.54, 0.44, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK))
+    place.add(_house(1.16, 0.20, 0.92, 0.76, 0.42, 0.38, HOUSE_WALL, SETTLEMENT_ROOF))
+    return place.scene()
 
 
-def build_settlement_city() -> trimesh.Trimesh:
+def build_settlement_city() -> trimesh.Scene:
     """City: three houses across the front and three taller blocks behind them,
     on a 2x2 plaza. Origin at the centre of the footprint, on the terrain
     surface.
@@ -685,25 +733,59 @@ def build_settlement_city() -> trimesh.Trimesh:
     houses, which is what makes a City read as a Town that grew rather than as
     an unrelated place. Nothing exceeds SETTLEMENT_MAX_HEIGHT."""
     width = 4.0 - 2 * PLAZA_INSET
-    parts = _plaza(width, width)
-    parts += _tower(-1.04, -1.02, 0.78, 0.78, 1.16, TOWER_WALL)
-    parts += _tower(0.06, -1.16, 0.70, 0.70, 1.42, TOWER_WALL_ALT)
-    parts += _tower(1.12, -0.88, 0.74, 0.74, 0.94, TOWER_WALL)
-    parts += _house(-1.16, 0.82, 0.90, 0.76, 0.50, 0.42, HOUSE_WALL, SETTLEMENT_ROOF)
-    parts += _house(0.02, 1.04, 0.82, 0.72, 0.46, 0.40, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK)
-    parts += _house(1.18, 0.80, 0.88, 0.74, 0.52, 0.44, HOUSE_WALL, SETTLEMENT_ROOF)
-    return trimesh.util.concatenate(parts)
+    place = _Settlement(width, width)
+    place.add(_tower(-1.04, -1.02, 0.78, 0.78, 1.16, TOWER_WALL))
+    place.add(_tower(0.06, -1.16, 0.70, 0.70, 1.42, TOWER_WALL_ALT))
+    place.add(_tower(1.12, -0.88, 0.74, 0.74, 0.94, TOWER_WALL))
+    place.add(_house(-1.16, 0.82, 0.90, 0.76, 0.50, 0.42, HOUSE_WALL, SETTLEMENT_ROOF))
+    place.add(_house(0.02, 1.04, 0.82, 0.72, 0.46, 0.40, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK))
+    place.add(_house(1.18, 0.80, 0.88, 0.74, 0.52, 0.44, HOUSE_WALL, SETTLEMENT_ROOF))
+    return place.scene()
 
 
-def export(mesh: trimesh.Trimesh, path: str) -> None:
+## The glTF node names a settlement's two geometries import under. Godot names
+## each MeshInstance3D after its glTF node, so these are the names
+## NodeMarker.WINDOWS_NODE looks the panes up by at runtime -- changing one
+## means changing both.
+SETTLEMENT_BODY_NODE = "body"
+SETTLEMENT_WINDOWS_NODE = "windows"
+
+
+def _matte(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     # An explicit matte, non-metallic material -- without one, Godot's glTF
     # import falls back to a shinier default that visibly reflects the
     # editor's sky on these flat-shaded faces.
     mesh.visual.material = trimesh.visual.material.PBRMaterial(
         baseColorFactor=[255, 255, 255, 255], metallicFactor=0.0, roughnessFactor=1.0
     )
+    return mesh
+
+
+def _settlement_scene(body_parts, window_parts) -> trimesh.Scene:
+    """A settlement as two NAMED geometries rather than one merged mesh.
+
+    Everything else in this file exports a single mesh, because nothing else
+    needs a part of itself picked out later. A settlement does: its windows
+    light up at night, which means Godot has to be able to find them, and a
+    glTF scene with named geometries imports as one MeshInstance3D per name."""
+    return trimesh.Scene(
+        {
+            SETTLEMENT_BODY_NODE: _matte(trimesh.util.concatenate(body_parts)),
+            SETTLEMENT_WINDOWS_NODE: _matte(trimesh.util.concatenate(window_parts)),
+        }
+    )
+
+
+def export(mesh: trimesh.Trimesh, path: str) -> None:
+    _matte(mesh)
     mesh.export(path, file_type="glb")
     print(f"wrote {path} ({len(mesh.vertices)} verts, {len(mesh.faces)} faces)")
+
+
+def export_scene(scene: trimesh.Scene, path: str) -> None:
+    scene.export(path, file_type="glb")
+    counts = ", ".join(f"{name} {len(g.faces)}f" for name, g in scene.geometry.items())
+    print(f"wrote {path} ({counts})")
 
 
 if __name__ == "__main__":
@@ -718,6 +800,6 @@ if __name__ == "__main__":
     export(build_tree_tall(), "assets/Environment/glTF/Tree_Tall.glb")
     export(build_bush_square(), "assets/Environment/glTF/Bush_Square.glb")
     export(build_bush_rect(), "assets/Environment/glTF/Bush_Rect.glb")
-    export(build_settlement_village(), "assets/Environment/glTF/Settlement_Village.glb")
-    export(build_settlement_town(), "assets/Environment/glTF/Settlement_Town.glb")
-    export(build_settlement_city(), "assets/Environment/glTF/Settlement_City.glb")
+    export_scene(build_settlement_village(), "assets/Environment/glTF/Settlement_Village.glb")
+    export_scene(build_settlement_town(), "assets/Environment/glTF/Settlement_Town.glb")
+    export_scene(build_settlement_city(), "assets/Environment/glTF/Settlement_City.glb")

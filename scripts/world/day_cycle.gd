@@ -32,15 +32,22 @@ class_name DayCycle
 ##   dusk, and barely there under moonlight.
 ## - `sky` is the background colour; `ambient`/`ambient_energy` fill the
 ##   shadowed faces so nothing goes pure black at night.
+## - `window_glow` is how brightly a settlement's windows are lit, 0 by day
+##   and 1 in the dark (see NodeMarker.set_window_glow). It lives here rather
+##   than being derived from `energy` because "are the lights on" is not the
+##   same question as "how bright is the sun": lamps come on at dusk while
+##   there is still plenty of light, and stay on into a dawn that is already
+##   brightening. Deriving one from the other would make the lights fade in
+##   exactly as the sun faded out, which is the one thing they do not do.
 const KEYFRAMES: Array[Dictionary] = [
-	{"at": 0.00, "name": "Dawn", "minutes": 300, "pitch": -12.0, "yaw": 78.0, "light": Color("FFB27A"), "energy": 0.55, "shadow": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35},
-	{"at": 0.18, "name": "Morning", "minutes": 480, "pitch": -35.0, "yaw": 50.0, "light": Color("FFE0B8"), "energy": 1.00, "shadow": 0.85, "sky": Color("8FBBD9"), "ambient": Color("B9CBDD"), "ambient_energy": 0.55},
-	{"at": 0.40, "name": "Midday", "minutes": 720, "pitch": -70.0, "yaw": 8.0, "light": Color("FFFFFF"), "energy": 1.35, "shadow": 1.00, "sky": Color("8CC6E8"), "ambient": Color("FFFFFF"), "ambient_energy": 0.60},
-	{"at": 0.60, "name": "Afternoon", "minutes": 900, "pitch": -45.0, "yaw": -30.0, "light": Color("FFEBC4"), "energy": 1.10, "shadow": 0.90, "sky": Color("93C4E0"), "ambient": Color("E8EEF5"), "ambient_energy": 0.55},
-	{"at": 0.76, "name": "Sunset", "minutes": 1110, "pitch": -12.0, "yaw": -70.0, "light": Color("FF9046"), "energy": 0.80, "shadow": 0.70, "sky": Color("E2926B"), "ambient": Color("C08A78"), "ambient_energy": 0.40},
-	{"at": 0.88, "name": "Dusk", "minutes": 1200, "pitch": -8.0, "yaw": -85.0, "light": Color("8E7BC4"), "energy": 0.35, "shadow": 0.35, "sky": Color("4A4E75"), "ambient": Color("4E5378"), "ambient_energy": 0.28},
-	{"at": 0.95, "name": "Night", "minutes": 1380, "pitch": -50.0, "yaw": -160.0, "light": Color("7C93C8"), "energy": 0.18, "shadow": 0.20, "sky": Color("1E2440"), "ambient": Color("2A3352"), "ambient_energy": 0.22},
-	{"at": 1.00, "name": "Dawn", "minutes": 1740, "pitch": -12.0, "yaw": -282.0, "light": Color("FFB27A"), "energy": 0.55, "shadow": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35},
+	{"at": 0.00, "name": "Dawn", "minutes": 300, "pitch": -12.0, "yaw": 78.0, "light": Color("FFB27A"), "energy": 0.55, "shadow": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35, "window_glow": 0.35},
+	{"at": 0.18, "name": "Morning", "minutes": 480, "pitch": -35.0, "yaw": 50.0, "light": Color("FFE0B8"), "energy": 1.00, "shadow": 0.85, "sky": Color("8FBBD9"), "ambient": Color("B9CBDD"), "ambient_energy": 0.55, "window_glow": 0.0},
+	{"at": 0.40, "name": "Midday", "minutes": 720, "pitch": -70.0, "yaw": 8.0, "light": Color("FFFFFF"), "energy": 1.35, "shadow": 1.00, "sky": Color("8CC6E8"), "ambient": Color("FFFFFF"), "ambient_energy": 0.60, "window_glow": 0.0},
+	{"at": 0.60, "name": "Afternoon", "minutes": 900, "pitch": -45.0, "yaw": -30.0, "light": Color("FFEBC4"), "energy": 1.10, "shadow": 0.90, "sky": Color("93C4E0"), "ambient": Color("E8EEF5"), "ambient_energy": 0.55, "window_glow": 0.0},
+	{"at": 0.76, "name": "Sunset", "minutes": 1110, "pitch": -12.0, "yaw": -70.0, "light": Color("FF9046"), "energy": 0.80, "shadow": 0.70, "sky": Color("E2926B"), "ambient": Color("C08A78"), "ambient_energy": 0.40, "window_glow": 0.3},
+	{"at": 0.88, "name": "Dusk", "minutes": 1200, "pitch": -8.0, "yaw": -85.0, "light": Color("8E7BC4"), "energy": 0.35, "shadow": 0.35, "sky": Color("4A4E75"), "ambient": Color("4E5378"), "ambient_energy": 0.28, "window_glow": 0.85},
+	{"at": 0.95, "name": "Night", "minutes": 1380, "pitch": -50.0, "yaw": -160.0, "light": Color("7C93C8"), "energy": 0.18, "shadow": 0.20, "sky": Color("1E2440"), "ambient": Color("2A3352"), "ambient_energy": 0.22, "window_glow": 1.0},
+	{"at": 1.00, "name": "Dawn", "minutes": 1740, "pitch": -12.0, "yaw": -282.0, "light": Color("FFB27A"), "energy": 0.55, "shadow": 0.55, "sky": Color("7E8FA8"), "ambient": Color("6E7A96"), "ambient_energy": 0.35, "window_glow": 0.35},
 ]
 
 ## The lighting at `phase`, linearly interpolated between the two keyframes
@@ -64,6 +71,7 @@ static func sample(phase: float) -> Dictionary:
 				"sky": previous.sky.lerp(key.sky, t),
 				"ambient": previous.ambient.lerp(key.ambient, t),
 				"ambient_energy": lerpf(previous.ambient_energy, key.ambient_energy, t),
+				"window_glow": lerpf(previous.window_glow, key.window_glow, t),
 			}
 		previous = key
 	# p >= the last keyframe's `at` (only reachable at exactly 1.0, which the
@@ -106,8 +114,11 @@ static func clock_text(phase: float) -> String:
 static func shadows_available() -> bool:
 	return not OS.has_feature("web")
 
-## Pushes one sampled moment onto the scene's sun and environment.
-static func apply(phase: float, sun: DirectionalLight3D, environment: Environment) -> void:
+## Pushes one sampled moment onto the scene's sun and environment, and hands
+## it back -- the caller still needs `window_glow` from it, which belongs to
+## the settlement markers rather than to the sun or the environment, and
+## re-sampling for that would be the same work twice every frame.
+static func apply(phase: float, sun: DirectionalLight3D, environment: Environment) -> Dictionary:
 	var moment := sample(phase)
 	if sun != null:
 		sun.rotation_degrees.x = moment.pitch
@@ -119,3 +130,4 @@ static func apply(phase: float, sun: DirectionalLight3D, environment: Environmen
 		environment.background_color = moment.sky
 		environment.ambient_light_color = moment.ambient
 		environment.ambient_light_energy = moment.ambient_energy
+	return moment

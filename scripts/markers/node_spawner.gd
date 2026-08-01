@@ -59,6 +59,14 @@ func _spawn_source(node_data: NodeData, gridmap: GridMap) -> void:
 		marker.position = gridmap.map_to_local(cell) + Vector3(0, 1.0, 0)
 		marker.setup(node_data, MarkerColors.node_color(node_data))
 
+## Lights every marker's windows for the current moment of the day (LOOP-08).
+## Markers with no window mesh ignore it, so this stays one sweep over the
+## children rather than a per-type dispatch.
+func apply_window_glow(amount: float) -> void:
+	for marker in get_children():
+		if marker is NodeMarker:
+			marker.set_window_glow(amount)
+
 ## The middle of a node's footprint, as the midpoint of its two corner cells --
 ## the same point Main._node_center floats a node's order chips over, so a
 ## settlement's model and its chips share an axis.

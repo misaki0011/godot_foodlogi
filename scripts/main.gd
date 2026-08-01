@@ -1194,7 +1194,12 @@ func _day_phase() -> float:
 	return clampf(1.0 - _state.day_time_left / GameBalance.DAY_LENGTH_SEC, 0.0, 1.0)
 
 func _apply_day_cycle() -> void:
-	DayCycle.apply(_day_phase(), _sun, _world_environment.environment)
+	var moment := DayCycle.apply(_day_phase(), _sun, _world_environment.environment)
+	# Settlement windows light up as the sun goes down. Driven from the same
+	# sampled moment as the sun and sky rather than from a clock of their own,
+	# so the lamps can never disagree with the light they are supposed to be
+	# answering.
+	_node_spawner.apply_window_glow(moment.window_glow)
 
 ## Simulates one day, from either the clock hitting zero or the player asking
 ## for it early. Always restarts the clock, so an early run costs the rest of

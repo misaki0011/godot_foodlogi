@@ -228,6 +228,11 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **Two numbers the models are authored against.** Nothing exceeds 1.7 world units, because a settlement's chips are bottom-anchored 3.1 above the surface and grow upward, so a taller building eats the column that says what the place wants. And the plaza is a neutral grey rather than a warm sand, which would read as the Dirt route tile arriving at the door.
     `verify_main._test_settlement_markers` asserts one model per settlement, centred on its footprint, self-coloured, across all three sizes -- centring being the one that would fail silently, since a City centred on its top-left corner would sit a tile and a half off its own ground. See §10.1, §0.41.
 
+69. **The lights come on.** Two changes to the settlement models, and the second is the point of the first. Every house gains a **window beside its door** -- offset rather than symmetric about the middle, since symmetry reads as two doors or two windows at a distance where neither shape resolves, while an offset pair reads as a frontage. And every pane in the game, on houses and on City blocks alike, now **lights up at night**: at 11pm the settlements are the only warm lights on a dark board, and a player can see where the places are without reading a label.
+    **`window_glow` is authored per keyframe, not derived from the sun.** "Are the lights on" is a different question from "how bright is the sun": lamps come on at dusk while there is still plenty of light, and stay on into a dawn that is already brightening. Deriving one from the other would have made the lights fade in exactly as the sun faded out, which is the one thing they do not do. Living in `DayCycle` beside the sun angle and sky tint also keeps it assertable without a scene, and `apply()` now hands its sampled moment back so Main does not sample the same phase twice a frame.
+    **The panes are their own glTF geometry.** A settlement exports as two NAMED meshes, `body` and `windows`, so Godot imports the panes as a MeshInstance3D of their own and `NodeMarker` can find them. Merged into the walls they could not glow without the walls glowing too. Everything else in the pipeline exports as one merged mesh; a settlement is the only thing needing a part of itself addressable later. The lookup is by node NAME, which is the part that would rot silently -- rename it in `generate_blocks.py` and nothing errors, the lights simply never come on again -- so the check asserts a real mesh was found and a real emission landed on it.
+    **Emission, not a light source.** Five settlements' worth of `OmniLight3D`s would be five more lights for what is the compatibility renderer on a phone browser, lighting nothing but themselves. The pane is a saturated amber at a modest multiplier rather than a pale cream at a big one: emission is added to the lit colour and then clipped, so a near-white lamp pushed hard clips on all three channels and the window comes out white -- a hole in the wall rather than a light on. Unlike shadows this is not desktop-only; it is emission on a mesh that already exists, so a web night is lit too. See §10.1, §3.6.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -432,6 +437,13 @@ The day clock also drives the light, so one in-game day is one full sun cycle ra
 - **Night stays playable.** Ambient light never drops to zero, so the map, routes and overlays remain readable in the dark; the UI, speech bubbles and route overlay are unshaded and unaffected throughout.
 - **Shadows travel with the sun.** The sun sweeps a full turn over the day (its yaw runs from +78 deg round to -282 deg, the same orientation one turn on, so the sweep never doubles back or snaps at the rollover), and shadow strength rides the same curve: crisp at midday, softer at dawn and dusk, barely there under moonlight. Long raking shadows near sunrise and sunset are the point, so the shadow range is set wide enough to hold them.
 - **Shadows are desktop-only.** A browser hands the page a far smaller GPU budget than a native build, and overrunning it doesn't degrade gracefully -- the browser destroys the WebGL context and the game dies with "WebGL context lost, please reload the page". Shadows are the largest allocation the scene asks for, so the web build runs without them (`DayCycle.shadows_available()`); everything else in the cycle -- sun angle, light colour and energy, sky and ambient tint -- still runs, so a web day still visibly moves from dawn to night. Desktop keeps full-quality shadows: a 4096 map (2048 on native mobile) over a range just wide enough to cover the region from any in-game zoom or pan (70 units), since a wider range spreads the same map over more ground and aliases the ground into a diagonal hatch. (A fainter version of that hatch survives on the tile tops at the current range -- shadow acne over one very large coplanar surface -- and predates the flat-tile art of §8.5, which neither caused it nor cures it.)
+- **Settlement windows come on after dark.** The same sampled moment that
+  drives the sun and sky carries a `window_glow`, which lights every
+  settlement's panes (§10.1). It is authored per keyframe rather than derived
+  from the sun's energy, because lamps come on at dusk while there is still
+  light and stay on into a brightening dawn. Unlike shadows this is not a
+  desktop-only luxury -- it is emission on a mesh that already exists, so a web
+  night is lit too.
 - **The clock panel reads the wall-clock time** beside the day number -- "Day 3 - 6:45 pm" -- with the phase name on the line below (§10.8). A day opens at 5:00 am and the clock runs round to 5:00 am again as it rolls over.
 
 ---
@@ -1883,8 +1895,13 @@ their art is a single crate and the footprint reads straight off it.
 
 **Everything the camera can see is on the +Z face.** The camera is pitched
 down 60 degrees looking along -Z, so +Z is the only wall of any building it
-ever sees: every house's door and every City block's windows go there, and a
-door on any other face is a door nobody will find. A block's window rows come
+ever sees: every house's door and the window beside it, and every City block's
+grid of windows, go there. A door on any other face is a door nobody will
+find, and the same goes for a window that is supposed to be seen lit. A
+house's door sits off-centre with its window beside it rather than the two
+being symmetric about the middle -- symmetry reads as two doors or two windows
+at map distance, where neither shape resolves, while an offset pair reads as a
+frontage. A block's window rows come
 out of its own height rather than being authored per building, so storeys stay
 the same size on every one of them -- which is what makes three blocks of
 different heights read as three buildings rather than as one block scaled
@@ -1911,6 +1928,38 @@ between the place and the route arriving at it. For the same reason the City's
 blocks are near-white rather than a light grey: pitched anywhere near the
 plaza's own stone they merge into the ground they stand on, and the City loses
 the skyline that is the whole point of having them.
+
+#### Windows light up at night (added in v0.7 item 69)
+
+Every settlement's panes come on as the sun goes down and fade out over dawn,
+driven by `DayCycle`'s `window_glow` alongside the sun angle, light colour and
+sky tint (§3.6) -- so at night the settlements are the only warm lights on a
+dark board, and a player can see where the places are without reading a label.
+
+Three decisions hold this up.
+
+**`window_glow` is authored per keyframe, not derived from `energy`.** "Are
+the lights on" is a different question from "how bright is the sun": lamps come
+on at dusk while there is still plenty of light, and stay on into a dawn that
+is already brightening. Deriving one from the other would make the lights fade
+in exactly as the sun faded out, which is the one thing they do not do. It also
+keeps the value dev-checkable without a scene, like the rest of the cycle.
+
+**The panes are their own glTF geometry.** A settlement exports as two named
+meshes -- `body` and `windows` -- so Godot imports the panes as a
+MeshInstance3D of their own and `NodeMarker` can find them. Merged into the
+walls they would have no way to glow without the walls glowing too. Everything
+else in the asset pipeline exports as a single merged mesh; a settlement is the
+only thing that needs a part of itself addressable later.
+
+**The light is emission, not a light source.** Five settlements' worth of
+`OmniLight3D`s would be five more lights for what is the compatibility renderer
+on a phone browser, lighting nothing but themselves. These windows are meant to
+be seen, not to cast. The pane is a saturated amber at a modest multiplier
+rather than a pale cream at a big one, because emission is added to the lit
+colour and then clipped -- a near-white lamp pushed hard clips on all three
+channels and the window comes out white, which reads as a hole in the wall
+rather than a light on.
 
 ### 10.2 Route drawing UI
 

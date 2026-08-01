@@ -1170,7 +1170,40 @@ func _test_settlement_markers(map_data: MapData, markers: Node3D, terrain: GridM
 		assert(marker.position.is_equal_approx(want), "%s is not centred on its footprint" % node.node_id)
 		by_type[node.settlement_type] = by_type.get(node.settlement_type, 0) + 1
 	assert(by_type.size() == 3, "the map should exercise all three settlement sizes")
+	_test_windows_light_at_night(seen.values(), markers)
 	print("Settlement models (SETT-05): %d places, one model each, centred on their footprints across %d sizes." % [seen.size(), by_type.size()])
+
+## LOOP-08: the windows come on after dark.
+##
+## The part that would rot silently is the NAME. The panes are found by looking
+## for a mesh called `windows`, which is a glTF node name coming out of
+## generate_blocks.py -- rename it there and nothing errors, the lights simply
+## never come on again. So this asserts a real mesh was found and a real
+## emission landed on it, rather than that the call did not crash.
+func _test_windows_light_at_night(settlements: Array, markers: Node3D) -> void:
+	assert(DayCycle.sample(0.40).window_glow == 0.0, "Nobody has the lights on at midday")
+	assert(DayCycle.sample(0.95).window_glow > DayCycle.sample(0.76).window_glow, "Night must be more lit than sunset")
+	assert(DayCycle.sample(0.0).window_glow == DayCycle.sample(1.0).window_glow, "The glow must be continuous across the day rollover")
+
+	for marker in settlements:
+		marker.set_window_glow(0.0)
+		var mesh: MeshInstance3D = marker.get("_window_mesh")
+		assert(mesh != null, "%s has no '%s' mesh -- the panes cannot be lit" % [marker.node_data.node_id, NodeMarker.WINDOWS_NODE])
+		var material: StandardMaterial3D = mesh.material_override
+		assert(material != null and material.emission_enabled, "%s's panes must carry an emissive material" % marker.node_data.node_id)
+		assert(material.emission_energy_multiplier == 0.0, "%s must be dark by day" % marker.node_data.node_id)
+		marker.set_window_glow(1.0)
+		assert(material.emission_energy_multiplier > 0.0, "%s must be lit at night" % marker.node_data.node_id)
+
+	# Every OTHER marker has no windows and must survive the same sweep -- the
+	# spawner applies the glow to all of them without asking what kind each is.
+	for marker in markers.get_children():
+		if marker is NodeMarker:
+			marker.set_window_glow(1.0)
+
+	# Left as the moment the map is actually at, so nothing downstream inherits
+	# a night this check turned on.
+	_main.call("_apply_day_cycle")
 
 ## TERR-09: the scattered trees and bushes. Four properties, and the first two
 ## are the ones that would quietly rot: the scatter must be the SAME on every
