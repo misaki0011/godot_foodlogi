@@ -945,9 +945,12 @@ STRUCT_DOOR = (122, 96, 74, 255)
 
 # Bridges. Both are stone-and-timber rather than painted, so a crossing reads
 # as a structure the player built over something rather than as another tile.
-BRIDGE_DECK_COLOR = (199, 183, 155, 255)
-BRIDGE_RAIL_COLOR = (138, 119, 88, 255)
-BRIDGE_PIER_COLOR = (160, 146, 124, 255)
+# Warm timber against a dark frame. The deck used to be a pale stone and read
+# as a blank panel laid on the road rather than a structure over it -- against
+# an orange Paved tile there was nothing to separate the two but brightness.
+BRIDGE_DECK_COLOR = (198, 160, 112, 255)
+BRIDGE_RAIL_COLOR = (104, 74, 48, 255)
+BRIDGE_PIER_COLOR = (146, 132, 112, 255)
 RIVER_DECK_COLOR = (239, 231, 210, 255)
 RIVER_STONE = (206, 198, 186, 255)
 RIVER_STONE_DARK = (158, 150, 138, 255)
@@ -959,14 +962,23 @@ RIVER_STONE_DARK = (158, 150, 138, 255)
 ## is the height the established-route overlay lifts a crossing lane to.
 ## The ends cannot go lower: the deck is placed at the road SURFACE, and a
 ## route plate is 0.22 thick, so an arch springing from much under this is
-## buried in the road it is supposed to be crossing. The rise therefore has to
-## come from raising the peak rather than dropping the ends -- at a 60-degree
-## camera a shallow arc foreshortens into a flat plank.
-ARCH_END_Y = 0.30
-ARCH_PEAK_Y = 0.78
+## buried in the road it is supposed to be crossing.
+##
+## The rise is deliberately MODEST. A steeper hump does not read as more of an
+## arch from a camera pitched 60 degrees -- it reads as broken, because the
+## span is built from straight segments and a tall rise puts the end ones at
+## 40-plus degrees, so the deck visibly kinks where it meets the ground. What
+## carries the arch instead is the RAILING: it follows the same curve, stands
+## proud of the deck, and is the one part of a bridge this camera sees in
+## silhouette.
+ARCH_END_Y = 0.34
+ARCH_PEAK_Y = 0.62
 ARCH_DECK_THICKNESS = 0.11
 ARCH_WIDTH = 1.00
-ARCH_SEGMENTS = 9
+ARCH_SEGMENTS = 11
+ARCH_RAIL_HEIGHT = 0.30
+ARCH_PLANK_STEP = 0.22  # spacing of the deck's cross-planks
+ARCH_POST_STEP = 0.45   # spacing of the railing's posts
 
 ## The river crossing. Raised from the old flat 0.16 slab because an arch needs
 ## headroom to be an arch at all: at 0.16 there is no room under the deck for
@@ -976,10 +988,29 @@ RIVER_PIER_HEIGHT = 0.20
 
 
 def _arch_y(x, half_length):
-    """The deck's top surface at `x`, as a parabola from ARCH_END_Y at the ends
-    to ARCH_PEAK_Y over the middle."""
+    """The deck's top surface at `x`: a raised cosine from ARCH_END_Y at the
+    ends to ARCH_PEAK_Y over the middle.
+
+    A raised cosine rather than the obvious parabola because it is FLAT AT BOTH
+    ENDS as well as at the peak. A parabola arrives at the ground with its
+    steepest slope of the whole span, so the last segment stands up at a sharp
+    angle against the flat road and the span reads as snapped rather than
+    arched -- which is exactly how the first version of this looked."""
     t = x / half_length
-    return ARCH_END_Y + (ARCH_PEAK_Y - ARCH_END_Y) * (1.0 - t * t)
+    return ARCH_END_Y + (ARCH_PEAK_Y - ARCH_END_Y) * (1.0 + math.cos(math.pi * t)) / 2.0
+
+
+def _arch_at(x, half_length, spacing):
+    """Evenly spaced stations along the span, as (x, y, slope). Used for
+    anything that has to sit ON the arch and follow it -- planks, posts."""
+    out = []
+    count = max(2, int(2 * half_length / spacing))
+    for i in range(count):
+        px = -half_length + (2 * half_length) * (i + 0.5) / count
+        step = 0.02
+        slope = (_arch_y(px + step, half_length) - _arch_y(px - step, half_length)) / (2 * step)
+        out.append((px, _arch_y(px, half_length), slope))
+    return out
 
 
 def _arch_run(length, width, thickness, color, drop=0.0):
@@ -1017,18 +1048,38 @@ def build_bridge_arch() -> trimesh.Trimesh:
     two roads there -- an arch with a filled belly would hide the one it is
     crossing, which is the thing it exists to advertise."""
     length = 2.0
+    half = length / 2
     parts = _arch_run(length, ARCH_WIDTH, ARCH_DECK_THICKNESS, BRIDGE_DECK_COLOR)
+
+    # Cross-planks. From directly above an arch is just a pale rectangle, and
+    # planking is the one deck detail that survives any camera pitch -- it says
+    # "walkable timber span" where a smooth slab says nothing at all.
+    for x, y, slope in _arch_at(half, half, ARCH_PLANK_STEP):
+        plank = trimesh.creation.box(extents=(0.05, 0.035, ARCH_WIDTH * 0.94))
+        plank.apply_transform(trimesh.transformations.rotation_matrix(math.atan(slope), (0, 0, 1)))
+        plank.apply_translation((x, y + 0.005, 0))
+        plank.visual.vertex_colors = np.tile(BRIDGE_RAIL_COLOR, (len(plank.vertices), 1))
+        parts.append(plank)
+
+    # Railings, and the posts holding them up. These are what actually carry
+    # the arch: they stand ARCH_RAIL_HEIGHT proud of the deck along both edges,
+    # so the curve is drawn twice in silhouette against whatever is underneath.
     for side in (1, -1):
-        rail_z = side * (ARCH_WIDTH / 2 - 0.05)
-        for box in _arch_run(length, 0.12, 0.24, BRIDGE_RAIL_COLOR, drop=-0.16):
+        rail_z = side * (ARCH_WIDTH / 2 - 0.04)
+        for box in _arch_run(length, 0.09, 0.09, BRIDGE_RAIL_COLOR, drop=-ARCH_RAIL_HEIGHT):
             box.apply_translation((0, 0, rail_z))
             parts.append(box)
+        for x, y, _slope in _arch_at(half, half, ARCH_POST_STEP):
+            parts.append(
+                _box((0.08, ARCH_RAIL_HEIGHT, 0.08), (x, y + ARCH_RAIL_HEIGHT / 2, rail_z), BRIDGE_RAIL_COLOR)
+            )
+
     # Abutments: the span has to stand on something, and they also close the
     # end of the arch so it does not read as a ramp sawn off at the tile edge.
     for side in (1, -1):
         parts += _chamfered_box(
             (0.26, ARCH_END_Y, ARCH_WIDTH),
-            (side * (length / 2 - 0.13), ARCH_END_Y / 2, 0),
+            (side * (half - 0.13), ARCH_END_Y / 2, 0),
             BRIDGE_PIER_COLOR,
             0.05,
         )

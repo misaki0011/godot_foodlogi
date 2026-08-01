@@ -65,7 +65,7 @@ const RIVER_BRIDGE_COLOR := Color("EFE7D2")
 ## The height the arch's deck reaches over the middle of its tile, which is
 ## what the established-route overlay lifts a crossing lane to. Must match
 ## ARCH_PEAK_Y in tools/asset_gen/generate_blocks.py.
-const BRIDGE_DECK_HEIGHT := 0.78
+const BRIDGE_DECK_HEIGHT := 0.62
 ## Legend swatches only -- the spans carry their own colours now.
 const BRIDGE_DECK_COLOR := Color("C7B79B")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}

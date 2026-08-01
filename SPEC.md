@@ -242,7 +242,8 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 
 71. **Everything the player builds gets a model.** Storage was a wooden chest, a hub was two stacked cones, a placed bridge was a floating slab and a river crossing was a coloured rectangle -- the last four things on the map still drawn from primitives.
     **Storage is a warehouse and a hub is a depot**, and both had to solve the same problem: their tint is load-bearing, since it is the only thing separating Normal storage from Cool (`MarkerColors.storage_color`), so unlike a settlement they cannot simply carry their own palette. They ship as two named glTF geometries instead -- `body` keeps what was authored, `tint` is the one mesh `NodeMarker` recolours -- and the tinted mesh is the ROOF, because the camera is pitched down 60 degrees and a roof is the largest surface of a small building it can see. Tinting the walls would put the type colour on the sliver that is edge-on to the player. The hub is round where a storage is square, so the two are separable at a glance before the colour is read at all.
-    **The placed bridge is an arch** (§4.1). A flat slab floating at one height reads as a block parked in mid-air; a span that springs from the tile edge and rises over the middle reads as something crossing. The belly stays open, since the point of the structure is that the player can see two roads on that tile. The rise had to come from raising the peak rather than dropping the ends -- the span sits on the road surface and a route plate is 0.22 thick, so an arch springing from lower is buried in the road it is crossing, and a shallow arc foreshortens back into a plank at this camera angle. `BRIDGE_DECK_HEIGHT` moves to 0.78 with the peak, since that is the height the established-route overlay lifts a crossing lane to.
+    **The placed bridge is an arch** (§4.1). A flat slab floating at one height reads as a block parked in mid-air; a span that springs from the tile edge and rises over the middle reads as something crossing. The belly stays open, since the point of the structure is that the player can see two roads on that tile.
+    **The first version of it looked broken, and the fix was to make the arch SMALLER.** The instinct was that a shallow arc foreshortens into a plank from a 60-degree camera, so the peak went up -- but the deck is built from straight segments, and a tall rise puts the end ones at forty-odd degrees against flat ground, which reads as snapped rather than arched. Worse, the profile was a parabola, which arrives at the ground at the steepest slope of the whole span -- exactly where a kink shows most. It is a raised cosine now, flat at both ends as well as at the peak, over a modest rise, with `BRIDGE_DECK_HEIGHT` back at 0.62 (the height the established-route overlay lifts a crossing lane to). What carries the arch instead is **planking and railings**: cross-planks say "walkable timber span" at any pitch where a smooth deck says nothing, and the rails stand proud of the deck along both edges, drawing the curve twice in silhouette. The deck also went from pale stone to warm timber, since against an orange Paved tile the only thing separating the two was brightness and it read as a blank panel laid on the road.
     **The river crossing is a stone viaduct** (§8.2) on two arched openings, with a balustrade down each side. Opposite decision from the arch: this one IS the road for its tile, so its deck stays flat and cream and continuous with the road either side, and everything architectural is underneath. `RIVER_CROSSING_HEIGHT` rises from 0.16 to 0.30 because an arch needs headroom to be an arch -- at 0.16 there is no room under the deck for an opening and the "bridge" is a painted strip. It is laid along the crossing's own axis, read off the tile's connections rather than assumed east-west, since a route may perfectly well run ALONG the river column and a viaduct broadside to its own road reads as a wall.
     `verify_main._check_structure_tint` asserts the roof takes the type colour AND that the rest of the building does not -- both halves fail silently otherwise, since the roof is found by glTF node name and a miss falls back to flattening the whole building, which is exactly the look this replaced. See §4.1, §8.2.
 
@@ -643,11 +644,23 @@ one height, which reads as a block parked in mid-air; a deck that springs from
 the tile edge, rises over the middle and comes down the far side reads as
 something *crossing*. Its belly stays open, because the whole point of the
 structure is that the player can see two roads on that tile -- a filled arch
-would hide the one it exists to advertise. The rise has to come from raising
-the peak rather than dropping the ends: the span sits on the road surface and a
-route plate is 0.22 thick, so an arch springing from much lower is buried in
-the road it is meant to be crossing, and at a 60-degree camera a shallow arc
-foreshortens back into a flat plank.
+would hide the one it exists to advertise.
+
+**What makes an arch read from directly above is not the arch.** The rise is
+deliberately modest, and two things about this camera are why. The span cannot
+spring from much lower than it does -- it sits on the road surface and a route
+plate is 0.22 thick, so a lower start is buried in the road it is meant to be
+crossing. And a *steeper* hump does not help: the deck is built from straight
+segments, so a tall rise puts the end ones at forty-odd degrees against flat
+ground and the span reads as **snapped rather than arched**. The profile is a
+raised cosine rather than the obvious parabola for the same reason -- a
+parabola arrives at the ground at its steepest slope of the whole span, which
+is precisely where a kink is most visible.
+
+What actually carries it is the **planking and the railings**: cross-planks
+say "walkable timber span" at any camera pitch where a smooth deck says
+nothing, and the railings stand proud of the deck along both edges, drawing
+the curve twice in silhouette against whatever is underneath.
 
 Making it a placed structure rather than an automatic side effect of a drag is
 the point. A crossing becomes a purchase the player decides on and can see on
