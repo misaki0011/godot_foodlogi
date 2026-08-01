@@ -247,6 +247,13 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The river crossing is a stone viaduct** (§8.2) on two arched openings, with a balustrade down each side. Opposite decision from the arch: this one IS the road for its tile, so its deck stays flat and cream and continuous with the road either side, and everything architectural is underneath. `RIVER_CROSSING_HEIGHT` rises from 0.16 to 0.30 because an arch needs headroom to be an arch -- at 0.16 there is no room under the deck for an opening and the "bridge" is a painted strip. It is laid along the crossing's own axis, read off the tile's connections rather than assumed east-west, since a route may perfectly well run ALONG the river column and a viaduct broadside to its own road reads as a wall.
     `verify_main._check_structure_tint` asserts the roof takes the type colour AND that the rest of the building does not -- both halves fail silently otherwise, since the roof is found by glTF node name and a miss falls back to flattening the whole building, which is exactly the look this replaced. See §4.1, §8.2.
 
+72. **The map gets a coastline, and it is a wall rather than a toll.** The south-east corner is open sea now (§8.4): no route may be built on it at any price, so it is a shape the player routes AROUND where the river is one they pay §40 to get through.
+    **Two kinds of water on one board is the whole risk.** They are both flat blue plates and they answer the same gesture in opposite ways, so the difference has to survive being seen small and in passing -- the sea is a long way DARKER, with its swell running on the diagonal rather than in a channel's neat bands, because a paler strip with two banks invites a crossing and deep water does not. The refusal message names the sea specifically for the same reason: a bare "can't build here" reads as a treasury problem, and the player comes back with more money.
+    **The coast is placed so the Harbor stands on it.** (18, 9) was inland; it is on the water's edge now, which is where a harbor belongs and which starts the seafood run at the shore.
+    **Authored as rectangles, not a cell list.** A coastline is a region, and forty `Vector2i` in a `.tres` is neither readable nor editable by hand. Stop-gap for the same data TERR-06's per-cell grid will hold.
+    **`validate()` gains the check that would have shipped broken.** A node standing on sea is the obvious failure; a node WALLED IN by it is the one nobody would notice -- it can never be connected while the order book offers lines against it forever, so the run cannot be finished and never says why.
+    The dev checks had to move house: their scratch road was laid in exactly this corner, and it is water now. `verify_main._test_sea_is_unbuildable` pins the DIFFERENCE rather than the sea alone -- sea refuses a drag and charges nothing, the river still takes one -- with the treasury asserted either side, since a refusal that silently charged is the bad failure. See §8.4.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1765,6 +1772,41 @@ and no bridge -- there is no version of the map where a route gets through it.
 Water says "pay §40 or go around"; blocked ground says "go around". It exists
 so a map can shape an approach rather than merely tax it, which is what makes
 Oldwall's gates (§12.1) a funnel instead of a toll.
+
+### Open sea (added in v0.7 item 72)
+
+`SEA` is unbuildable **water**: no route may be built on it at any price. It
+is the first terrain on the map that is genuinely a wall, and it exists next
+to a river that is genuinely not one -- so the pair have to be told apart
+before a player tries to draw into either.
+
+| | River | Sea |
+|---|---|---|
+| Route on it | yes, +§40 (`RIVER_BRIDGE_COST`) | never, at any price |
+| What it costs the player | money | distance -- you go around |
+| How it reads | pale channel with two banks | deep water, swell on the diagonal |
+
+**Depth is the tell.** Both are flat blue plates on the same board and both
+answer the same gesture, so the difference has to survive being seen small and
+in passing: a paler channel invites a crossing, deep water does not. The
+refusal message says which of the two it is for the same reason -- a bare
+"can't build here" reads as a treasury problem, and the player comes back with
+more money.
+
+**Region 1's coastline is its south-east corner** (`GameBalance.SEA_RECTS`),
+placed so the Harbor at (18, 9) stands ON the water rather than inland, which
+is where a harbor belongs and which starts the seafood run at the water's
+edge. Authored as rectangles rather than a cell list, because a coastline is a
+region and forty `Vector2i` in a `.tres` is neither readable nor editable by
+hand. This is a stop-gap shape for the same data §8.1's per-cell grid will
+hold; when that lands these become `SEA` entries in the terrain array.
+
+**`MapData.validate()` polices two things**, and the second is the one that
+would actually ship. A node standing on sea is obvious. A node whose every
+orthogonal neighbour is sea or off-map can never be connected to anything,
+while the order book goes on offering lines against it forever -- a run that
+cannot be finished, with no sign of why. Cheap to check, invisible until
+somebody plays it.
 
 ### 8.5 Tile art: flat plates and ground vegetation (added in v0.7 item 67)
 

@@ -77,6 +77,20 @@ const BRIDGE_DECK_DECAY_MULT := 2.0
 const GRID_SIZE := Vector2i(21, 14)
 const RIVER_COL := 10
 
+## The coastline in the map's south-east corner (TERR-10). Open sea: no route
+## may be built on it at any price, so it is a shape the player routes AROUND
+## rather than a toll they pay.
+##
+## Placed so the Harbor at (18, 9) stands ON the coast rather than inland,
+## which is where a harbor belongs and which makes the seafood run start at the
+## water's edge. Deliberately clear of every node footprint and of City E at
+## (14, 9); MapData.validate() enforces both, and that nothing is walled in.
+const SEA_RECTS: Array[Rect2i] = [
+	Rect2i(16, 11, 5, 3),  # the open corner, x 16-20 / y 11-13
+	Rect2i(18, 10, 3, 1),  # the row directly south of the Harbor
+	Rect2i(20, 9, 1, 1),   # and the cell east of it, so the Harbor has water on two sides
+]
+
 ## ---------- day clock (LOOP-07) ----------
 ## Real-time seconds one in-game day lasts while the auto-run clock is
 ## ticking. The player keeps building while it counts down; when it hits

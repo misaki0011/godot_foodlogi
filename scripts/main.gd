@@ -45,6 +45,9 @@ const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must 
 ## 0.16 there is no room under the deck for an opening and the "bridge" is a
 ## painted strip. Must match RIVER_DECK_TOP in tools/asset_gen/generate_blocks.py.
 const RIVER_CROSSING_HEIGHT := 0.30
+## Legend swatch only -- the sea's own block carries the colour. Mirrors
+## SEA_TOP in tools/asset_gen/generate_blocks.py.
+const SEA_COLOR := Color("3A749E")
 const RIVER_BRIDGE_SCENE := preload("res://assets/Environment/glTF/Bridge_River.glb")
 const BRIDGE_ARCH_SCENE := preload("res://assets/Environment/glTF/Bridge_Arch.glb")
 
@@ -575,6 +578,15 @@ func _recompute_drag_validity() -> void:
 		_drag_new_connections.append([prev, cell])
 		if newly_built.has(cell):
 			continue
+		# Open sea is the one terrain with no price at all (TERR-10). The river
+		# beside it IS a §40 crossing, so the message has to say which of the
+		# two this is -- otherwise a refusal reads as a treasury problem and the
+		# player comes back with more money.
+		if not _map_data.is_buildable(cell.x, cell.y):
+			if _drag_invalid_reason == "":
+				_drag_valid = false
+				_drag_invalid_reason = "A route can't be built on open sea -- unlike the river, there's no crossing at any price. Go around."
+			continue
 		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell)
 		if pre_existing:
 			if i == last_index or _crosses_bridge_at(i):
@@ -903,6 +915,9 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 ## tap-to-cycle-shape feature). Tapping just explains that a drag is needed,
 ## whether the cell is empty ground or an already-built tile.
 func _do_tap_route(cell: Vector2i) -> void:
+	if not _map_data.is_buildable(cell.x, cell.y):
+		_show_toast("That's open sea -- no route can be built on it, at any price. The river is the crossing you can pay for.", true)
+		return
 	if not _state.grid.has(cell):
 		_show_toast("Press and hold on a source, a built hub, or an unfinished route tile, then drag here to build and connect a new one.", true)
 		return
@@ -2587,6 +2602,7 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
 	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
 	_add_legend_row(_legend_box, RIVER_BRIDGE_COLOR, "River / river crossing")
+	_add_legend_row(_legend_box, SEA_COLOR, "Open sea -- no route, at any price")
 	_add_legend_row(_legend_box, BRIDGE_DECK_COLOR, "Bridge deck -- routes cross, never join")
 
 	# Which delivery line belongs to which supply (ROUTE-16). Built from the

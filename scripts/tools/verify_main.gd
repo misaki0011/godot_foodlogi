@@ -256,6 +256,7 @@ func _report() -> void:
 		var item_name: String = terrain.mesh_library.get_item_name(item_id)
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
+	_test_sea_is_unbuildable(map_data, state, terrain_types_seen)
 	_test_ground_vegetation(map_data, terrain, state)
 	# Last, because it spends the treasury and permanently doubles the
 	# Garden: everything above still expects the map it started with.
@@ -292,7 +293,10 @@ func _check_route_source_attribution(state: GameState, farm_road: Vector2i, sour
 ## over the deck. Works in an empty corner of the map (column 17, rows 9-13,
 ## clear of every node placement) so nothing here disturbs the earlier checks.
 func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) -> void:
-	var road: Array[Vector2i] = [Vector2i(17, 9), Vector2i(17, 10), Vector2i(17, 11), Vector2i(17, 12), Vector2i(17, 13)]
+	# West of the river and clear of every node: the map's south-east corner,
+	# where these checks used to lay their scratch road, is open sea now
+	# (TERR-10) and nothing can be built on it.
+	var road: Array[Vector2i] = [Vector2i(7, 4), Vector2i(7, 5), Vector2i(7, 6), Vector2i(7, 7), Vector2i(7, 8)]
 	for cell in road:
 		assert(not state.grid.has(cell), "The bridge checks need a clear stretch of map to work in")
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
@@ -333,34 +337,34 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	# Now the crossing route itself: two unfinished stubs either side, dragged
 	# straight over the deck. This is the ONE case where a drag may run over a
 	# cell that already exists.
-	var west := Vector2i(15, 11)
-	var east := Vector2i(19, 11)
+	var west := Vector2i(5, 6)
+	var east := Vector2i(9, 6)
 	for cell in [west, east]:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
-	var across: Array[Vector2i] = [west, Vector2i(16, 11), bridge, Vector2i(18, 11), east]
+	var across: Array[Vector2i] = [west, Vector2i(6, 6), bridge, Vector2i(8, 6), east]
 	_main.set("_drag_path", across)
 	_main.call("_recompute_drag_validity")
 	assert(_main.get("_drag_valid"), "A drag straight over a bridge deck must be valid: %s" % _main.get("_drag_invalid_reason"))
 	var balance_before_cross: float = state.balance
 	_main.call("_commit_drag")
-	assert(state.grid.has(Vector2i(16, 11)) and state.grid.has(Vector2i(18, 11)), "The crossing drag must build the fresh ground either side of the deck")
+	assert(state.grid.has(Vector2i(6, 6)) and state.grid.has(Vector2i(8, 6)), "The crossing drag must build the fresh ground either side of the deck")
 	assert(is_equal_approx(state.balance, balance_before_cross - 2 * GameBalance.ROUTE_BUILD_COST), "A crossing drag pays only for the new tiles, never again for the bridge it crosses")
 
 	# The whole point: two routes through one cell, still two networks.
 	var comp_of := SimulationEngine.road_components(state)
-	assert(comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)] != comp_of[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+	assert(comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)] != comp_of[SimulationEngine.vertex(Vector2i(6, 6), SimulationEngine.LANE_GROUND)],
 		"Two routes crossing at a bridge must stay separate connected networks")
 	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] == comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)],
 		"A bridge's ground lane belongs to the road running underneath it")
-	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_DECK)] == comp_of[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_DECK)] == comp_of[SimulationEngine.vertex(Vector2i(6, 6), SimulationEngine.LANE_GROUND)],
 		"A bridge's deck belongs to the route crossing over it")
 
 	# Straight over, or not at all: no turning on the deck, no stopping on it.
-	var turns: Array[Vector2i] = [west, Vector2i(16, 11), bridge, road[3]]
+	var turns: Array[Vector2i] = [west, Vector2i(6, 6), bridge, road[3]]
 	_main.set("_drag_path", turns)
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag must not turn a corner on a bridge deck")
-	var stops: Array[Vector2i] = [west, Vector2i(16, 11), bridge]
+	var stops: Array[Vector2i] = [west, Vector2i(6, 6), bridge]
 	_main.set("_drag_path", stops)
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag must not stop on a bridge deck")
@@ -387,10 +391,10 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	assert(state.grid[bridge].kind == "route", "A bulldozed bridge must leave a route tile")
 	assert(state.grid[bridge].level == "paved", "A bulldozed bridge must hand its road back at the level it was, not reset it to dirt")
 	assert(state.has_connection(bridge, road[1]) and state.has_connection(bridge, road[3]), "The road under a bulldozed bridge must stay connected")
-	assert(not state.has_connection(bridge, Vector2i(16, 11)) and not state.has_connection(bridge, Vector2i(18, 11)),
+	assert(not state.has_connection(bridge, Vector2i(6, 6)) and not state.has_connection(bridge, Vector2i(8, 6)),
 		"Bulldozing a bridge must cut the route that crossed over it, not merge it into the road below")
 	var comp_after := SimulationEngine.road_components(state)
-	assert(comp_after[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] != comp_after[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+	assert(comp_after[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] != comp_after[SimulationEngine.vertex(Vector2i(6, 6), SimulationEngine.LANE_GROUND)],
 		"The two roads must stay separate networks after the bridge between them is cleared")
 	assert(is_equal_approx(state.balance, balance_before_clear), "Bulldoze must not refund")
 
@@ -1277,6 +1281,44 @@ func _source_marker(node_id: String) -> SourceMarker:
 		if marker is SourceMarker and marker.node_data != null and marker.node_data.node_id == node_id:
 			return marker
 	return null
+
+## TERR-10: open sea is a wall, and the river beside it is still a crossing.
+##
+## Those two sitting on one board is the whole risk. They are both water, both
+## drawn as a flat blue plate, and they answer the same gesture in opposite
+## ways -- so the check pins the DIFFERENCE rather than the sea alone: sea
+## refuses a drag and charges nothing, the river still takes one for §40.
+##
+## A refusal that silently charged would be the bad failure, which is why the
+## treasury is asserted either side and not just the grid.
+func _test_sea_is_unbuildable(map_data: MapData, state: GameState, blocks_seen: Dictionary) -> void:
+	var sea := Vector2i(18, 10)
+	assert(map_data.is_sea(sea.x, sea.y), "%s should be the coast south of the Harbor" % sea)
+	assert(not map_data.is_buildable(sea.x, sea.y), "sea must never be buildable")
+	assert(not map_data.is_river(sea.x, sea.y), "sea is not a river cell -- it has no crossing price")
+	assert(map_data.get_terrain(sea.x, sea.y) == GameEnums.TerrainType.SEA)
+	assert(map_data.is_buildable(map_data.river_col, 0), "the river is a crossing, not a wall")
+	assert(blocks_seen.get("Block_Sea", 0) > 0, "the sea must actually draw its own block")
+
+	# A drag that touches sea is refused whole, and costs nothing.
+	var balance_before: float = state.balance
+	var built_before: int = state.grid.size()
+	var into_sea: Array[Vector2i] = [Vector2i(18, 9), sea, Vector2i(18, 11)]
+	_main.set("_drag_path", into_sea)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "a drag onto open sea must be refused")
+	assert("sea" in String(_main.get("_drag_invalid_reason")).to_lower(),
+		"the refusal must say it is the sea, not read as a treasury problem: %s" % _main.get("_drag_invalid_reason"))
+	_main.call("_commit_drag")
+	assert(state.grid.size() == built_before, "a refused sea drag must build nothing")
+	assert(is_equal_approx(state.balance, balance_before), "a refused sea drag must charge nothing")
+	_main.call("_clear_drag_preview")
+
+	# Nothing grows in it either -- the scatter is plains-only.
+	var decor: Dictionary = (_main.get_node("TerrainMap") as GridMap).get("_decor_by_cell")
+	for cell in decor:
+		assert(not map_data.is_sea(cell.x, cell.y), "vegetation must not grow at sea (%s)" % cell)
+	print("Open sea (TERR-10): %d cells, unbuildable at any price, river still crossable." % blocks_seen.get("Block_Sea", 0))
 
 ## TERR-09: the scattered trees and bushes. Four properties, and the first two
 ## are the ones that would quietly rot: the scatter must be the SAME on every

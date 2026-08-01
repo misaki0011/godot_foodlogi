@@ -100,6 +100,14 @@ GRASS_SIDE = (114, 144, 74, 255)
 WATER_TOP = (124, 194, 212, 255)
 WATER_SIDE = (78, 140, 166, 255)
 WATER_RIPPLE = (196, 232, 240, 255)
+# Open sea, a long way DARKER than the river. The two are different rules --
+# a river is a §40 crossing, the sea cannot be built on at any price -- and a
+# player has to be able to tell them apart before they try to draw a route
+# into one. Depth is the readable difference: a paler channel invites a
+# crossing, deep water does not.
+SEA_TOP = (58, 116, 158, 255)
+SEA_SIDE = (38, 84, 120, 255)
+SEA_SWELL = (86, 148, 186, 255)
 
 # Route tiles (2x2 world-space footprint too; height is a thin plate on top of
 # the terrain, authored directly in world-space meters and mirrored by
@@ -415,6 +423,29 @@ def build_river_block() -> trimesh.Trimesh:
     parts = _tile_parts(WATER_TOP, WATER_SIDE)
     parts.append(_box((1.1, 0.03, 0.18), (-0.28, TILE_TOP_Y, -0.42), WATER_RIPPLE))
     parts.append(_box((0.9, 0.03, 0.18), (0.34, TILE_TOP_Y, 0.44), WATER_RIPPLE))
+    return trimesh.util.concatenate(parts)
+
+
+def build_sea_block() -> trimesh.Trimesh:
+    """Open sea: the same flat plate in deep blue, with a low swell across it.
+
+    Deliberately close in SHAPE to the river and a long way off in VALUE. They
+    have to sit side by side on one board and mean opposite things -- a river
+    is a crossing you pay for, the sea is ground no route will ever be built
+    on -- so the difference has to survive being seen small and in passing.
+
+    The swell runs on the long diagonal rather than in neat bands like the
+    river's ripples, which is the other half of the tell: a channel reads as
+    something with two banks, open water as something without."""
+    parts = _tile_parts(SEA_TOP, SEA_SIDE)
+    # Explicit, and every one inside the plate: a swell that overruns the tile
+    # edge tiles into its neighbour's groove and the board stops reading as
+    # squares. The plate is TILE_FOOTPRINT less twice TILE_PLATE_INSET.
+    swell = [(-0.44, -0.52, 0.62), (0.30, -0.34, 0.40), (0.20, 0.08, 0.62), (-0.38, 0.34, 0.44), (0.42, 0.56, 0.48)]
+    limit = TILE_FOOTPRINT / 2 - TILE_PLATE_INSET
+    for x, z, length in swell:
+        assert abs(x) + length / 2 <= limit, f"swell at {x} runs past the plate"
+        parts.append(_box((length, 0.03, 0.13), (x, TILE_TOP_Y, z), SEA_SWELL))
     return trimesh.util.concatenate(parts)
 
 
@@ -1190,6 +1221,7 @@ if __name__ == "__main__":
     export(build_chest(), "assets/Environment/glTF/Chest_Closed.glb")
     export(build_grass_block(), "assets/Blocks/glTF/Block_Grass.glb")
     export(build_river_block(), "assets/Blocks/glTF/Block_Ice.glb")
+    export(build_sea_block(), "assets/Blocks/glTF/Block_Sea.glb")
     export(build_dirt_road_block(), "assets/Blocks/glTF/Block_Road_Dirt.glb")
     export(build_paved_road_block(), "assets/Blocks/glTF/Block_Road_Paved.glb")
     export(build_main_road_block(), "assets/Blocks/glTF/Block_Road_Main.glb")

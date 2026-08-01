@@ -25,10 +25,12 @@ extends GridMap
 const TERRAIN_BLOCK_SCENES := {
 	GameEnums.TerrainType.PLAINS: preload("res://assets/Blocks/glTF/Block_Grass.glb"),
 	GameEnums.TerrainType.RIVER: preload("res://assets/Blocks/glTF/Block_Ice.glb"),
+	GameEnums.TerrainType.SEA: preload("res://assets/Blocks/glTF/Block_Sea.glb"),
 }
 const TERRAIN_MESH_NAMES := {
 	GameEnums.TerrainType.PLAINS: "Block_Grass",
 	GameEnums.TerrainType.RIVER: "Block_Ice",
+	GameEnums.TerrainType.SEA: "Block_Sea",
 }
 
 ## ---------- vegetation scatter ----------

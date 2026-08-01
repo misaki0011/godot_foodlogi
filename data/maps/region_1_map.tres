@@ -136,6 +136,7 @@ bonus_freshness = 90.0
 script = ExtResource("2_p2e7a")
 grid_size = Vector2i(21, 14)
 river_col = 10
+sea_rects = Array[Rect2i]([Rect2i(16, 11, 5, 3), Rect2i(18, 10, 3, 1), Rect2i(20, 9, 1, 1)])
 opening_lines = Array[Dictionary]([{
 "food_id": "grain",
 "node_id": "villageA"

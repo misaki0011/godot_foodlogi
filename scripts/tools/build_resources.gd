@@ -9,7 +9,7 @@ extends SceneTree
 ## Re-run any time tools/asset_gen/generate_blocks.py or the map layout changes.
 
 const BLOCKS_DIR := "res://assets/Blocks/glTF"
-const TERRAIN_BLOCK_NAMES := ["Block_Grass", "Block_Ice"]
+const TERRAIN_BLOCK_NAMES := ["Block_Grass", "Block_Ice", "Block_Sea"]
 const MESHLIB_OUT := "res://resources/terrain/blocks.meshlib"
 const REGION_MAP_OUT := "res://data/maps/region_1_map.tres"
 
@@ -53,6 +53,7 @@ func _build_region_map() -> void:
 	var map := MapData.new()
 	map.grid_size = GameBalance.GRID_SIZE
 	map.river_col = GameBalance.RIVER_COL
+	map.sea_rects = GameBalance.SEA_RECTS
 	map.node_placements = [
 		# Every source stands on 2x1 from the start (DEV-03), anchored so the
 		# footprint extends AWAY from the middle of the map -- that keeps the
