@@ -128,6 +128,37 @@ var _focused_node_id: String = ""
 ## renders a hover or a build triggers afterwards.
 var _pending_pops: Dictionary = {}
 
+## ---------- new orders arrive a beat late (item 66) ----------
+##
+## Orders opened by the day just simulated, as node_id -> Array of food_id, held
+## back from the map until the day's own results have been read.
+##
+## Filling an order opens the next one immediately (DEV-01), so without this the
+## new chip is drawn by the very same render that reports the delivery that
+## earned it -- landing in a column the player is still reading, and (being
+## undelivered, so red) sorting straight to the TOP of it, above the lines that
+## actually resolved. The day's verdict and its reward arrive as one
+## indistinguishable frame.
+##
+## So the chip is genuinely deferred rather than merely animated late: it is
+## filtered out of the column for NEW_ORDER_REVEAL_SEC, then revealed with a pop
+## on a render of its own. Purely a display hold -- `active_orders` opened the
+## line at day end and the simulation has always known about it, because
+## deferring the ORDER rather than the chip would change what the next day
+## delivers.
+var _deferred_orders: Dictionary = {}
+
+## Whether a reveal is already scheduled, so a day that opens four orders arms
+## one timer rather than four.
+var _reveal_scheduled := false
+
+## Real seconds, unscaled by DAY_SPEEDS, for the same reason the reminder is
+## (item 61): this is a beat in how the player reads the map, not an event in
+## the simulation, and it must not arrive three times as fast because they set
+## the clock to 4x. Long enough to clear the day-end shake (4 swings at 0.075s,
+## plus its settle), which is the thing it has to come after.
+const NEW_ORDER_REVEAL_SEC := 0.55
+
 ## ---------- tile placement pop (item 64) ----------
 ##
 ## Which PART of a cell a flourish belongs to. A cell is drawn as up to two
@@ -1173,9 +1204,15 @@ func _run_day() -> void:
 	# moment the delivery does.
 	for order in OrderBook.record_day(_state, _map_data, _map_data.node_placements):
 		_announce_order(order)
-		# Popped on the _render_grid at the end of this function, which is the
-		# first render that will actually draw the new chip.
-		_pending_pops[order.get("node_id", "")] = true
+		# Held back from the render at the end of this function -- that one
+		# belongs to the day's results. The chip arrives on its own render a
+		# little later, with a pop (item 66).
+		var opened_at: String = order.get("node_id", "")
+		if not _deferred_orders.has(opened_at):
+			_deferred_orders[opened_at] = []
+		_deferred_orders[opened_at].append(order.get("food_id", ""))
+	if not _deferred_orders.is_empty():
+		_schedule_new_order_reveal()
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
 	if _state.auto_run:
@@ -1187,6 +1224,28 @@ func _run_day() -> void:
 	_day_just_ran = true
 	_render_grid()
 	_update_ui()
+
+## Arms the one-shot that brings the day's new chips in. Uses a SceneTree timer
+## rather than the day clock: that clock is scaled by DAY_SPEEDS and stops when
+## the player pauses or opens the report, and a chip stuck offscreen behind a
+## modal would simply be missing from the map.
+func _schedule_new_order_reveal() -> void:
+	if _reveal_scheduled:
+		return
+	_reveal_scheduled = true
+	get_tree().create_timer(NEW_ORDER_REVEAL_SEC).timeout.connect(_reveal_new_orders)
+
+## Brings every held-back chip onto the map at once, popping the columns that
+## gained one. Safe to call early (the dev checks do, since they cannot wait out
+## a real-time timer) and safe to call with nothing pending.
+func _reveal_new_orders() -> void:
+	_reveal_scheduled = false
+	if _deferred_orders.is_empty():
+		return
+	for node_id in _deferred_orders:
+		_pending_pops[node_id] = true
+	_deferred_orders.clear()
+	_render_grid()
 
 ## Rolls the calendar over. Nothing about the order book happens here any
 ## more: progression answers to deliveries, not to the date (DEV-01). The day
@@ -1833,7 +1892,14 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# "later" placeholder either: five of those from day 1 would be the same
 	# wall of bubbles this feature exists to remove, in a quieter colour.
 	var demand := OrderBook.active_demand(_state, n)
+	# Minus anything opened by the day just simulated, which is held back for a
+	# moment so the day's own results can be read first (item 66). The line is
+	# genuinely open -- the simulation counts it from today -- this only decides
+	# when its chip appears.
+	var held_back: Array = _deferred_orders.get(n.node_id, [])
 	for food_id in demand:
+		if held_back.has(food_id):
+			continue
 		var requested: float = demand[food_id]
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
@@ -1912,8 +1978,11 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# One flourish per column, chosen by the same rule that decides which chip
 	# sits on top: entries are sorted worst-first, so entries[0] is the line
 	# most worth acting on and its status is what the column should express.
-	# A new order outranks any delivery -- it is the larger event, and playing
-	# both on one column would just read as a stumble.
+	#
+	# The two no longer compete for the same render. A day's shake plays as the
+	# day resolves; a new order's pop plays on the reveal render half a second
+	# later (item 66), by which time _day_just_ran has been consumed. The old
+	# "a pop outranks a hop" rule is gone with the hop.
 	var flourish := FoodBubbleMarker.Flourish.NONE
 	if _pending_pops.has(n.node_id):
 		flourish = FoodBubbleMarker.Flourish.POP
@@ -2011,18 +2080,16 @@ func _spawn_payout(base_pos: Vector3, earned: float) -> void:
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tween.chain().tween_callback(label.queue_free)
 
-## Which flourish a column plays for its worst line's status. The axis is the
-## meaning: vertical says the line paid and its height says how well, while
-## horizontal says it did not pay at all -- §9's real break is between red and
-## the other two, not between amber and green.
+## Which flourish a column plays for its worst line's status -- and now only red
+## has one (item 66). §9's real break has always been between red and the other
+## two rather than between amber and green, and the two paying tiers are the
+## ones a working network hits nearly every day: marking them meant the map
+## moved on almost every rollover, which is the opposite of emphasis. Colour
+## still gives the tier and the payout label still floats the figure, so
+## nothing was said only by the motion that was retired.
 static func _flourish_for(status: FoodBubbleMarker.Status) -> FoodBubbleMarker.Flourish:
-	match status:
-		FoodBubbleMarker.Status.GREEN:
-			return FoodBubbleMarker.Flourish.HOP
-		FoodBubbleMarker.Status.AMBER:
-			return FoodBubbleMarker.Flourish.NUDGE
-		FoodBubbleMarker.Status.RED:
-			return FoodBubbleMarker.Flourish.SHAKE
+	if status == FoodBubbleMarker.Status.RED:
+		return FoodBubbleMarker.Flourish.SHAKE
 	return FoodBubbleMarker.Flourish.NONE
 
 ## Severity order for a settlement's open lines: red, then amber, then

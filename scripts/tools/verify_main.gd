@@ -50,6 +50,7 @@ func _report() -> void:
 	_test_multi_tile_settlement_draws_one_stack(map_data)
 	_test_glyph_column_collapses_and_expands(map_data)
 	_test_flourishes_fire_once(map_data)
+	_test_new_orders_arrive_late(map_data)
 	_test_tile_placement_pops_once(map_data)
 	_test_columns_never_overlap(map_data)
 
@@ -829,17 +830,20 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 		"A pop must be cleared even when bubbles are off, not saved up")
 	_main.set("_bubbles_mode", 0)  # BubblesMode.GLYPHS
 
-	# Each status gets its own flourish on the render after a day, picked from
-	# the column's WORST line -- the same entries[0] the chip order uses.
+	# Only red moves on the render after a day (item 66). The two paying tiers
+	# are the ones a working network hits nearly every day, so marking them made
+	# the map move on almost every rollover -- the opposite of emphasis. Their
+	# tier is still on the chip's colour and their money still floats as a
+	# label, so a silent green is not a green that went unreported.
 	#
 	# Asserted on what the marker was ASKED to play, not on its transform: a
 	# tween applies nothing until it processes, so the column is still exactly
-	# at rest on the frame it was told to hop. (An earlier version of this
+	# at rest on the frame it was told to shake. (An earlier version of this
 	# check compared position.y against the node centre rather than the
 	# marker's real rest height of centre + 3.1, so it passed no matter what.)
 	for probe in [
-		{"fresh": 1000.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.HOP, "label": "green must hop"},
-		{"fresh": 500.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NUDGE, "label": "amber must nudge"},
+		{"fresh": 1000.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NONE, "label": "green must stay still"},
+		{"fresh": 500.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NONE, "label": "amber must stay still"},
 		{"fresh": 0.0, "delivered": 0.0, "want": FoodBubbleMarker.Flourish.SHAKE, "label": "red must shake"},
 	]:
 		state.last_settlement_status[city.node_id] = {
@@ -916,7 +920,11 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	assert(quiet != null and quiet.played == FoodBubbleMarker.Flourish.NONE,
 		"A render with no day behind it must play nothing")
 
-	# A new order outranks any delivery: one flourish per column, never both.
+	# Should a pop and a day-end shake ever land on one render, the pop still
+	# wins -- one flourish per column, never both. Item 66 separated them in
+	# practice (the shake plays as the day resolves, the pop half a second later
+	# on the reveal render), so this is now the tie-break holding rather than
+	# the everyday path.
 	var both: Dictionary = _main.get("_pending_pops")
 	both[city.node_id] = true
 	_main.set("_day_just_ran", true)
@@ -929,7 +937,70 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	state.active_orders.erase(city.node_id)
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
-	print("Flourishes (items 57-61): pop/hop/nudge/shake fire once each, the payout label survives a re-render, and only unpaid settlements get the recurring nag.")
+	print("Flourishes (items 57-61, 66): only red moves at day end, the pop fires once, the payout label survives a re-render, and only unpaid settlements get the recurring nag.")
+
+## Item 66: an order opened by the day just simulated is held out of the map
+## until that day's own results have been read, then arrives with a pop.
+##
+## The part worth checking is that the chip is GENUINELY deferred rather than
+## merely animated late. Filling an order opens the next immediately (DEV-01),
+## so without the hold the new chip is drawn by the very render reporting the
+## delivery that earned it -- and, being undelivered and therefore red, sorted
+## straight to the top of the column above the lines that actually resolved. A
+## pop alone would not fix that; the chip has to be absent and then arrive.
+func _test_new_orders_arrive_late(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	var centre: Vector3 = _main.call("_node_center", city)
+
+	var lines: Array = []
+	for food_id in city.demand:
+		lines.append(food_id)
+		if lines.size() == 2:
+			break
+	assert(lines.size() == 2, "this check needs a settlement with two demand lines")
+	state.active_orders[city.node_id] = {lines[0]: state.day, lines[1]: state.day}
+
+	_main.call("_render_grid")
+	var full := _column_viewport_at(centre, 3.0)
+
+	# Held back: the column is genuinely shorter, not merely still.
+	var deferred: Dictionary = _main.get("_deferred_orders")
+	deferred[city.node_id] = [lines[1]]
+	_main.call("_render_grid")
+	var held := _column_viewport_at(centre, 3.0)
+	assert(held.y < full.y,
+		"a held-back order must be left out of the column, got %s against %s" % [held, full])
+	assert(_column_marker_at(centre, 3.0).played == FoodBubbleMarker.Flourish.NONE,
+		"a column must not pop for a chip it is not showing yet")
+
+	# The reveal brings it in, on a render of its own, popping the column.
+	_main.call("_reveal_new_orders")
+	assert((_main.get("_deferred_orders") as Dictionary).is_empty(),
+		"the reveal must release every held-back order")
+	var revealed := _column_viewport_at(centre, 3.0)
+	assert(revealed == full,
+		"a revealed order must restore the full column, got %s against %s" % [revealed, full])
+	var marker := _column_marker_at(centre, 3.0)
+	assert(marker != null and marker.played == FoodBubbleMarker.Flourish.POP,
+		"a new chip must arrive with a pop")
+	assert((_main.get("_pending_pops") as Dictionary).is_empty(),
+		"the reveal's render must consume its own pops")
+
+	# Idempotent, so the real-time timer firing after an early reveal cannot pop
+	# the map a second time. With nothing pending it returns before rendering at
+	# all, so what has to be checked is that nothing was re-armed for the NEXT
+	# render -- the marker still on screen is the one that already popped.
+	_main.call("_reveal_new_orders")
+	assert((_main.get("_pending_pops") as Dictionary).is_empty(),
+		"a reveal with nothing pending must arm nothing")
+	_main.call("_render_grid")
+	assert(_column_marker_at(centre, 3.0).played == FoodBubbleMarker.Flourish.NONE,
+		"a second reveal must not pop the column again")
+
+	state.active_orders.erase(city.node_id)
+	_main.call("_render_grid")
+	print("New orders (item 66): a day's new chip is held out of the column, then arrives on a render of its own with a pop.")
 
 ## Item 64: a placed tile presses up out of the ground, and what a bulldoze
 ## takes away squashes flat and goes.
