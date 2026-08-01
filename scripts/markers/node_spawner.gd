@@ -49,15 +49,24 @@ func _spawn_settlement(node_data: NodeData, gridmap: GridMap) -> void:
 	marker.position = _footprint_center(node_data, gridmap) + Vector3(0, 1.0, 0)
 	marker.setup(node_data, MarkerColors.node_color(node_data))
 
-## Sources keep one marker per occupied cell: their art is a single crate, so a
-## 2x1 source is two crates and the footprint reads straight off them.
+## ONE marker, spanning the whole 2x1 footprint, for the same reason a
+## settlement gets one: the yard is authored at that footprint's real extent
+## and covers those cells itself. It used to be one crate per cell, which made
+## the footprint honest with the art that existed and drew every source as two
+## identical boxes.
 func _spawn_source(node_data: NodeData, gridmap: GridMap) -> void:
-	for cell_2d in node_data.cells():
-		var marker: NodeMarker = SOURCE_SCENE.instantiate()
-		add_child(marker)
-		var cell := Vector3i(cell_2d.x, 0, cell_2d.y)
-		marker.position = gridmap.map_to_local(cell) + Vector3(0, 1.0, 0)
-		marker.setup(node_data, MarkerColors.node_color(node_data))
+	var marker: NodeMarker = SOURCE_SCENE.instantiate()
+	add_child(marker)
+	marker.position = _footprint_center(node_data, gridmap) + Vector3(0, 1.0, 0)
+	marker.setup(node_data, MarkerColors.node_color(node_data))
+
+## Rebuilds one source's produce models after an upgrade. The marker draws one
+## per base unit of output, so the model it should be showing does not exist
+## until the level has already been raised.
+func refresh_source(node_id: String) -> void:
+	for marker in get_children():
+		if marker is SourceMarker and marker.node_data != null and marker.node_data.node_id == node_id:
+			marker.refresh_produce()
 
 ## Lights every marker's windows for the current moment of the day (LOOP-08).
 ## Markers with no window mesh ignore it, so this stays one sweep over the

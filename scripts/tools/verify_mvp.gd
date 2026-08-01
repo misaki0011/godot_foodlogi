@@ -19,7 +19,7 @@ func _initialize() -> void:
 	_test_multi_tile_nodes()
 	_test_sources_are_two_tiles()
 	_test_demand_caps()
-	_test_source_upgrade_doubles_supply()
+	_test_source_upgrade_ramp()
 	_test_delivery_reaches_any_footprint_cell()
 	_test_days_alone_open_nothing()
 	_test_filling_opens_the_next_order()
@@ -482,32 +482,47 @@ func _test_sources_are_two_tiles() -> void:
 		assert(got == expected[key], "%s should stay %d tiles apart, got %d" % [key, expected[key], got])
 	print("Sources: all 2x1, customer distances unchanged.")
 
-## Upgrading doubles output. The footprint does not change -- a source is
-## already 2x1 -- so the only thing it costs is money.
-func _test_source_upgrade_doubles_supply() -> void:
+## Upgrading adds one base unit of output, up to SOURCE_UPGRADE_MAX times. The
+## footprint does not change -- a source is already 2x1 -- so the only things
+## it costs are money and the cap.
+func _test_source_upgrade_ramp() -> void:
 	var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
 	var garden := _node(map, "garden")
 	var before: float = garden.produces.vegetables
 	var footprint := garden.cells()
 
-	garden.upgraded = true
-	garden.produces.vegetables *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
-
+	garden.upgrade_level = 1
 	assert(garden.cells() == footprint, "Upgrading must not move or resize a source")
-	assert(not garden.can_upgrade(), "An expanded source must not offer another upgrade")
-	assert(is_equal_approx(garden.produces.vegetables, before * 2.0),
-		"Upgrading must double output, got %.0f from %.0f" % [garden.produces.vegetables, before])
+	assert(garden.can_upgrade(), "One upgrade must not use up all %d" % GameBalance.SOURCE_UPGRADE_MAX)
+	assert(is_equal_approx(garden.supply_of("vegetables"), before * 2.0),
+		"The first upgrade must double output, got %.0f from %.0f" % [garden.supply_of("vegetables"), before])
+	assert(is_equal_approx(garden.produces.vegetables, before),
+		"`produces` is the authored base and must never be scaled in place")
+
+	# Linear, not compounding: five upgrades are six base units, not 2^5 of
+	# them. The ceiling matters as much as the step -- a compounding ramp puts
+	# a maxed Garden at 2880/day against a region that demands 110.
+	garden.upgrade_level = GameBalance.SOURCE_UPGRADE_MAX
+	assert(is_equal_approx(garden.supply_of("vegetables"), before * (GameBalance.SOURCE_UPGRADE_MAX + 1)),
+		"A maxed source should be %dx its base, got %.0f from %.0f" % [
+			GameBalance.SOURCE_UPGRADE_MAX + 1, garden.supply_of("vegetables"), before,
+		])
+	assert(not garden.can_upgrade(), "A source at the cap must offer no further upgrade")
 
 	# The Garden upgrade is the answer to region 1's one impossible food:
-	# vegetables are over-subscribed at 110 against a base 90.
+	# vegetables are over-subscribed at 110 against a base 90, and ONE upgrade
+	# is what closes it -- the rest of the ramp is headroom, not the fix.
 	var demanded := 0.0
 	for node in map.node_placements:
 		if node.node_type == GameEnums.NodeType.SETTLEMENT:
 			demanded += node.demand.get("vegetables", 0.0)
 	assert(demanded > before, "Vegetables should be over-subscribed before the upgrade (%.0f vs %.0f)" % [demanded, before])
-	assert(garden.produces.vegetables >= demanded,
-		"An upgraded Garden should cover the region's %.0f vegetables, supplies %.0f" % [demanded, garden.produces.vegetables])
-	print("Garden upgrade: %.0f -> %.0f vegetables against %.0f demanded." % [before, garden.produces.vegetables, demanded])
+	garden.upgrade_level = 1
+	assert(garden.supply_of("vegetables") >= demanded,
+		"One Garden upgrade should cover the region's %.0f vegetables, supplies %.0f" % [demanded, garden.supply_of("vegetables")])
+	print("Garden upgrade: %.0f base -> %.0f at one expansion, %.0f at the %d cap, against %.0f demanded." % [
+		before, before * 2.0, before * (GameBalance.SOURCE_UPGRADE_MAX + 1), GameBalance.SOURCE_UPGRADE_MAX, demanded,
+	])
 
 ## Demand caps by settlement type (DEV-04). Nothing enforces them at runtime,
 ## so validate() is the only thing keeping the map honest.

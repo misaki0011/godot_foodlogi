@@ -411,7 +411,7 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	var supply_left := {}
 	for s in sources:
 		for food_id in s.produces:
-			supply_left["%s|%s" % [s.node_id, food_id]] = s.produces[food_id]
+			supply_left["%s|%s" % [s.node_id, food_id]] = s.supply_of(food_id)
 
 	var flows: Array[Dictionary] = []
 	var income := 0.0
@@ -613,7 +613,7 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	for s in sources:
 		var food_status := {}
 		for food_id in s.produces:
-			var produced: float = s.produces[food_id]
+			var produced: float = s.supply_of(food_id)
 			var left: float = supply_left.get("%s|%s" % [s.node_id, food_id], produced)
 			food_status[food_id] = {"produced": produced, "used": produced - left}
 		source_status[s.node_id] = food_status

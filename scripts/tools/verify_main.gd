@@ -33,13 +33,11 @@ func _report() -> void:
 	var expected_cells: int = map_data.grid_size.x * map_data.grid_size.y
 	print("Terrain cells populated: %d (expected %d for %dx%d)" % [used_cells.size(), expected_cells, map_data.grid_size.x, map_data.grid_size.y])
 	assert(used_cells.size() == expected_cells)
-	# A SOURCE gets one marker per occupied cell (DEV-02) -- its art is a single
-	# crate, so a 2x1 source is two crates and the footprint reads off them. A
-	# SETTLEMENT gets exactly one, whatever its size: its model is authored at
-	# its footprint's real extent and covers those cells itself.
-	var expected_markers := 0
-	for node in map_data.node_placements:
-		expected_markers += 1 if node.node_type == GameEnums.NodeType.SETTLEMENT else node.cells().size()
+	# One marker per NODE now, whatever its size. Every node's model is authored
+	# at its footprint's real extent and covers those cells itself -- which is
+	# what DEV-02's one-marker-per-cell rule was standing in for until the art
+	# could do it, and the reason a 2x2 City no longer draws four of anything.
+	var expected_markers: int = map_data.node_placements.size()
 	print("Node markers spawned: %d (expected %d for %d nodes)" % [
 		markers.get_child_count(), expected_markers, map_data.node_placements.size(),
 	])
@@ -1096,24 +1094,22 @@ func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 	var markers: Node3D = _main.get_node("NodeMarkers")
 	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_do_upgrade_source", source)
-	assert(source.upgraded, "the source upgrade must have gone through")
+	assert(source.upgrade_level == 1, "the source upgrade must have gone through")
 	var landed := 0
 	for marker in markers.get_children():
 		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
 			assert(not is_equal_approx(marker.scale.y, 1.0),
-				"an expanded source's markers must land, got scale %s" % marker.scale)
+				"an expanded source's marker must land, got scale %s" % marker.scale)
 			landed += 1
-	assert(landed == source.cells().size(),
-		"every cell of an expanded source must land, got %d of %d" % [landed, source.cells().size()])
+	assert(landed == 1, "an expanded source has one marker over its whole footprint, got %d" % landed)
 	_main.call("_render_grid")
 	for marker in markers.get_children():
 		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
 			assert(not is_equal_approx(marker.scale.y, 1.0),
 				"a re-render must not cancel a source marker's landing -- it is not in GridVisuals")
 			marker.scale = Vector3.ONE
-	source.upgraded = false
-	for food_id in source.produces:
-		source.produces[food_id] /= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
+	source.upgrade_level = 0
+	_main.get_node("NodeMarkers").call("refresh_source", source.node_id)
 
 	# Bulldozing is the inverse, and its copy lives on Effects -- parented to
 	# GridVisuals it would be destroyed by the render that immediately follows.
@@ -1204,6 +1200,54 @@ func _test_windows_light_at_night(settlements: Array, markers: Node3D) -> void:
 	# Left as the moment the map is actually at, so nothing downstream inherits
 	# a night this check turned on.
 	_main.call("_apply_day_cycle")
+
+## DEV-03: a source's yard shows one produce model per base unit of output, all
+## the way to the cap.
+##
+## The claim being defended is that THE PILE IS THE SUPPLY FIGURE -- a player
+## reading four carrots off the map is reading four times the authored supply.
+## That holds only while the model count, the supply multiplier and the cap
+## agree, and all three live in different files, so it is asserted at every
+## level rather than at one. The sixth slot is the one that would fail first:
+## SOURCE_UPGRADE_MAX + 1 models have to fit in SourceMarker.SLOTS.
+##
+## Leaves the source at the level it found it, since the caller's own print
+## reports it and the map is shared with the checks that follow.
+func _test_source_models(source: NodeData, state: GameState) -> void:
+	var marker: SourceMarker = _source_marker(source.node_id)
+	assert(marker != null, "%s drew no source marker" % source.node_id)
+	assert(SourceMarker.SLOTS.size() == GameBalance.SOURCE_UPGRADE_MAX + 1,
+		"a source needs a slot for its base model plus every upgrade, got %d for %d" % [
+			SourceMarker.SLOTS.size(), GameBalance.SOURCE_UPGRADE_MAX,
+		])
+	var restore := source.upgrade_level
+	var base: float = source.produces.vegetables
+	for level in range(GameBalance.SOURCE_UPGRADE_MAX + 1):
+		source.upgrade_level = level
+		marker.refresh_produce()
+		assert(marker.produce_count() == level + 1,
+			"level %d must show %d models, got %d" % [level, level + 1, marker.produce_count()])
+		assert(is_equal_approx(source.supply_of("vegetables"), base * (level + 1)),
+			"level %d must supply %d base units" % [level, level + 1])
+	assert(not source.can_upgrade(), "a source at the cap must offer no further upgrade")
+
+	# And the cap is enforced where the money changes hands, not only in
+	# can_upgrade(): a click at the cap must charge nothing.
+	var balance_before := state.balance
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_do_upgrade_source", source)
+	assert(source.upgrade_level == GameBalance.SOURCE_UPGRADE_MAX, "a capped source must not expand again")
+	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "a refused upgrade must not charge")
+	state.balance = balance_before
+
+	source.upgrade_level = restore
+	marker.refresh_produce()
+
+func _source_marker(node_id: String) -> SourceMarker:
+	for marker in (_main.get_node("NodeMarkers") as Node3D).get_children():
+		if marker is SourceMarker and marker.node_data != null and marker.node_data.node_id == node_id:
+			return marker
+	return null
 
 ## TERR-09: the scattered trees and bushes. Four properties, and the first two
 ## are the ones that would quietly rot: the scatter must be the SAME on every
@@ -1301,29 +1345,35 @@ func _test_source_upgrade() -> void:
 	var footprint := garden.cells()
 	assert(footprint.size() == 2, "A source should stand on 2 tiles, got %d" % footprint.size())
 
-	var supply_before: float = garden.produces.vegetables
+	var base_supply: float = garden.produces.vegetables
 	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_set_tool", "upgrade")
 	_main.call("_handle_click", garden.grid_position)
-	assert(is_equal_approx(garden.produces.vegetables, supply_before * GameBalance.SOURCE_UPGRADE_SUPPLY_MULT), "Upgrading must double output")
+	assert(is_equal_approx(garden.supply_of("vegetables"), base_supply * 2.0), "The first upgrade must double output")
+	assert(is_equal_approx(garden.produces.vegetables, base_supply), "`produces` is the authored BASE and must never be scaled in place")
 	assert(is_equal_approx(state.balance, 0.0), "The upgrade must cost SOURCE_UPGRADE_COST")
 	assert(garden.cells() == footprint, "Upgrading must not move or resize a source")
-	assert(not garden.can_upgrade(), "An expanded source must not offer another upgrade")
+	assert(garden.can_upgrade(), "A source expanded once must still offer the rest of its %d" % GameBalance.SOURCE_UPGRADE_MAX)
 
 	# Tapping the source's OTHER cell must work too -- every cell of a
 	# footprint resolves to the same node (DEV-02).
 	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_handle_click", garden.far_cell())
-	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "A second upgrade must not charge")
+	assert(garden.upgrade_level == 2, "Either cell of a source's footprint must expand it")
+	assert(is_equal_approx(state.balance, 0.0), "The second upgrade must charge like the first")
+
+	_test_source_models(garden, state)
 
 	# The Upgrade tool must still refuse a settlement.
 	var village: NodeData = _node_by_id(map_data, "villageA")
 	assert(not village.can_upgrade(), "A settlement is never upgradeable")
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_handle_click", village.grid_position)
 	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "Tapping a settlement with Upgrade must not charge")
 
-	print("Source upgrade (DEV-03): Garden %d -> %d, footprint %s unchanged." % [
-		roundi(supply_before), roundi(garden.produces.vegetables), garden.size,
+	print("Source upgrade (DEV-03): Garden base %d, %d/%d expansions bought -> %d/day, footprint %s unchanged." % [
+		roundi(base_supply), garden.upgrade_level, GameBalance.SOURCE_UPGRADE_MAX,
+		roundi(garden.supply_of("vegetables")), garden.size,
 	])
 	state.balance = saved_balance
 	_main.call("_set_tool", "route")

@@ -233,6 +233,13 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The panes are their own glTF geometry.** A settlement exports as two NAMED meshes, `body` and `windows`, so Godot imports the panes as a MeshInstance3D of their own and `NodeMarker` can find them. Merged into the walls they could not glow without the walls glowing too. Everything else in the pipeline exports as one merged mesh; a settlement is the only thing needing a part of itself addressable later. The lookup is by node NAME, which is the part that would rot silently -- rename it in `generate_blocks.py` and nothing errors, the lights simply never come on again -- so the check asserts a real mesh was found and a real emission landed on it.
     **Emission, not a light source.** Five settlements' worth of `OmniLight3D`s would be five more lights for what is the compatibility renderer on a phone browser, lighting nothing but themselves. The pane is a saturated amber at a modest multiplier rather than a pale cream at a big one: emission is added to the lit colour and then clipped, so a near-white lamp pushed hard clips on all three channels and the window comes out white -- a hole in the wall rather than a light on. Unlike shadows this is not desktop-only; it is emission on a mesh that already exists, so a web night is lit too. See §10.1, §3.6.
 
+70. **A source is a yard with its produce standing on it, and it can be expanded five times.** Sources were two identical crates -- item 41's one-marker-per-cell stand-in, the last of it left in the game -- and could be upgraded exactly once.
+    **Five steps, linear.** §300 now buys one BASE unit of daily output, up to `SOURCE_UPGRADE_MAX` (5) times, so a source ramps 1x, 2x, 3x ... 6x. The first upgrade is still the doubling the tool has always promised. Five *doublings* would put a maxed Garden at 32x its authored 90/day against a region that demands 110 -- a number running away rather than a decision the player is making -- and each §300 buying the same absolute amount is the only version a player can price without doing algebra. The cost does not escalate and does not need to: a source already out-supplying every line it feeds earns nothing from its next upgrade, so the back half of the ramp is headroom rather than a purchase anyone makes today.
+    **`produces` stops being mutated.** It is the authored base now, read through `NodeData.supply_of()`. Scaling the dictionary in place worked at one upgrade and breaks at five: the base becomes unrecoverable, and every later step would be derived from an already-scaled number.
+    **The pile is the supply figure.** A source is a 2x1 yard carrying one produce model per base unit of output, so a Garden showing four carrots is making four times its authored supply and a player can read that off the map without opening anything. It holds only while the model count, the supply multiplier and the cap agree -- three numbers in three files -- so the yard has exactly `SOURCE_UPGRADE_MAX + 1` slots and the check asserts all three at every level.
+    **The produce is the chip glyphs in three dimensions.** `FoodGlyphs`' rule is that shape carries a food's identity and the same silhouette appears everywhere the food does, so the mark on a settlement's chip is the mark on the source that fills it -- and the carrot is green rather than orange for exactly that reason. They are stylised glyphs made physical rather than props at life scale: each is blown up to fill its slot, because a realistically-sized loaf on a 2x1 yard is a dot from the game camera, which is the same failure the flat glyphs hit at strip size.
+    With sources joining settlements at one marker per node, **every node on the map now draws exactly one**. See §4.7, §10.1, §0.41.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1111,6 +1118,58 @@ Suggested rule:
 Food starts at 100% freshness unless the source has a special modifier.
 ```
 
+### Expanding a source (DEV-03, extended to five steps in v0.7 item 70)
+
+The **Upgrade tool** works on a food source as well as a route: §300 adds one
+BASE unit of daily output, up to `GameBalance.SOURCE_UPGRADE_MAX` (5) times, so
+a source ramps 1x, 2x, 3x ... 6x its authored supply. The footprint never
+changes -- a source stands on its full 2x1 from day 1 -- so the only things an
+upgrade can fail for are money and the cap.
+
+**Linear, not compounding.** The first upgrade is still the doubling the tool
+has always promised, but five *doublings* would put a maxed Garden at 32x its
+authored 90/day against a region that demands 110. That is a number running
+away rather than a decision the player is making. Each §300 buying the same
+absolute amount is also the only version a player can price without doing
+algebra.
+
+**The cost does not escalate, and does not need to.** The treasury and the
+region's own demand do the limiting: a source already out-supplying every line
+it feeds earns nothing from its next upgrade, so the back half of the ramp is
+headroom for a bigger region rather than a purchase anyone makes today.
+
+**`produces` is the authored base and is never scaled in place.** Everything
+that asks what a source makes goes through `NodeData.supply_of()` /
+`daily_supply()`. Mutating the dictionary worked while there was exactly one
+upgrade and stops working at five, because the base becomes unrecoverable and
+every later step would have to be derived from an already-scaled number.
+
+### The yard, and why the pile IS the supply figure (added in v0.7 item 70)
+
+A source is drawn as a 2x1 **yard** -- the same rounded plaza a settlement
+stands on (§10.1) -- carrying **one produce model per base unit of output**:
+one to begin with, and one more for every upgrade bought. So a Garden showing
+four carrots is producing four times what the map authored, and a player can
+read a source's output off the map without opening anything.
+
+That reading only holds while the model count, the supply multiplier and the
+cap agree, and the three live in different files -- so the yard has exactly
+`SOURCE_UPGRADE_MAX + 1` slots and the dev check asserts all three at every
+level rather than at one.
+
+The produce models are **the chip glyphs in three dimensions**. `FoodGlyphs`'
+rule is that shape carries a food's identity and the same silhouette appears
+everywhere that food does, so the mark on a settlement's chip is the mark on
+the source that fills it: a lens-shaped ear of wheat, a domed loaf, a carrot
+tapering to a point, a necked bottle, a tailed fish. Colours follow the glyphs
+too -- which is why the carrot is **green** rather than orange, exactly as it
+is on every chip.
+
+They are also **stylised glyphs made physical, not props at life scale**: each
+is blown up to fill its slot, because a realistically-sized loaf on a 2x1 yard
+is a dot from the game camera. That is the same failure the flat glyphs hit at
+strip size, and it has the same fix.
+
 ### Source routing role (clarified in v0.3)
 
 Food sources are production endpoints only. They are not delivery destinations, relay nodes, or shortcuts between two parts of a road network.
@@ -1928,6 +1987,23 @@ between the place and the route arriving at it. For the same reason the City's
 blocks are near-white rather than a light grey: pitched anywhere near the
 plaza's own stone they merge into the ground they stand on, and the City loses
 the skyline that is the whole point of having them.
+
+#### Source models (added in v0.7 item 70)
+
+A source is a 2x1 yard on the same rounded plaza a settlement uses, carrying
+one produce model per base unit of its daily output -- see §4.7 for what that
+count means and why the models are the chip glyphs in three dimensions.
+
+Like a settlement it draws **one** marker over its whole footprint rather than
+one per cell, and for the same reason: the yard is authored at that footprint's
+real extent and covers those cells itself. That retires the last of item 41's
+one-marker-per-cell stand-in, under which every source was drawn as two
+identical crates.
+
+A source's yard is deliberately the **same stone** as a settlement's plaza
+rather than a colour of its own. Both are places standing on ground the player
+cannot build over; what tells them apart is what stands on top -- produce
+against red roofs.
 
 #### Windows light up at night (added in v0.7 item 69)
 

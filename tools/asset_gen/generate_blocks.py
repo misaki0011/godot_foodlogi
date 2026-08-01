@@ -776,6 +776,152 @@ def _settlement_scene(body_parts, window_parts) -> trimesh.Scene:
     )
 
 
+# ------------------------------------------------------------------ sources
+#
+# A source is a 2x1 yard -- the same rounded plaza a settlement stands on --
+# with one PRODUCE MODEL on it per unit of daily output: one to begin with,
+# and one more for every upgrade (see GameBalance.SOURCE_UPGRADE_MAX).
+#
+# The produce models are the food glyphs from the chips, in three dimensions.
+# That is the whole point of them: FoodGlyphs' rule is that shape carries a
+# food's identity and the SAME silhouette appears everywhere the food does, so
+# the mark on a settlement's chip is the mark on the source that fills it.
+# Colours follow the glyphs too, food colour and all -- which is why the carrot
+# is green rather than orange, exactly as it is on every chip.
+#
+# Each is authored origin-at-base and fits inside one slot of the yard's 3x2
+# grid, so SourceMarker can drop them onto fixed positions with no scaling.
+GRAIN_COLOR = (217, 195, 106, 255)  # == GameBalance.food_types() colours
+GRAIN_STALK = (186, 166, 88, 255)
+BREAD_COLOR = (200, 154, 91, 255)
+BREAD_SLASH = (226, 192, 142, 255)
+VEG_COLOR = (111, 168, 90, 255)
+VEG_TUFT = (78, 132, 62, 255)
+MILK_COLOR = (237, 239, 230, 255)
+MILK_CAP = (108, 136, 168, 255)
+SEAFOOD_COLOR = (91, 143, 168, 255)
+SEAFOOD_FIN = (72, 118, 142, 255)
+SEAFOOD_EYE = (44, 58, 72, 255)
+
+## Produce is authored at a comfortable hand-size and then blown up to fill its
+## slot on the yard. These are STYLISED GLYPHS made physical, not props at
+## life scale -- a realistically-sized loaf on a 2x1 yard is a dot from the
+## game camera, which is the same failure the chip glyphs hit at strip size.
+## One factor rather than 30 retuned numbers, so the shapes stay readable in
+## the source and the slot budget is a single thing to check.
+FOOD_MODEL_SCALE = 1.7
+## The slot pitch on SourceMarker's 3x2 grid, which nothing may overflow.
+FOOD_SLOT_WIDTH = 1.10
+FOOD_SLOT_DEPTH = 0.80
+
+
+def _cylinder_x(radius, length, translation, color, sections=10) -> trimesh.Trimesh:
+    """A cylinder lying along X -- the loaf's dome. trimesh builds them Z-up,
+    so this is the same one-place rotation as _cylinder, a quarter turn the
+    other way."""
+    mesh = trimesh.creation.cylinder(radius=radius, height=length, sections=sections)
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(math.pi / 2, (0, 1, 0)))
+    mesh.apply_translation(translation)
+    mesh.visual.vertex_colors = np.tile(color, (len(mesh.vertices), 1))
+    return mesh
+
+
+def build_food_grain() -> trimesh.Trimesh:
+    """An ear of wheat: a thin stalk under a lens -- pointed at both ends,
+    widest in the middle -- exactly the envelope FoodGlyphs._GRAIN draws, and
+    for its reason: anything that tapers to a trunk reads as a conifer, so the
+    ear must not widen downward into its stem."""
+    parts = [_cylinder(0.03, 0.24, (0, 0.12, 0), GRAIN_STALK, sections=6)]
+    # Widths up then down: the lens. Slab heights are equal so the taper is
+    # carried entirely by the silhouette rather than by spacing.
+    for i, width in enumerate([0.11, 0.19, 0.21, 0.16, 0.09]):
+        y = 0.24 + 0.075 * i + 0.0375
+        parts += _chamfered_box((width, 0.075, width * 0.75), (0, y, 0), GRAIN_COLOR, width * 0.16)
+    return _produce(trimesh.util.concatenate(parts))
+
+
+def build_food_bread() -> trimesh.Trimesh:
+    """A loaf: flat base, domed top (FoodGlyphs._loaf). The dome is a cylinder
+    lying along X with its lower half buried in the base, which is the cheapest
+    honest way to get a smooth crown out of primitives."""
+    parts = [
+        _chamfered_box((0.46, 0.13, 0.30), (0, 0.065, 0), BREAD_COLOR, 0.045),
+        _cylinder_x(0.15, 0.42, (0, 0.15, 0), BREAD_COLOR),
+        _box((0.30, 0.03, 0.05), (0, 0.29, 0), BREAD_SLASH),
+    ]
+    return _produce(trimesh.util.concatenate(parts))
+
+
+def build_food_vegetables() -> trimesh.Trimesh:
+    """A carrot: a root tapering DOWNWARD to a point under a chunky tuft.
+
+    Green, not orange -- the chips fill every glyph with its food's own colour
+    and vegetables are green there, so an orange carrot here would break the
+    one rule that makes the glyphs learnable. The tuft is one chunky mass
+    rather than three thin fronds, the same fix FoodGlyphs._VEG_TUFT needed."""
+    root = trimesh.creation.cone(radius=0.15, height=0.40, sections=8)
+    # Cone builds apex at +Z; a quarter turn puts the apex DOWN, then it is
+    # lifted so the point just touches the ground.
+    root.apply_transform(trimesh.transformations.rotation_matrix(math.pi / 2, (1, 0, 0)))
+    root.apply_translation((0, 0.40, 0))
+    root.visual.vertex_colors = np.tile(VEG_COLOR, (len(root.vertices), 1))
+    parts = [root]
+    parts += _chamfered_box((0.20, 0.16, 0.18), (0, 0.47, 0), VEG_TUFT, 0.05)
+    parts += _sprigs(3, 0.10, 0.58, VEG_TUFT, size=(0.17, 0.05, 0.09), tilt=0.9, phase=0.5)
+    return _produce(trimesh.util.concatenate(parts))
+
+
+def build_food_milk() -> trimesh.Trimesh:
+    """A bottle: square shoulders, a necked top, a cap (FoodGlyphs._MILK).
+
+    The cap is the one part that is NOT the food's colour: milk is very nearly
+    white and a white cap on a white bottle loses the neck entirely, which is
+    the silhouette's whole distinguishing feature."""
+    parts = _chamfered_box((0.26, 0.30, 0.26), (0, 0.15, 0), MILK_COLOR, 0.05)
+    parts += _chamfered_box((0.13, 0.14, 0.13), (0, 0.36, 0), MILK_COLOR, 0.03)
+    parts.append(_box((0.16, 0.05, 0.16), (0, 0.45, 0), MILK_CAP))
+    return _produce(trimesh.util.concatenate(parts))
+
+
+def build_food_seafood() -> trimesh.Trimesh:
+    """A fish, lying along X: a tapered body with a forked tail and an eye
+    (FoodGlyphs._SEAFOOD). Lying rather than standing -- a fish balanced on its
+    tail reads as a trophy, and the glyph it has to match is horizontal."""
+    parts = _chamfered_box((0.40, 0.20, 0.15), (0.05, 0.12, 0), SEAFOOD_COLOR, 0.05)
+    parts.append(_box((0.06, 0.11, 0.04), (0.22, 0.14, 0.06), SEAFOOD_EYE))
+    # The tail is two fins meeting at the body rather than one slab, which is
+    # what makes it fork instead of reading as a rudder.
+    for side in (1, -1):
+        parts.append(
+            _leaf((0.18, 0.04, 0.10), (-0.22, 0.12 + side * 0.05, 0), SEAFOOD_FIN, 0.0, side * 0.55)
+        )
+    parts.append(_box((0.10, 0.09, 0.03), (0.02, 0.24, 0), SEAFOOD_FIN))
+    return _produce(trimesh.util.concatenate(parts))
+
+
+def _produce(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """Blows a produce model up to yard scale and checks it still fits its
+    slot. The assertion is the point: the models are authored by eye and the
+    slots are fixed, so the failure mode is a new food quietly overlapping its
+    neighbour on a fully-upgraded source -- the one arrangement nobody looks
+    at until it ships."""
+    mesh.apply_scale(FOOD_MODEL_SCALE)
+    size = mesh.extents
+    assert size[0] <= FOOD_SLOT_WIDTH, f"produce is {size[0]:.2f} wide, slot is {FOOD_SLOT_WIDTH}"
+    assert size[2] <= FOOD_SLOT_DEPTH, f"produce is {size[2]:.2f} deep, slot is {FOOD_SLOT_DEPTH}"
+    return mesh
+
+
+def build_source_base() -> trimesh.Trimesh:
+    """A source's yard: the settlement plaza at 2x1. Deliberately the same
+    stone rather than a colour of its own -- a source and a settlement are both
+    PLACES standing on ground the player cannot build over, and what tells them
+    apart is what stands on top: produce models against red roofs."""
+    return trimesh.util.concatenate(
+        _plaza(4.0 - 2 * PLAZA_INSET, 2.0 - 2 * PLAZA_INSET)
+    )
+
+
 def export(mesh: trimesh.Trimesh, path: str) -> None:
     _matte(mesh)
     mesh.export(path, file_type="glb")
@@ -803,3 +949,9 @@ if __name__ == "__main__":
     export_scene(build_settlement_village(), "assets/Environment/glTF/Settlement_Village.glb")
     export_scene(build_settlement_town(), "assets/Environment/glTF/Settlement_Town.glb")
     export_scene(build_settlement_city(), "assets/Environment/glTF/Settlement_City.glb")
+    export(build_source_base(), "assets/Environment/glTF/Source_Base.glb")
+    export(build_food_grain(), "assets/Environment/glTF/Food_Grain.glb")
+    export(build_food_bread(), "assets/Environment/glTF/Food_Bread.glb")
+    export(build_food_vegetables(), "assets/Environment/glTF/Food_Vegetables.glb")
+    export(build_food_milk(), "assets/Environment/glTF/Food_Milk.glb")
+    export(build_food_seafood(), "assets/Environment/glTF/Food_Seafood.glb")

@@ -20,9 +20,23 @@ extends Resource
 ## or it will process a City four times.
 @export var size: Vector2i = Vector2i.ONE
 
-## Source-only (DEV-03): whether this source has been expanded, doubling its
-## daily output. Authored false and set at runtime on Main's private copy of
-## the map.
+## Source-only (DEV-03): how many times this source has been expanded, 0 to
+## GameBalance.SOURCE_UPGRADE_MAX. Authored 0 and raised at runtime on Main's
+## private copy of the map.
+##
+## `produces` stays the AUTHORED BASE and is never mutated -- read the live
+## figure through daily_supply()/supply_of(). Scaling the dictionary in place
+## worked while there was exactly one upgrade and stops working the moment
+## there are five: the base is unrecoverable afterwards, so every later step
+## would have to be derived from an already-scaled number.
+##
+## Each upgrade adds ONE base unit of output rather than doubling what is
+## already there, so the ramp is 1x, 2x, 3x ... 6x. The first upgrade is still
+## a doubling, which is what the tool has always promised; compounding instead
+## would put a five-times-upgraded source at 32x its authored supply, which is
+## not a decision the player is making so much as a number running away. It
+## also gives the yard's produce models something exact to say: one model is
+## one base unit of daily output, so the pile IS the supply figure.
 ##
 ## The upgrade does NOT change the footprint. Sources stand on their full 2x1
 ## from day 1, so the second tile is simply part of the source rather than
@@ -30,7 +44,7 @@ extends Resource
 ## tried first and read as a strange empty square nobody could identify --
 ## land the player cannot use is much clearer when it is visibly the building
 ## itself.
-@export var upgraded: bool = false
+@export var upgrade_level: int = 0
 
 @export var display_name: String
 ## Settlement-only descriptive label, e.g. "Village", "Town", "City (late
@@ -41,7 +55,9 @@ extends Resource
 ## via GameBalance.DEMAND_CAP. Authored alongside `size`, which it matches in
 ## spirit: a City is bigger on the map and hungrier on the ledger.
 @export var settlement_type: GameEnums.SettlementType = GameEnums.SettlementType.VILLAGE
-## Source-only: food_id -> daily supply.
+## Source-only: food_id -> daily supply AT THE AUTHORED BASE LEVEL. What the
+## source actually produces today is daily_supply(), which scales this by the
+## upgrades bought; nothing should read the raw figure except as a base.
 @export var produces: Dictionary = {}
 ## Settlement-only: food_id -> daily demand, asked for in full every day.
 ## This is the settlement's EVENTUAL appetite -- only the lines whose orders
@@ -79,10 +95,27 @@ func grid_distance_to(other: NodeData) -> int:
 			best = mini(best, absi(a.x - b.x) + absi(a.y - b.y))
 	return best
 
-## Whether this node still has an upgrade available (DEV-03). Every source
-## can be expanded exactly once; settlements never can.
+## How much this source puts out per day, as food_id -> amount, with every
+## upgrade bought so far applied. Sources only; a settlement produces nothing.
+func daily_supply() -> Dictionary:
+	var out := {}
+	for food_id in produces:
+		out[food_id] = produces[food_id] * supply_multiplier()
+	return out
+
+## One food's live daily output, 0 if this node does not produce it.
+func supply_of(food_id: String) -> float:
+	return produces.get(food_id, 0.0) * supply_multiplier()
+
+## What the upgrades bought so far multiply the authored base by: 1x
+## un-upgraded, then one more base unit per upgrade. See `upgrade_level`.
+func supply_multiplier() -> float:
+	return 1.0 + float(upgrade_level) * GameBalance.SOURCE_UPGRADE_SUPPLY_STEP
+
+## Whether this node still has an upgrade available (DEV-03). A source can be
+## expanded up to GameBalance.SOURCE_UPGRADE_MAX times; settlements never can.
 func can_upgrade() -> bool:
-	return node_type == GameEnums.NodeType.SOURCE and not upgraded
+	return node_type == GameEnums.NodeType.SOURCE and upgrade_level < GameBalance.SOURCE_UPGRADE_MAX
 
 ## How many demand lines this settlement may hold (DEV-04). Sources have none.
 func demand_cap() -> int:

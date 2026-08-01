@@ -74,7 +74,7 @@ const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map 
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
 	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
-	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it for §300 instead: it doubles its daily output, once.",
+	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it for §300 instead: each expansion adds one more day's worth of its output, up to 5 times.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
@@ -864,7 +864,7 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	var n := _node_at(cell)
 	if n:
 		# The Upgrade tool is the one tool that does anything to a node: it
-		# widens a source and doubles its output (DEV-03). This is not the
+		# expands a source by one step (DEV-03). This is not the
 		# discoverability trap the old tap-to-accept offer was -- there the
 		# tap was passive and unprompted, here the player has already picked
 		# a tool that says "upgrade what I touch".
@@ -925,18 +925,22 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 	_pending_tile_pops[cell] = {"part": TilePart.ROAD, "delay": 0.0}
 	_show_toast("Upgraded to %s for §%d." % [GameBalance.ROUTE_LEVELS[cell_data.level].label, roundi(cost)])
 
-## Doubles a source's daily output (DEV-03). The footprint does not change --
-## a source already stands on its full 2x1 -- so the only thing this can fail
-## for is money.
+## Expands a source by one step (DEV-03), up to GameBalance.SOURCE_UPGRADE_MAX
+## times. The footprint does not change -- a source already stands on its full
+## 2x1 -- so the only things this can fail for are money and the cap.
 ##
-## Mutates the NodeData, which is safe because Main duplicates the map
-## resource at load; the engine reads supply straight off `produces`, so the
-## bigger output is live on the next simulated day with nothing to thread
-## through, and the source's own bubble reads "0/180" instead of "0/90" as
-## soon as the grid re-renders.
+## Raises `upgrade_level` on the NodeData, which is safe because Main
+## duplicates the map resource at load. Everything that asks what a source
+## makes goes through NodeData.supply_of(), so the bigger output is live on the
+## next simulated day with nothing to thread through, and the source's own chip
+## reads "0/180" where it read "0/90" as soon as the grid re-renders.
+##
+## The source's yard grows a produce model per step (SourceMarker), which is
+## why the marker is refreshed here rather than merely popped: at this point
+## the model it should be showing does not exist yet.
 func _do_upgrade_source(n: NodeData) -> void:
 	if not n.can_upgrade():
-		_show_toast("%s is already expanded." % n.display_name, true)
+		_show_toast("%s is already expanded as far as it goes (%d times)." % [n.display_name, GameBalance.SOURCE_UPGRADE_MAX], true)
 		return
 	var cost := GameBalance.SOURCE_UPGRADE_COST
 	if _state.balance < cost:
@@ -944,16 +948,18 @@ func _do_upgrade_source(n: NodeData) -> void:
 		return
 
 	_state.balance -= cost
-	n.upgraded = true
+	n.upgrade_level += 1
 	var gained := []
 	for food_id in n.produces:
-		n.produces[food_id] *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
-		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
+		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.supply_of(food_id))])
 
+	_node_spawner.refresh_source(n.node_id)
 	_pop_node_markers(n.node_id)
 	_render_grid()
 	_update_ui()
-	_show_toast("%s expanded for §%d — now %s." % [n.display_name, roundi(cost), ", ".join(gained)])
+	var left := GameBalance.SOURCE_UPGRADE_MAX - n.upgrade_level
+	var remaining := " (%d expansion%s left)" % [left, "" if left == 1 else "s"] if left > 0 else " (fully expanded)"
+	_show_toast("%s expanded for §%d — now %s%s." % [n.display_name, roundi(cost), ", ".join(gained), remaining])
 
 func _do_build_storage(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
@@ -1851,7 +1857,7 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# which is now the only place it lives.
 	var entries: Array = []
 	for food_id in n.produces:
-		var produced: float = n.produces[food_id]
+		var produced: float = n.supply_of(food_id)
 		var used: float = 0.0
 		if status.has(food_id):
 			used = status[food_id].used
@@ -2470,7 +2476,7 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "ROUTES")
 	var route_grid := _add_tool_grid(box)
 	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.RIVER_BRIDGE_COST)])
-	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d) or Paved to Main (§%d); a food source to double its output (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), roundi(GameBalance.SOURCE_UPGRADE_COST)])
+	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d) or Paved to Main (§%d); a food source to expand it, up to %d times (§%d each)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), GameBalance.SOURCE_UPGRADE_MAX, roundi(GameBalance.SOURCE_UPGRADE_COST)])
 
 	_add_section_title(box, "STORAGE")
 	var storage_grid := _add_tool_grid(box)
