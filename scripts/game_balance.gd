@@ -85,10 +85,15 @@ const RIVER_COL := 10
 ## which is where a harbor belongs and which makes the seafood run start at the
 ## water's edge. Deliberately clear of every node footprint and of City E at
 ## (14, 9); MapData.validate() enforces both, and that nothing is walled in.
+## The rectangles STEP, rather than squaring off the corner: the shoreline runs
+## diagonally out from under City E, so the land narrows toward the point
+## instead of stopping at a wall. A square block of water reads as a chunk
+## deleted from the board; a stepped one reads as a coast.
 const SEA_RECTS: Array[Rect2i] = [
-	Rect2i(16, 11, 5, 3),  # the open corner, x 16-20 / y 11-13
+	Rect2i(20, 9, 1, 1),   # the cell east of the Harbor, so it has water on two sides
 	Rect2i(18, 10, 3, 1),  # the row directly south of the Harbor
-	Rect2i(20, 9, 1, 1),   # and the cell east of it, so the Harbor has water on two sides
+	Rect2i(18, 11, 3, 1),  # x 18-20
+	Rect2i(17, 12, 4, 2),  # x 17-20 / y 12-13, the open corner
 ]
 
 ## ---------- day clock (LOOP-07) ----------

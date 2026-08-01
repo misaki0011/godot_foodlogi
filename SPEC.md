@@ -1798,7 +1798,12 @@ placed so the Harbor at (18, 9) stands ON the water rather than inland, which
 is where a harbor belongs and which starts the seafood run at the water's
 edge. Authored as rectangles rather than a cell list, because a coastline is a
 region and forty `Vector2i` in a `.tres` is neither readable nor editable by
-hand. This is a stop-gap shape for the same data §8.1's per-cell grid will
+hand.
+
+The rectangles **step** rather than squaring the corner off: the shoreline runs
+diagonally out from under City E, so the land narrows toward the point instead
+of stopping at a wall. A square block of water reads as a chunk deleted from
+the board; a stepped one reads as a coast. This is a stop-gap shape for the same data §8.1's per-cell grid will
 hold; when that lands these become `SEA` entries in the terrain array.
 
 **`MapData.validate()` polices two things**, and the second is the one that
