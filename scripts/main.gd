@@ -689,6 +689,9 @@ func _commit_sweep() -> void:
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
 			_state.balance -= lvl.upgrade_cost
 			cell_data.level = lvl.next
+		# Staggered along the sweep like a route drag, for the same reason: the
+		# player drew a line and the road should resurface along it.
+		_arm_placement_pops(_sweep_cells)
 		_show_toast("Upgraded %d tile%s for §%d." % [count, plural, roundi(_sweep_cost)])
 	_after_action()
 
@@ -881,6 +884,10 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 		return
 	_state.balance -= cost
 	cell_data.level = lvl.next
+	# An upgrade swaps the block outright -- Dirt, Paved and Main are three
+	# different meshes -- so the road the player is looking at afterwards really
+	# is new, and lands like one.
+	_pending_tile_pops[cell] = {"part": TilePart.ROAD, "delay": 0.0}
 	_show_toast("Upgraded to %s for §%d." % [GameBalance.ROUTE_LEVELS[cell_data.level].label, roundi(cost)])
 
 ## Doubles a source's daily output (DEV-03). The footprint does not change --
@@ -908,6 +915,7 @@ func _do_upgrade_source(n: NodeData) -> void:
 		n.produces[food_id] *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
 		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
 
+	_pop_node_markers(n.node_id)
 	_render_grid()
 	_update_ui()
 	_show_toast("%s expanded for §%d — now %s." % [n.display_name, roundi(cost), ", ".join(gained)])
@@ -1382,7 +1390,7 @@ func _render_grid() -> void:
 			# against elsewhere: bulldozing the hub in the same frame it was
 			# built is a legal, if pointless, thing for a player to do.
 			if node != null:
-				_pop_tile(node, pop.delay)
+				_pop_construction(node, pop.part, pop.delay)
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
@@ -1429,19 +1437,27 @@ func _build_cell_visuals(parent: Node3D, pos: Vector2i, cell: Dictionary) -> Dic
 		structure = marker
 	return {TilePart.ROAD: surface.node, TilePart.STRUCTURE: structure}
 
-## ---------- tile placement pop (item 64) ----------
+## ---------- construction pop (items 64, 65) ----------
 ##
-## A placed tile presses up out of the ground rather than appearing: it starts
-## squashed flat and springs to full size with a small overshoot.
+## Everything the player builds lands with a punch: it arrives splatted flat and
+## spread wide, springs past full size stretched tall and narrow, then settles
+## with a small dip. Three poses, not two -- an overshoot is what separates a
+## punch from a fade-in, and the dip on the way back down is the secondary
+## squash that makes the landing read as weight rather than as a stop.
 ##
-## Squashed, not uniformly small, because a road slab is 2.0 world units across
-## and 0.22 tall (generate_blocks.py). A uniform scale-from-small is dominated
-## by the FOOTPRINT growing, which reads as the tile sliding in from somewhere;
-## flattening Y far harder than XZ makes height the thing that changes, which is
-## what "placed" looks like. The road block's own origin sits at its mid-height,
-## so a flattened slab has half its shrink below the grass cap it stands on and
-## is occluded by the terrain plinth -- the tile emerges from the ground for
-## free, with no pivot node to maintain. Markers are authored origin-at-base
+## The two axes move in OPPOSITION, which is the whole trick. A uniform
+## scale-from-small is dominated by the footprint growing and reads as the tile
+## sliding in from off-map; XZ going wide-then-pinched while Y goes flat-then-
+## tall is squash and stretch, and it reads as impact at any silhouette. That
+## matters because the two things being animated have opposite proportions: a
+## road slab is 2.0 world units across and 0.22 tall, so its visible axis is the
+## footprint, while a hub or storage building is tall and its visible axis is
+## height. One motion covers both because each part gets its own amounts.
+##
+## The geometry pays for the rest. A road block's own origin sits at its
+## mid-height, so a flattened slab has half its shrink below the grass cap it
+## stands on and the terrain plinth occludes it -- the tile emerges from the
+## ground with no pivot node to maintain. Markers are authored origin-at-base
 ## (see hub_marker.tscn), so they grow up out of the road instead.
 ##
 ## Scale is the verb the bubble columns reserve for POP, a new order opening
@@ -1449,17 +1465,45 @@ func _build_cell_visuals(parent: Node3D, pos: Vector2i, cell: Dictionary) -> Dic
 ## ABOVE nodes; this is the ground plane, a different object class that never
 ## flourishes for the same reason at the same moment, so the two cannot be
 ## confused for variants of each other. They are deliberately not the same
-## motion either: a column springs from 0.18 over 0.50s, a tile from a squash
-## over half that, because a tile is a smaller and far more frequent event.
-const TILE_POP_FROM := Vector3(0.85, 0.3, 0.85)
-const TILE_POP_SEC := 0.26
+## motion either: a column springs from 0.18 over 0.50s in one smooth move,
+## while a construction lands in three poses over a third of that.
+##
+## A road starts only 12% over-wide because at rest its tile is flush with its
+## neighbours, so the splat overlaps them -- brief, at a phase the stagger keeps
+## out of sync with the tiles either side, and squash is exactly what it reads
+## as. A structure has clear space around it and can splat harder.
+const TILE_POP_SHAPES := {
+	TilePart.ROAD: {"splat": Vector3(1.12, 0.05, 1.12), "stretch": Vector3(0.93, 1.28, 0.93)},
+	TilePart.STRUCTURE: {"splat": Vector3(1.25, 0.12, 1.25), "stretch": Vector3(0.86, 1.24, 0.86)},
+}
+
+## Fast in, slower out: the attack is what makes it a punch, and QUINT front-
+## loads almost all of the travel into the first few frames. The settle uses
+## BACK so it undershoots past 1.0 before returning -- that dip is the secondary
+## squash, and it costs nothing to get it from the easing rather than a fourth
+## keyframe.
+const TILE_POP_RISE_SEC := 0.11
+const TILE_POP_SETTLE_SEC := 0.20
 
 ## Per-tile delay along a drag, and the ceiling on the whole run. A drag of 10
-## finishes in 10 * 0.045 + 0.26 = 0.71s; the budget is what stops a 30-tile
+## finishes in 10 * 0.035 + 0.31 = 0.66s; the budget is what stops a 30-tile
 ## sweep across the map from becoming something the player waits out, by
 ## tightening the stagger instead of extending the gesture.
-const TILE_POP_STAGGER := 0.045
-const TILE_POP_STAGGER_BUDGET := 0.5
+const TILE_POP_STAGGER := 0.035
+const TILE_POP_STAGGER_BUDGET := 0.4
+
+## Lands an expanded source (DEV-03), the one construction that is not a grid
+## cell. Its markers live in NodeMarkers and _render_grid never touches them, so
+## they are popped DIRECTLY rather than through _pending_tile_pops -- there is
+## no rebuild to survive and so nothing to arm or clear.
+##
+## A source occupies several cells and gets one marker each (DEV-02); they land
+## together rather than staggered, because they are one building and a stagger
+## would say they were two.
+func _pop_node_markers(node_id: String) -> void:
+	for marker in _node_spawner.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == node_id:
+			_pop_construction(marker, TilePart.STRUCTURE, 0.0)
 
 ## Arms one road pop per newly built cell, staggered in the order given -- for a
 ## drag, the order the player drew.
@@ -1472,28 +1516,40 @@ func _arm_placement_pops(cells: Array[Vector2i]) -> void:
 	for i in cells.size():
 		_pending_tile_pops[cells[i]] = {"part": TilePart.ROAD, "delay": i * stagger}
 
-## Bound to the tile rather than to Main, so the many renders that rebuild the
+## Bound to the node rather than to Main, so the many renders that rebuild the
 ## grid mid-pop (every hover, day and build) take the tween with the node they
 ## free instead of leaving it animating a freed target. The tile the new render
 ## draws is simply at rest, which is the right answer for a pop that was cut
 ## short.
-func _pop_tile(node: Node3D, delay: float) -> void:
-	node.scale = TILE_POP_FROM
+##
+## `part` selects the amounts as well as naming what is landing: a source marker
+## is not part of a grid cell at all, but it is a building, so it lands on the
+## STRUCTURE shape.
+func _pop_construction(node: Node3D, part: TilePart, delay: float) -> void:
+	var shape: Dictionary = TILE_POP_SHAPES[part]
+	node.scale = shape.splat
 	var tween := node.create_tween()
 	if delay > 0.0:
-		# Held at its squashed scale for the delay rather than hidden: at this
-		# height a flattened slab is already all but invisible against the road
-		# it will become, and toggling visibility would make the stagger read as
-		# tiles blinking on in sequence instead of rising in sequence.
+		# Held splatted for the delay rather than hidden: at this height a
+		# flattened slab is already all but invisible against the road it will
+		# become, and toggling visibility would make the stagger read as tiles
+		# blinking on in sequence instead of landing in sequence.
 		tween.tween_interval(delay)
-	tween.tween_property(node, "scale", Vector3.ONE, TILE_POP_SEC) \
+	tween.tween_property(node, "scale", shape.stretch, TILE_POP_RISE_SEC) \
+		.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "scale", Vector3.ONE, TILE_POP_SETTLE_SEC) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-## Squashed further than the pop starts from, and with no overshoot: coming
-## back up is what a placement does, so a removal that eased out would read as
-## a very fast pop played backwards rather than as the tile being crushed away.
-const TILE_REMOVE_TO := Vector3(0.7, 0.05, 0.7)
-const TILE_REMOVE_SEC := 0.2
+## The removal runs the punch backwards but not symmetrically: a short
+## anticipation stretch, then a crush that spreads rather than shrinks, so the
+## tile is flattened out of existence instead of receding into the distance. A
+## uniform shrink to nothing would read as the tile flying away from the camera,
+## which is a different event from being demolished. Faster than the pop, since
+## nothing here needs reading -- the player already knows what they removed.
+const TILE_REMOVE_LIFT := Vector3(0.92, 1.14, 0.92)
+const TILE_REMOVE_LIFT_SEC := 0.07
+const TILE_REMOVE_CRUSH := Vector3(1.3, 0.02, 1.3)
+const TILE_REMOVE_CRUSH_SEC := 0.16
 
 ## The inverse of the placement pop: what a bulldoze takes away squashes flat
 ## and goes, rather than blinking out.
@@ -1527,7 +1583,9 @@ func _spawn_removal_ghost(cell: Vector2i, cell_data: Dictionary, delay: float) -
 	var tween := node.create_tween()
 	if delay > 0.0:
 		tween.tween_interval(delay)
-	tween.tween_property(node, "scale", TILE_REMOVE_TO, TILE_REMOVE_SEC) \
+	tween.tween_property(node, "scale", TILE_REMOVE_LIFT, TILE_REMOVE_LIFT_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "scale", TILE_REMOVE_CRUSH, TILE_REMOVE_CRUSH_SEC) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tween.tween_callback(ghost.queue_free)
 
@@ -2030,7 +2088,7 @@ func _source_food_color(source_id: String) -> Color:
 ## {node, height}. The height is what lets anything standing ON the tile (a hub)
 ## be lifted clear instead of sinking into it: marker scenes are authored with
 ## their origin at their base (see hub_marker.tscn), so it is exactly the lift
-## needed. The node is what lets the surface be animated (_pop_tile).
+## needed. The node is what lets the surface be animated (_pop_construction).
 func _add_road_surface(parent: Node3D, world_pos: Vector3, pos: Vector2i, level: String) -> Dictionary:
 	if _map_data.is_river(pos.x, pos.y):
 		return {
@@ -2051,7 +2109,7 @@ func _add_road_surface(parent: Node3D, world_pos: Vector3, pos: Vector2i, level:
 ##
 ## Slab and rails hang off one container node placed at the deck's own centre,
 ## with their offsets expressed relative to it, so the deck can be scaled as a
-## single object (_pop_tile) about the point it should pivot on. Positioning
+## single object (_pop_construction) about the point it should pivot on. Positioning
 ## them absolutely under a container at the world origin would draw identically
 ## and scale catastrophically.
 func _add_bridge_deck(parent: Node3D, pos: Vector3, axis: Vector2i) -> Node3D:

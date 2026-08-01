@@ -943,11 +943,13 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 ## road that was already there, so popping the road under it would announce a
 ## tile the player never placed -- and the failure is invisible in a still.
 ##
-## Runs before the drag suite and hands the grid back empty, which is what that
-## suite asserts it starts from.
+## Runs before the drag suite and hands the map back as it found it -- empty
+## grid, untouched treasury, no source expanded -- since every later check
+## starts from that.
 func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 	var state: GameState = _main.get("_state")
 	var fx: Node3D = _main.get_node("Effects")
+	var balance_before: float = state.balance
 	# Open ground well clear of every node and of the river column.
 	var run: Array[Vector2i] = [Vector2i(15, 2), Vector2i(15, 3), Vector2i(15, 4)]
 	for cell in run:
@@ -992,6 +994,52 @@ func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 	var squashed := _squashed_nodes()
 	assert(squashed.size() == 1, "a hub must pop exactly one thing, got %d" % squashed.size())
 	assert(squashed[0] is NodeMarker, "a hub must pop its marker, not the road under it")
+	# The punch is squash and stretch, so the two axes must start in OPPOSITION
+	# -- flattened and spread. A splat that shrank on every axis at once would
+	# read as the building falling away from the camera rather than landing.
+	assert(squashed[0].scale.y < 0.5 and squashed[0].scale.x > 1.0,
+		"a landing structure must start flat and spread, got %s" % squashed[0].scale)
+
+	# Upgrading a route swaps the block outright -- Dirt, Paved and Main are
+	# three different meshes -- so what the player is left looking at is new.
+	var paved_cell: Vector2i = run[0]
+	_main.call("_do_upgrade_route", paved_cell)
+	assert(state.grid[paved_cell].level == "paved", "the upgrade must have gone through")
+	var upgrade_armed: Dictionary = _main.get("_pending_tile_pops")
+	assert(upgrade_armed.has(paved_cell) and upgrade_armed[paved_cell].part == 0,
+		"upgrading a route must land its new block")
+	_main.call("_render_grid")
+	assert(_squashed_tiles() == 1, "an upgraded tile must pop, and only it")
+	_main.call("_render_grid")
+	assert(_squashed_tiles() == 0, "an upgrade must not re-pop on a later render")
+
+	# Expanding a source is the one construction that is not a grid cell: its
+	# markers live in NodeMarkers, which _render_grid never rebuilds, so they are
+	# popped directly and must survive the renders that follow. Uses the Harbor
+	# and hands it straight back, because the DEV-03 check below expects a map
+	# nothing has expanded yet.
+	var source: NodeData = _node_by_id(_map_data, "harbor")
+	var markers: Node3D = _main.get_node("NodeMarkers")
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_do_upgrade_source", source)
+	assert(source.upgraded, "the source upgrade must have gone through")
+	var landed := 0
+	for marker in markers.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
+			assert(not is_equal_approx(marker.scale.y, 1.0),
+				"an expanded source's markers must land, got scale %s" % marker.scale)
+			landed += 1
+	assert(landed == source.cells().size(),
+		"every cell of an expanded source must land, got %d of %d" % [landed, source.cells().size()])
+	_main.call("_render_grid")
+	for marker in markers.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
+			assert(not is_equal_approx(marker.scale.y, 1.0),
+				"a re-render must not cancel a source marker's landing -- it is not in GridVisuals")
+			marker.scale = Vector3.ONE
+	source.upgraded = false
+	for food_id in source.produces:
+		source.produces[food_id] /= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
 
 	# Bulldozing is the inverse, and its copy lives on Effects -- parented to
 	# GridVisuals it would be destroyed by the render that immediately follows.
@@ -1011,8 +1059,9 @@ func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 	for cell in run:
 		state.grid.erase(cell)
 		state.remove_connections(cell)
+	state.balance = balance_before
 	_main.call("_render_grid")
-	print("Tile pop (item 64): a drag pops each tile once and in order, a hub pops its marker and not its road, a bulldoze squashes on the Effects layer, and no render re-fires either.")
+	print("Construction pop (items 64-65): routes, upgrades, hubs and expanded sources all land, each once and in draw order, splatting flat and spread before they stretch; a bulldoze crushes on the Effects layer.")
 
 ## Grid children currently mid-flourish. Nothing else in GridVisuals is ever
 ## scaled (the route overlay and the bubble columns size themselves by mesh and
