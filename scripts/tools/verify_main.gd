@@ -50,6 +50,8 @@ func _report() -> void:
 	_test_multi_tile_settlement_draws_one_stack(map_data)
 	_test_glyph_column_collapses_and_expands(map_data)
 	_test_flourishes_fire_once(map_data)
+	_test_new_orders_arrive_late(map_data)
+	_test_tile_placement_pops_once(map_data)
 	_test_columns_never_overlap(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
@@ -828,17 +830,20 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 		"A pop must be cleared even when bubbles are off, not saved up")
 	_main.set("_bubbles_mode", 0)  # BubblesMode.GLYPHS
 
-	# Each status gets its own flourish on the render after a day, picked from
-	# the column's WORST line -- the same entries[0] the chip order uses.
+	# Only red moves on the render after a day (item 66). The two paying tiers
+	# are the ones a working network hits nearly every day, so marking them made
+	# the map move on almost every rollover -- the opposite of emphasis. Their
+	# tier is still on the chip's colour and their money still floats as a
+	# label, so a silent green is not a green that went unreported.
 	#
 	# Asserted on what the marker was ASKED to play, not on its transform: a
 	# tween applies nothing until it processes, so the column is still exactly
-	# at rest on the frame it was told to hop. (An earlier version of this
+	# at rest on the frame it was told to shake. (An earlier version of this
 	# check compared position.y against the node centre rather than the
 	# marker's real rest height of centre + 3.1, so it passed no matter what.)
 	for probe in [
-		{"fresh": 1000.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.HOP, "label": "green must hop"},
-		{"fresh": 500.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NUDGE, "label": "amber must nudge"},
+		{"fresh": 1000.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NONE, "label": "green must stay still"},
+		{"fresh": 500.0, "delivered": 10.0, "want": FoodBubbleMarker.Flourish.NONE, "label": "amber must stay still"},
 		{"fresh": 0.0, "delivered": 0.0, "want": FoodBubbleMarker.Flourish.SHAKE, "label": "red must shake"},
 	]:
 		state.last_settlement_status[city.node_id] = {
@@ -915,7 +920,11 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	assert(quiet != null and quiet.played == FoodBubbleMarker.Flourish.NONE,
 		"A render with no day behind it must play nothing")
 
-	# A new order outranks any delivery: one flourish per column, never both.
+	# Should a pop and a day-end shake ever land on one render, the pop still
+	# wins -- one flourish per column, never both. Item 66 separated them in
+	# practice (the shake plays as the day resolves, the pop half a second later
+	# on the reveal render), so this is now the tie-break holding rather than
+	# the everyday path.
 	var both: Dictionary = _main.get("_pending_pops")
 	both[city.node_id] = true
 	_main.set("_day_just_ran", true)
@@ -928,7 +937,215 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	state.active_orders.erase(city.node_id)
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
-	print("Flourishes (items 57-61): pop/hop/nudge/shake fire once each, the payout label survives a re-render, and only unpaid settlements get the recurring nag.")
+	print("Flourishes (items 57-61, 66): only red moves at day end, the pop fires once, the payout label survives a re-render, and only unpaid settlements get the recurring nag.")
+
+## Item 66: an order opened by the day just simulated is held out of the map
+## until that day's own results have been read, then arrives with a pop.
+##
+## The part worth checking is that the chip is GENUINELY deferred rather than
+## merely animated late. Filling an order opens the next immediately (DEV-01),
+## so without the hold the new chip is drawn by the very render reporting the
+## delivery that earned it -- and, being undelivered and therefore red, sorted
+## straight to the top of the column above the lines that actually resolved. A
+## pop alone would not fix that; the chip has to be absent and then arrive.
+func _test_new_orders_arrive_late(map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var city := _node_by_id(map_data, "cityE")
+	var centre: Vector3 = _main.call("_node_center", city)
+
+	var lines: Array = []
+	for food_id in city.demand:
+		lines.append(food_id)
+		if lines.size() == 2:
+			break
+	assert(lines.size() == 2, "this check needs a settlement with two demand lines")
+	state.active_orders[city.node_id] = {lines[0]: state.day, lines[1]: state.day}
+
+	_main.call("_render_grid")
+	var full := _column_viewport_at(centre, 3.0)
+
+	# Held back: the column is genuinely shorter, not merely still.
+	var deferred: Dictionary = _main.get("_deferred_orders")
+	deferred[city.node_id] = [lines[1]]
+	_main.call("_render_grid")
+	var held := _column_viewport_at(centre, 3.0)
+	assert(held.y < full.y,
+		"a held-back order must be left out of the column, got %s against %s" % [held, full])
+	assert(_column_marker_at(centre, 3.0).played == FoodBubbleMarker.Flourish.NONE,
+		"a column must not pop for a chip it is not showing yet")
+
+	# The reveal brings it in, on a render of its own, popping the column.
+	_main.call("_reveal_new_orders")
+	assert((_main.get("_deferred_orders") as Dictionary).is_empty(),
+		"the reveal must release every held-back order")
+	var revealed := _column_viewport_at(centre, 3.0)
+	assert(revealed == full,
+		"a revealed order must restore the full column, got %s against %s" % [revealed, full])
+	var marker := _column_marker_at(centre, 3.0)
+	assert(marker != null and marker.played == FoodBubbleMarker.Flourish.POP,
+		"a new chip must arrive with a pop")
+	assert((_main.get("_pending_pops") as Dictionary).is_empty(),
+		"the reveal's render must consume its own pops")
+
+	# Idempotent, so the real-time timer firing after an early reveal cannot pop
+	# the map a second time. With nothing pending it returns before rendering at
+	# all, so what has to be checked is that nothing was re-armed for the NEXT
+	# render -- the marker still on screen is the one that already popped.
+	_main.call("_reveal_new_orders")
+	assert((_main.get("_pending_pops") as Dictionary).is_empty(),
+		"a reveal with nothing pending must arm nothing")
+	_main.call("_render_grid")
+	assert(_column_marker_at(centre, 3.0).played == FoodBubbleMarker.Flourish.NONE,
+		"a second reveal must not pop the column again")
+
+	state.active_orders.erase(city.node_id)
+	_main.call("_render_grid")
+	print("New orders (item 66): a day's new chip is held out of the column, then arrives on a render of its own with a pop.")
+
+## Item 64: a placed tile presses up out of the ground, and what a bulldoze
+## takes away squashes flat and goes.
+##
+## The interpolation is Godot's. Two things around it are not, and neither
+## shows up in a screenshot. The first is the bookkeeping the column pops
+## already get wrong once -- _render_grid rebuilds every tile on every hover,
+## day and build, so a pending pop left behind leaves the whole network flexing
+## whenever the pointer crosses a node. The second is a rule this effect adds:
+## only the part that actually ARRIVED pops. Building a hub puts a marker on a
+## road that was already there, so popping the road under it would announce a
+## tile the player never placed -- and the failure is invisible in a still.
+##
+## Runs before the drag suite and hands the map back as it found it -- empty
+## grid, untouched treasury, no source expanded -- since every later check
+## starts from that.
+func _test_tile_placement_pops_once(_map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var fx: Node3D = _main.get_node("Effects")
+	var balance_before: float = state.balance
+	# Open ground well clear of every node and of the river column.
+	var run: Array[Vector2i] = [Vector2i(15, 2), Vector2i(15, 3), Vector2i(15, 4)]
+	for cell in run:
+		assert(not state.grid.has(cell), "the pop check needs empty ground at %s" % cell)
+
+	# One pop per new tile, on the ROAD, staggered in the order the player drew.
+	# Checked on the arming step rather than after _commit_drag, which renders
+	# before it returns and so consumes its own pops on the way out.
+	_main.call("_arm_placement_pops", run)
+	var armed: Dictionary = _main.get("_pending_tile_pops")
+	assert(armed.size() == 3, "a drag must arm one pop per new tile, got %d" % armed.size())
+	var previous := -1.0
+	for cell in run:
+		assert(armed[cell].part == 0, "a dragged tile must pop its ROAD, not a structure")
+		assert(armed[cell].delay > previous,
+			"pops must stagger along the drag order, got %.3f after %.3f" % [armed[cell].delay, previous])
+		previous = armed[cell].delay
+	assert(is_zero_approx(armed[run[0]].delay), "the first tile of a drag must not wait")
+	armed.clear()
+
+	# End to end: a committed drag builds its run and leaves every tile of it
+	# mid-pop, with nothing pending for the next render to re-fire.
+	var connections: Array[Array] = []
+	_main.set("_drag_valid", true)
+	_main.set("_drag_new_cells", run)
+	_main.set("_drag_new_connections", connections)
+	_main.call("_commit_drag")
+	assert(state.grid.size() == 3, "the drag must have built its run, got %d tiles" % state.grid.size())
+	assert(_squashed_tiles() == 3, "every dragged tile must start squashed, got %d" % _squashed_tiles())
+	assert((_main.get("_pending_tile_pops") as Dictionary).is_empty(),
+		"a render must consume every pending tile pop, or it re-fires on the next hover")
+	_main.call("_render_grid")
+	assert(_squashed_tiles() == 0, "a tile must not pop again on a later render")
+
+	# A hub pops its MARKER alone -- the road underneath it is not new.
+	var hub_cell: Vector2i = run[1]
+	_main.call("_do_build_hub", hub_cell)
+	var hub_armed: Dictionary = _main.get("_pending_tile_pops")
+	assert(hub_armed.has(hub_cell) and hub_armed[hub_cell].part == 1,
+		"building a hub must arm the STRUCTURE, not the road it stands on")
+	_main.call("_render_grid")
+	var squashed := _squashed_nodes()
+	assert(squashed.size() == 1, "a hub must pop exactly one thing, got %d" % squashed.size())
+	assert(squashed[0] is NodeMarker, "a hub must pop its marker, not the road under it")
+	# The punch is squash and stretch, so the two axes must start in OPPOSITION
+	# -- flattened and spread. A splat that shrank on every axis at once would
+	# read as the building falling away from the camera rather than landing.
+	assert(squashed[0].scale.y < 0.5 and squashed[0].scale.x > 1.0,
+		"a landing structure must start flat and spread, got %s" % squashed[0].scale)
+
+	# Upgrading a route swaps the block outright -- Dirt, Paved and Main are
+	# three different meshes -- so what the player is left looking at is new.
+	var paved_cell: Vector2i = run[0]
+	_main.call("_do_upgrade_route", paved_cell)
+	assert(state.grid[paved_cell].level == "paved", "the upgrade must have gone through")
+	var upgrade_armed: Dictionary = _main.get("_pending_tile_pops")
+	assert(upgrade_armed.has(paved_cell) and upgrade_armed[paved_cell].part == 0,
+		"upgrading a route must land its new block")
+	_main.call("_render_grid")
+	assert(_squashed_tiles() == 1, "an upgraded tile must pop, and only it")
+	_main.call("_render_grid")
+	assert(_squashed_tiles() == 0, "an upgrade must not re-pop on a later render")
+
+	# Expanding a source is the one construction that is not a grid cell: its
+	# markers live in NodeMarkers, which _render_grid never rebuilds, so they are
+	# popped directly and must survive the renders that follow. Uses the Harbor
+	# and hands it straight back, because the DEV-03 check below expects a map
+	# nothing has expanded yet.
+	var source: NodeData = _node_by_id(_map_data, "harbor")
+	var markers: Node3D = _main.get_node("NodeMarkers")
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_do_upgrade_source", source)
+	assert(source.upgraded, "the source upgrade must have gone through")
+	var landed := 0
+	for marker in markers.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
+			assert(not is_equal_approx(marker.scale.y, 1.0),
+				"an expanded source's markers must land, got scale %s" % marker.scale)
+			landed += 1
+	assert(landed == source.cells().size(),
+		"every cell of an expanded source must land, got %d of %d" % [landed, source.cells().size()])
+	_main.call("_render_grid")
+	for marker in markers.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
+			assert(not is_equal_approx(marker.scale.y, 1.0),
+				"a re-render must not cancel a source marker's landing -- it is not in GridVisuals")
+			marker.scale = Vector3.ONE
+	source.upgraded = false
+	for food_id in source.produces:
+		source.produces[food_id] /= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
+
+	# Bulldozing is the inverse, and its copy lives on Effects -- parented to
+	# GridVisuals it would be destroyed by the render that immediately follows.
+	_clear_children(fx)
+	_main.call("_do_bulldoze", hub_cell)
+	assert(fx.get_child_count() == 1, "a bulldoze must leave one removal ghost on Effects")
+	var ghost: Node3D = fx.get_child(0)
+	assert(ghost.get_child_count() == 1,
+		"a removed hub's ghost must be the marker alone -- the road it stood on stays")
+	assert(ghost.get_child(0) is NodeMarker, "a removed hub must squash its marker")
+	_main.call("_render_grid")
+	assert(fx.get_child_count() == 1, "a re-render must not destroy a removal ghost in flight")
+	assert(state.grid[hub_cell].kind == "route", "bulldozing a hub must hand its road back")
+	assert(_squashed_tiles() == 0, "a bulldoze must not pop the road it leaves behind")
+
+	_clear_children(fx)
+	for cell in run:
+		state.grid.erase(cell)
+		state.remove_connections(cell)
+	state.balance = balance_before
+	_main.call("_render_grid")
+	print("Construction pop (items 64-65): routes, upgrades, hubs and expanded sources all land, each once and in draw order, splatting flat and spread before they stretch; a bulldoze crushes on the Effects layer.")
+
+## Grid children currently mid-flourish. Nothing else in GridVisuals is ever
+## scaled (the route overlay and the bubble columns size themselves by mesh and
+## viewport instead), so an unexpected one here is a pop that did not clear.
+func _squashed_nodes() -> Array[Node3D]:
+	var found: Array[Node3D] = []
+	for child in (_main.get_node("GridVisuals") as Node3D).get_children():
+		if child is Node3D and not is_equal_approx((child as Node3D).scale.y, 1.0):
+			found.append(child)
+	return found
+
+func _squashed_tiles() -> int:
+	return _squashed_nodes().size()
 
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():

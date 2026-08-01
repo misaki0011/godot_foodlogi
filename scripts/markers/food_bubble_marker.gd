@@ -35,44 +35,37 @@ enum Status { DEFAULT, MUTED, RED, AMBER, GREEN }
 
 ## ---------- flourishes ----------
 ##
-## One per column per day, and they form a vocabulary rather than three
-## settings of one motion:
+## One per column, and what is left is deliberately small:
 ##
-##   POP     scale, springing up from nothing -- a new order (§6)
-##   HOP     a full vertical bounce -- a line paid its bonus
-##   NUDGE   a shallow vertical lift -- a line paid, no bonus
-##   SHAKE   a horizontal wobble -- a line paid nothing
+##   POP     scale, springing up from nothing -- a new order arriving (§6)
+##   SHAKE   a horizontal wobble -- this settlement's worst line paid nothing
 ##   NAG     the same wobble, gentler -- that line is STILL paying nothing
 ##
-## The axis carries the meaning. Vertical is "this paid", and its height says
-## how well; horizontal is "this did not pay" and is the odd one out on
-## purpose, because that is the categorical break in §9's tiers -- amber and
-## green are neighbours, red is a different kind of day. Scale is reserved for
-## POP so a new order never reads as a variant of a delivery.
+## **A good day is now silent** (item 66). HOP and NUDGE marked the two paying
+## tiers with a vertical bounce and a shallow lift, and both are retired: on a
+## working network most settlements pay most days, so the two of them together
+## meant the map moved on nearly every rollover, and motion that happens
+## whenever nothing is wrong cannot mean "look here". What they said is said
+## anyway and better -- the chip's colour is the tier, and the payout label
+## (item 60) floats the actual figure at the moment it changes. Movement is now
+## spent only on the two things a player should act on: a line paying nothing,
+## and a new order arriving.
+##
+## That leaves one axis per meaning rather than an axis per tier: horizontal is
+## "this did not pay", scale is "this is new". They can no longer be confused
+## for amplitudes of one motion, because there is no longer a scale of anything.
 ##
 ## Item 30 kept the red halo static because on day one every settlement is red
 ## and a screen of pulsing bubbles is worse than no emphasis at all. These are
 ## one-shot and event-driven rather than idling, which is the distinction --
 ## but SHAKE is the one that most tests it, since red is also the resting
 ## state of anything not yet connected. See the note in SPEC.md item 59.
-enum Flourish { NONE, POP, HOP, NUDGE, SHAKE, NAG }
+enum Flourish { NONE, POP, SHAKE, NAG }
 
 ## Springing from nearly nothing both lengthens the travel and deepens the
 ## overshoot: TRANS_BACK's kick is proportional to the range it interpolates.
 const POP_FROM_SCALE := 0.18
 const POP_SEC := 0.50
-
-## Heights are world units and the camera eats more than half of each: at a
-## -60 degree pitch the up vector is (0, 0.5, -0.866), so a +1.1 world-Y step
-## reads as 0.55 units of SCREEN rise against a 1.38-unit chip -- about 40%.
-## The nudge is deliberately well under half the hop, so "paid" and "paid
-## well" are the same gesture at two amplitudes.
-const HOP_HEIGHT := 1.1
-const HOP_UP_SEC := 0.18
-const HOP_DOWN_SEC := 0.26
-const NUDGE_HEIGHT := 0.45
-const NUDGE_UP_SEC := 0.14
-const NUDGE_DOWN_SEC := 0.18
 
 ## Horizontal offsets map 1:1 onto screen X -- the camera has no yaw -- so the
 ## shake needs no compensation and reads at its stated size.
@@ -163,10 +156,6 @@ func play(flourish: Flourish) -> void:
 	match flourish:
 		Flourish.POP:
 			_pop()
-		Flourish.HOP:
-			_rise(HOP_HEIGHT, HOP_UP_SEC, HOP_DOWN_SEC, Tween.TRANS_BOUNCE)
-		Flourish.NUDGE:
-			_rise(NUDGE_HEIGHT, NUDGE_UP_SEC, NUDGE_DOWN_SEC, Tween.TRANS_SINE)
 		Flourish.SHAKE:
 			_shake(SHAKE_OFFSET, SHAKE_STEP_SEC, SHAKE_SWINGS)
 		Flourish.NAG:
@@ -176,17 +165,6 @@ func _pop() -> void:
 	scale = Vector3.ONE * POP_FROM_SCALE
 	create_tween().tween_property(self, "scale", Vector3.ONE, POP_SEC) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-## Up and back. The landing transition is what separates a hop from a nudge
-## as much as the height does: BOUNCE lands with a little settle, SINE just
-## sets the column back down.
-func _rise(height: float, up_sec: float, down_sec: float, landing: Tween.TransitionType) -> void:
-	var rest := position
-	var tween := create_tween()
-	tween.tween_property(self, "position", rest + Vector3(0.0, height, 0.0), up_sec) \
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	tween.tween_property(self, "position", rest, down_sec) \
-		.set_trans(landing).set_ease(Tween.EASE_OUT)
 
 ## A damped left-right wobble, each swing shorter than the last so it reads as
 ## settling rather than stopping dead.

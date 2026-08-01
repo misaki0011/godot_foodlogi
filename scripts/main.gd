@@ -128,6 +128,59 @@ var _focused_node_id: String = ""
 ## renders a hover or a build triggers afterwards.
 var _pending_pops: Dictionary = {}
 
+## ---------- new orders arrive a beat late (item 66) ----------
+##
+## Orders opened by the day just simulated, as node_id -> Array of food_id, held
+## back from the map until the day's own results have been read.
+##
+## Filling an order opens the next one immediately (DEV-01), so without this the
+## new chip is drawn by the very same render that reports the delivery that
+## earned it -- landing in a column the player is still reading, and (being
+## undelivered, so red) sorting straight to the TOP of it, above the lines that
+## actually resolved. The day's verdict and its reward arrive as one
+## indistinguishable frame.
+##
+## So the chip is genuinely deferred rather than merely animated late: it is
+## filtered out of the column for NEW_ORDER_REVEAL_SEC, then revealed with a pop
+## on a render of its own. Purely a display hold -- `active_orders` opened the
+## line at day end and the simulation has always known about it, because
+## deferring the ORDER rather than the chip would change what the next day
+## delivers.
+var _deferred_orders: Dictionary = {}
+
+## Whether a reveal is already scheduled, so a day that opens four orders arms
+## one timer rather than four.
+var _reveal_scheduled := false
+
+## Real seconds, unscaled by DAY_SPEEDS, for the same reason the reminder is
+## (item 61): this is a beat in how the player reads the map, not an event in
+## the simulation, and it must not arrive three times as fast because they set
+## the clock to 4x. Long enough to clear the day-end shake (4 swings at 0.075s,
+## plus its settle), which is the thing it has to come after.
+const NEW_ORDER_REVEAL_SEC := 0.55
+
+## ---------- tile placement pop (item 64) ----------
+##
+## Which PART of a cell a flourish belongs to. A cell is drawn as up to two
+## things -- the road surface, and whatever stands on it -- and only one of
+## them is ever the thing that just arrived: a route drag lays a road, while
+## building a hub, storage or bridge adds a structure to a road that was
+## already there. Popping the road under a new hub would announce something
+## that did not change.
+enum TilePart { ROAD, STRUCTURE }
+
+## Cells whose newly placed part should pop in on the next render, as
+## cell -> {"part": TilePart, "delay": float}. Same contract as _pending_pops
+## and for the same reason: _render_grid rebuilds every tile on each hover, day
+## and build, so an entry left behind would re-pop the tile every time the
+## pointer crossed a node. Filled where the tile is placed, consumed and
+## cleared whole by the next render.
+##
+## The delay is baked in at placement rather than derived at render time: a
+## drag places its whole run at once and the stagger has to follow the order
+## the player drew, which a Dictionary of cells no longer carries.
+var _pending_tile_pops: Dictionary = {}
+
 ## True for exactly one render: the one _run_day triggers after simulating.
 ## A settlement holding a green line hops on that render (item 58). Kept as a
 ## flag rather than a second pending-set because the green test already exists
@@ -586,6 +639,7 @@ func _commit_drag() -> void:
 	for cell in _drag_new_cells:
 		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
 		_state.grid[cell] = {"kind": "route", "level": "dirt"}
+	_arm_placement_pops(_drag_new_cells)
 	for pair in _drag_new_connections:
 		_state.add_connection(pair[0], pair[1])
 	var parts: Array[String] = []
@@ -648,7 +702,12 @@ func _commit_sweep() -> void:
 		# Same rule as a single bulldoze (see _clear_cell): a swept hub,
 		# storage or bridge leaves its road behind rather than taking it with it.
 		var kept := 0
-		for cell in _sweep_cells:
+		# Staggered along the sweep exactly as a route drag pops along its run:
+		# the two are the same gesture and should read as each other's inverse.
+		var stagger: float = minf(TILE_POP_STAGGER, TILE_POP_STAGGER_BUDGET / float(maxi(count, 1)))
+		for i in _sweep_cells.size():
+			var cell: Vector2i = _sweep_cells[i]
+			_spawn_removal_ghost(cell, _state.grid[cell], i * stagger)
 			if _clear_cell(cell) != "tile":
 				kept += 1
 		if kept > 0:
@@ -661,6 +720,9 @@ func _commit_sweep() -> void:
 			var lvl = GameBalance.ROUTE_LEVELS[cell_data.level]
 			_state.balance -= lvl.upgrade_cost
 			cell_data.level = lvl.next
+		# Staggered along the sweep like a route drag, for the same reason: the
+		# player drew a line and the road should resurface along it.
+		_arm_placement_pops(_sweep_cells)
 		_show_toast("Upgraded %d tile%s for §%d." % [count, plural, roundi(_sweep_cost)])
 	_after_action()
 
@@ -853,6 +915,10 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 		return
 	_state.balance -= cost
 	cell_data.level = lvl.next
+	# An upgrade swaps the block outright -- Dirt, Paved and Main are three
+	# different meshes -- so the road the player is looking at afterwards really
+	# is new, and lands like one.
+	_pending_tile_pops[cell] = {"part": TilePart.ROAD, "delay": 0.0}
 	_show_toast("Upgraded to %s for §%d." % [GameBalance.ROUTE_LEVELS[cell_data.level].label, roundi(cost)])
 
 ## Doubles a source's daily output (DEV-03). The footprint does not change --
@@ -880,6 +946,7 @@ func _do_upgrade_source(n: NodeData) -> void:
 		n.produces[food_id] *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
 		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
 
+	_pop_node_markers(n.node_id)
 	_render_grid()
 	_update_ui()
 	_show_toast("%s expanded for §%d — now %s." % [n.display_name, roundi(cost), ", ".join(gained)])
@@ -903,6 +970,8 @@ func _do_build_storage(cell: Vector2i) -> void:
 	# a hub cell (_do_build_hub, _clear_cell). Nothing dispatches on it while the
 	# cell is storage; every consumer switches on `kind`.
 	_state.grid[cell] = {"kind": "storage", "stype": stype, "level": cell_data.level}
+	# The marker alone: the road it stands on was already built and paid for.
+	_pending_tile_pops[cell] = {"part": TilePart.STRUCTURE, "delay": 0.0}
 	_show_toast("%s built for §%d." % [st.name, roundi(st.build)])
 
 ## Any built route tile can become a Small Hub -- the player draws a route
@@ -932,6 +1001,7 @@ func _do_build_hub(cell: Vector2i) -> void:
 	# a hub -- every consumer switches on `kind` -- it is purely a memory of
 	# what the player paved before building here.
 	_state.grid[cell] = {"kind": "hub", "htype": GameEnums.HubType.SMALL, "level": cell_data.level}
+	_pending_tile_pops[cell] = {"part": TilePart.STRUCTURE, "delay": 0.0}
 	_show_toast("Small Hub built for §%d." % roundi(cost))
 
 ## Turns one existing route tile into a road-over-road crossing: the road
@@ -983,6 +1053,9 @@ func _do_build_bridge(cell: Vector2i) -> void:
 		return
 	_state.balance -= cost
 	cell_data["bridge_axis"] = axis
+	# The deck alone, for the same reason a hub pops only its marker: the road
+	# it crosses is the one that was already there, and stays.
+	_pending_tile_pops[cell] = {"part": TilePart.STRUCTURE, "delay": 0.0}
 	_show_toast("Bridge built for §%d -- draw a route straight over it to cross without joining the road below." % roundi(cost))
 
 ## The axis a bridge deck would run along at `cell`: across the road already
@@ -1050,6 +1123,7 @@ func _do_bulldoze(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
 		_show_toast("Nothing to remove here.", true)
 		return
+	_spawn_removal_ghost(cell, _state.grid[cell], 0.0)
 	var cleared := _clear_cell(cell).split("|")
 	match cleared[0]:
 		"bridge":
@@ -1130,9 +1204,15 @@ func _run_day() -> void:
 	# moment the delivery does.
 	for order in OrderBook.record_day(_state, _map_data, _map_data.node_placements):
 		_announce_order(order)
-		# Popped on the _render_grid at the end of this function, which is the
-		# first render that will actually draw the new chip.
-		_pending_pops[order.get("node_id", "")] = true
+		# Held back from the render at the end of this function -- that one
+		# belongs to the day's results. The chip arrives on its own render a
+		# little later, with a pop (item 66).
+		var opened_at: String = order.get("node_id", "")
+		if not _deferred_orders.has(opened_at):
+			_deferred_orders[opened_at] = []
+		_deferred_orders[opened_at].append(order.get("food_id", ""))
+	if not _deferred_orders.is_empty():
+		_schedule_new_order_reveal()
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
 	if _state.auto_run:
@@ -1144,6 +1224,28 @@ func _run_day() -> void:
 	_day_just_ran = true
 	_render_grid()
 	_update_ui()
+
+## Arms the one-shot that brings the day's new chips in. Uses a SceneTree timer
+## rather than the day clock: that clock is scaled by DAY_SPEEDS and stops when
+## the player pauses or opens the report, and a chip stuck offscreen behind a
+## modal would simply be missing from the map.
+func _schedule_new_order_reveal() -> void:
+	if _reveal_scheduled:
+		return
+	_reveal_scheduled = true
+	get_tree().create_timer(NEW_ORDER_REVEAL_SEC).timeout.connect(_reveal_new_orders)
+
+## Brings every held-back chip onto the map at once, popping the columns that
+## gained one. Safe to call early (the dev checks do, since they cannot wait out
+## a real-time timer) and safe to call with nothing pending.
+func _reveal_new_orders() -> void:
+	_reveal_scheduled = false
+	if _deferred_orders.is_empty():
+		return
+	for node_id in _deferred_orders:
+		_pending_pops[node_id] = true
+	_deferred_orders.clear()
+	_render_grid()
 
 ## Rolls the calendar over. Nothing about the order book happens here any
 ## more: progression answers to deliveries, not to the date (DEV-01). The day
@@ -1339,28 +1441,15 @@ func _render_grid() -> void:
 	_columns_by_node.clear()
 	_nagging_nodes.clear()
 	for pos in _state.grid:
-		var cell = _state.grid[pos]
-		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
-		if cell.kind == "route":
-			_add_road_surface(world_pos, pos, cell.level)
-			# A bridge tile keeps its ordinary road block -- the road underneath
-			# stays fully visible -- and gains a deck floating across it.
-			if cell.has("bridge_axis"):
-				_add_bridge_deck(world_pos, cell.bridge_axis)
-		else:
-			# Storage and hubs are BUILDINGS ON a route tile, not replacements
-			# for one: the road they were built on is drawn underneath and the
-			# building stands on top of it, so the road reads as continuous
-			# through the junction and its Dirt/Paved/Main level stays visible.
-			# That's also what makes bulldozing one back to that same road look
-			# like what it is (_clear_cell), rather than a tile appearing out of
-			# nowhere.
-			var surface := _add_road_surface(world_pos, pos, cell.get("level", "dirt"))
-			var is_storage: bool = cell.kind == "storage"
-			var marker: NodeMarker = (STORAGE_SCENE if is_storage else HUB_SCENE).instantiate()
-			_grid_visuals.add_child(marker)
-			marker.position = world_pos + Vector3(0, surface, 0)
-			marker.apply_tint(MarkerColors.storage_color(cell.stype) if is_storage else MarkerColors.hub_color(cell.htype))
+		var parts := _build_cell_visuals(_grid_visuals, pos, _state.grid[pos])
+		var pop = _pending_tile_pops.get(pos)
+		if pop != null:
+			var node: Node3D = parts[pop.part]
+			# A structure pop with no structure drawn is not a state to guard
+			# against elsewhere: bulldozing the hub in the same frame it was
+			# built is a legal, if pointless, thing for a player to do.
+			if node != null:
+				_pop_construction(node, pop.part, pop.delay)
 	for c in _state.last_congestion:
 		var world_pos: Vector3 = _terrain.map_to_local(Vector3i(c.pos.x, 0, c.pos.y)) + Vector3(0, 1.35, 0)
 		_add_congestion_marker(world_pos, c.over)
@@ -1371,7 +1460,193 @@ func _render_grid() -> void:
 	# have seen (bubbles off) is spent, not banked for whenever they turn
 	# them back on.
 	_pending_pops.clear()
+	_pending_tile_pops.clear()
 	_day_just_ran = false
+
+## Builds one grid cell's whole visible stack under `parent` and hands back the
+## nodes it is made of, keyed by TilePart, so a caller can animate either one
+## without re-deriving where it went. TilePart.STRUCTURE is null on a plain
+## route tile, which is most of them.
+##
+## The split is the placement rule as much as a drawing convenience: a route
+## drag lays road, while a hub, storage or bridge is added to road that was
+## already there -- so only one of the two is ever the thing that just arrived.
+func _build_cell_visuals(parent: Node3D, pos: Vector2i, cell: Dictionary) -> Dictionary:
+	var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
+	var surface := _add_road_surface(parent, world_pos, pos, cell.get("level", "dirt"))
+	var structure: Node3D = null
+	if cell.kind == "route":
+		# A bridge tile keeps its ordinary road block -- the road underneath
+		# stays fully visible -- and gains a deck floating across it.
+		if cell.has("bridge_axis"):
+			structure = _add_bridge_deck(parent, world_pos, cell.bridge_axis)
+	else:
+		# Storage and hubs are BUILDINGS ON a route tile, not replacements
+		# for one: the road they were built on is drawn underneath and the
+		# building stands on top of it, so the road reads as continuous
+		# through the junction and its Dirt/Paved/Main level stays visible.
+		# That's also what makes bulldozing one back to that same road look
+		# like what it is (_clear_cell), rather than a tile appearing out of
+		# nowhere.
+		var is_storage: bool = cell.kind == "storage"
+		var marker: NodeMarker = (STORAGE_SCENE if is_storage else HUB_SCENE).instantiate()
+		parent.add_child(marker)
+		marker.position = world_pos + Vector3(0, surface.height, 0)
+		marker.apply_tint(MarkerColors.storage_color(cell.stype) if is_storage else MarkerColors.hub_color(cell.htype))
+		structure = marker
+	return {TilePart.ROAD: surface.node, TilePart.STRUCTURE: structure}
+
+## ---------- construction pop (items 64, 65) ----------
+##
+## Everything the player builds lands with a punch: it arrives splatted flat and
+## spread wide, springs past full size stretched tall and narrow, then settles
+## with a small dip. Three poses, not two -- an overshoot is what separates a
+## punch from a fade-in, and the dip on the way back down is the secondary
+## squash that makes the landing read as weight rather than as a stop.
+##
+## The two axes move in OPPOSITION, which is the whole trick. A uniform
+## scale-from-small is dominated by the footprint growing and reads as the tile
+## sliding in from off-map; XZ going wide-then-pinched while Y goes flat-then-
+## tall is squash and stretch, and it reads as impact at any silhouette. That
+## matters because the two things being animated have opposite proportions: a
+## road slab is 2.0 world units across and 0.22 tall, so its visible axis is the
+## footprint, while a hub or storage building is tall and its visible axis is
+## height. One motion covers both because each part gets its own amounts.
+##
+## The geometry pays for the rest. A road block's own origin sits at its
+## mid-height, so a flattened slab has half its shrink below the grass cap it
+## stands on and the terrain plinth occludes it -- the tile emerges from the
+## ground with no pivot node to maintain. Markers are authored origin-at-base
+## (see hub_marker.tscn), so they grow up out of the road instead.
+##
+## Scale is the verb the bubble columns reserve for POP, a new order opening
+## (food_bubble_marker.gd). That vocabulary is about the billboards floating
+## ABOVE nodes; this is the ground plane, a different object class that never
+## flourishes for the same reason at the same moment, so the two cannot be
+## confused for variants of each other. They are deliberately not the same
+## motion either: a column springs from 0.18 over 0.50s in one smooth move,
+## while a construction lands in three poses over a third of that.
+##
+## A road starts only 12% over-wide because at rest its tile is flush with its
+## neighbours, so the splat overlaps them -- brief, at a phase the stagger keeps
+## out of sync with the tiles either side, and squash is exactly what it reads
+## as. A structure has clear space around it and can splat harder.
+const TILE_POP_SHAPES := {
+	TilePart.ROAD: {"splat": Vector3(1.12, 0.05, 1.12), "stretch": Vector3(0.93, 1.28, 0.93)},
+	TilePart.STRUCTURE: {"splat": Vector3(1.25, 0.12, 1.25), "stretch": Vector3(0.86, 1.24, 0.86)},
+}
+
+## Fast in, slower out: the attack is what makes it a punch, and QUINT front-
+## loads almost all of the travel into the first few frames. The settle uses
+## BACK so it undershoots past 1.0 before returning -- that dip is the secondary
+## squash, and it costs nothing to get it from the easing rather than a fourth
+## keyframe.
+const TILE_POP_RISE_SEC := 0.11
+const TILE_POP_SETTLE_SEC := 0.20
+
+## Per-tile delay along a drag, and the ceiling on the whole run. A drag of 10
+## finishes in 10 * 0.035 + 0.31 = 0.66s; the budget is what stops a 30-tile
+## sweep across the map from becoming something the player waits out, by
+## tightening the stagger instead of extending the gesture.
+const TILE_POP_STAGGER := 0.035
+const TILE_POP_STAGGER_BUDGET := 0.4
+
+## Lands an expanded source (DEV-03), the one construction that is not a grid
+## cell. Its markers live in NodeMarkers and _render_grid never touches them, so
+## they are popped DIRECTLY rather than through _pending_tile_pops -- there is
+## no rebuild to survive and so nothing to arm or clear.
+##
+## A source occupies several cells and gets one marker each (DEV-02); they land
+## together rather than staggered, because they are one building and a stagger
+## would say they were two.
+func _pop_node_markers(node_id: String) -> void:
+	for marker in _node_spawner.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == node_id:
+			_pop_construction(marker, TilePart.STRUCTURE, 0.0)
+
+## Arms one road pop per newly built cell, staggered in the order given -- for a
+## drag, the order the player drew.
+##
+## Kept separate from _commit_drag because that method renders before it
+## returns, so the pops it arms are consumed by its own _after_action and there
+## is no moment afterwards at which the decision it made can be observed.
+func _arm_placement_pops(cells: Array[Vector2i]) -> void:
+	var stagger: float = minf(TILE_POP_STAGGER, TILE_POP_STAGGER_BUDGET / float(maxi(cells.size(), 1)))
+	for i in cells.size():
+		_pending_tile_pops[cells[i]] = {"part": TilePart.ROAD, "delay": i * stagger}
+
+## Bound to the node rather than to Main, so the many renders that rebuild the
+## grid mid-pop (every hover, day and build) take the tween with the node they
+## free instead of leaving it animating a freed target. The tile the new render
+## draws is simply at rest, which is the right answer for a pop that was cut
+## short.
+##
+## `part` selects the amounts as well as naming what is landing: a source marker
+## is not part of a grid cell at all, but it is a building, so it lands on the
+## STRUCTURE shape.
+func _pop_construction(node: Node3D, part: TilePart, delay: float) -> void:
+	var shape: Dictionary = TILE_POP_SHAPES[part]
+	node.scale = shape.splat
+	var tween := node.create_tween()
+	if delay > 0.0:
+		# Held splatted for the delay rather than hidden: at this height a
+		# flattened slab is already all but invisible against the road it will
+		# become, and toggling visibility would make the stagger read as tiles
+		# blinking on in sequence instead of landing in sequence.
+		tween.tween_interval(delay)
+	tween.tween_property(node, "scale", shape.stretch, TILE_POP_RISE_SEC) \
+		.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "scale", Vector3.ONE, TILE_POP_SETTLE_SEC) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+## The removal runs the punch backwards but not symmetrically: a short
+## anticipation stretch, then a crush that spreads rather than shrinks, so the
+## tile is flattened out of existence instead of receding into the distance. A
+## uniform shrink to nothing would read as the tile flying away from the camera,
+## which is a different event from being demolished. Faster than the pop, since
+## nothing here needs reading -- the player already knows what they removed.
+const TILE_REMOVE_LIFT := Vector3(0.92, 1.14, 0.92)
+const TILE_REMOVE_LIFT_SEC := 0.07
+const TILE_REMOVE_CRUSH := Vector3(1.3, 0.02, 1.3)
+const TILE_REMOVE_CRUSH_SEC := 0.16
+
+## The inverse of the placement pop: what a bulldoze takes away squashes flat
+## and goes, rather than blinking out.
+##
+## The real visual cannot be animated in place -- _clear_cell mutates the grid
+## and the render that follows clears GridVisuals wholesale -- so a throwaway
+## copy is built on the Effects layer, the same trick the payout label uses,
+## and frees itself when its tween ends. Must be called BEFORE _clear_cell, or
+## the cell it copies is already gone.
+##
+## Which part squashes is the placement rule read from the other side: clearing
+## a hub, storage or bridge leaves the road it stood on (_clear_cell), so only
+## the structure goes. The whole cell is built and the survivor discarded
+## rather than building the one part, because a marker's height depends on the
+## road surface underneath it.
+func _spawn_removal_ghost(cell: Vector2i, cell_data: Dictionary, delay: float) -> void:
+	var going: TilePart = TilePart.ROAD
+	if cell_data.kind != "route" or cell_data.has("bridge_axis"):
+		going = TilePart.STRUCTURE
+	var ghost := Node3D.new()
+	ghost.name = "RemovalGhost"
+	_fx_layer.add_child(ghost)
+	var parts := _build_cell_visuals(ghost, cell, cell_data)
+	for part in parts:
+		if part != going and parts[part] != null:
+			parts[part].free()
+	var node: Node3D = parts[going]
+	if node == null:
+		ghost.free()
+		return
+	var tween := node.create_tween()
+	if delay > 0.0:
+		tween.tween_interval(delay)
+	tween.tween_property(node, "scale", TILE_REMOVE_LIFT, TILE_REMOVE_LIFT_SEC) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "scale", TILE_REMOVE_CRUSH, TILE_REMOVE_CRUSH_SEC) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tween.tween_callback(ghost.queue_free)
 
 ## Continuously overlays a bright gold line along every tile that lies on a
 ## complete source->settlement path (an "established route"), so the player
@@ -1617,7 +1892,14 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# "later" placeholder either: five of those from day 1 would be the same
 	# wall of bubbles this feature exists to remove, in a quieter colour.
 	var demand := OrderBook.active_demand(_state, n)
+	# Minus anything opened by the day just simulated, which is held back for a
+	# moment so the day's own results can be read first (item 66). The line is
+	# genuinely open -- the simulation counts it from today -- this only decides
+	# when its chip appears.
+	var held_back: Array = _deferred_orders.get(n.node_id, [])
 	for food_id in demand:
+		if held_back.has(food_id):
+			continue
 		var requested: float = demand[food_id]
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
@@ -1696,8 +1978,11 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# One flourish per column, chosen by the same rule that decides which chip
 	# sits on top: entries are sorted worst-first, so entries[0] is the line
 	# most worth acting on and its status is what the column should express.
-	# A new order outranks any delivery -- it is the larger event, and playing
-	# both on one column would just read as a stumble.
+	#
+	# The two no longer compete for the same render. A day's shake plays as the
+	# day resolves; a new order's pop plays on the reveal render half a second
+	# later (item 66), by which time _day_just_ran has been consumed. The old
+	# "a pop outranks a hop" rule is gone with the hop.
 	var flourish := FoodBubbleMarker.Flourish.NONE
 	if _pending_pops.has(n.node_id):
 		flourish = FoodBubbleMarker.Flourish.POP
@@ -1795,18 +2080,16 @@ func _spawn_payout(base_pos: Vector3, earned: float) -> void:
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tween.chain().tween_callback(label.queue_free)
 
-## Which flourish a column plays for its worst line's status. The axis is the
-## meaning: vertical says the line paid and its height says how well, while
-## horizontal says it did not pay at all -- §9's real break is between red and
-## the other two, not between amber and green.
+## Which flourish a column plays for its worst line's status -- and now only red
+## has one (item 66). §9's real break has always been between red and the other
+## two rather than between amber and green, and the two paying tiers are the
+## ones a working network hits nearly every day: marking them meant the map
+## moved on almost every rollover, which is the opposite of emphasis. Colour
+## still gives the tier and the payout label still floats the figure, so
+## nothing was said only by the motion that was retired.
 static func _flourish_for(status: FoodBubbleMarker.Status) -> FoodBubbleMarker.Flourish:
-	match status:
-		FoodBubbleMarker.Status.GREEN:
-			return FoodBubbleMarker.Flourish.HOP
-		FoodBubbleMarker.Status.AMBER:
-			return FoodBubbleMarker.Flourish.NUDGE
-		FoodBubbleMarker.Status.RED:
-			return FoodBubbleMarker.Flourish.SHAKE
+	if status == FoodBubbleMarker.Status.RED:
+		return FoodBubbleMarker.Flourish.SHAKE
 	return FoodBubbleMarker.Flourish.NONE
 
 ## Severity order for a settlement's open lines: red, then amber, then
@@ -1837,16 +2120,16 @@ static func _shortfall(e: Dictionary) -> float:
 ## Every route level's mesh is symmetric under rotation (see generate_blocks.py),
 ## so a route tile always uses the same unrotated scene regardless of its
 ## shape or facing -- there's no corner variant and nothing to rotate.
-func _add_route_block(pos: Vector3, level: String) -> void:
+func _add_route_block(parent: Node3D, pos: Vector3, level: String) -> Node3D:
 	var scene: PackedScene = ROUTE_LEVEL_SCENES.get(level)
 	if scene == null:
-		_add_tile_box(pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
-		return
+		return _add_tile_box(parent, pos, ROUTE_LEVEL_COLORS.get(level, Color.WHITE), 0.16)
 	var block: Node3D = scene.instantiate()
-	_grid_visuals.add_child(block)
+	parent.add_child(block)
 	block.position = pos + Vector3(0, ROUTE_LEVEL_HEIGHTS.get(level, 0.22) * 0.5, 0)
 	# No scale needed: the block's footprint is authored at the real 2x2
 	# world-space cell size already (see generate_blocks.py).
+	return block
 
 ## A source's colour is the colour of what it produces (one food each in the
 ## MVP region; averaged if a source ever produces several). All source
@@ -1868,16 +2151,21 @@ func _source_food_color(source_id: String) -> Color:
 	return Color(mixed.r / count, mixed.g / count, mixed.b / count, 1.0)
 
 ## Draws a tile's road surface -- the ordinary level block, or the flat slab
-## that stands in for it where the tile crosses the river -- and returns its
-## height, so anything standing ON the tile (a hub) can be lifted clear instead
-## of sinking into it. Marker scenes are authored with their origin at their
-## base (see hub_marker.tscn), so the height is exactly the lift needed.
-func _add_road_surface(world_pos: Vector3, pos: Vector2i, level: String) -> float:
+## that stands in for it where the tile crosses the river -- and returns it as
+## {node, height}. The height is what lets anything standing ON the tile (a hub)
+## be lifted clear instead of sinking into it: marker scenes are authored with
+## their origin at their base (see hub_marker.tscn), so it is exactly the lift
+## needed. The node is what lets the surface be animated (_pop_construction).
+func _add_road_surface(parent: Node3D, world_pos: Vector3, pos: Vector2i, level: String) -> Dictionary:
 	if _map_data.is_river(pos.x, pos.y):
-		_add_tile_box(world_pos, RIVER_BRIDGE_COLOR, RIVER_CROSSING_HEIGHT)
-		return RIVER_CROSSING_HEIGHT
-	_add_route_block(world_pos, level)
-	return ROUTE_LEVEL_HEIGHTS.get(level, 0.22)
+		return {
+			"node": _add_tile_box(parent, world_pos, RIVER_BRIDGE_COLOR, RIVER_CROSSING_HEIGHT),
+			"height": RIVER_CROSSING_HEIGHT,
+		}
+	return {
+		"node": _add_route_block(parent, world_pos, level),
+		"height": ROUTE_LEVEL_HEIGHTS.get(level, 0.22),
+	}
 
 ## The raised deck of a bridge tile: a slab spanning the full cell along the
 ## deck's own axis (so it meets the road on either side rather than stopping
@@ -1885,20 +2173,30 @@ func _add_road_surface(world_pos: Vector3, pos: Vector2i, level: String) -> floa
 ## makes it read as a crossing rather than a floating block from the fixed
 ## isometric camera. The road it crosses is drawn normally underneath and stays
 ## visible on both sides of the slab.
-func _add_bridge_deck(pos: Vector3, axis: Vector2i) -> void:
+##
+## Slab and rails hang off one container node placed at the deck's own centre,
+## with their offsets expressed relative to it, so the deck can be scaled as a
+## single object (_pop_construction) about the point it should pivot on. Positioning
+## them absolutely under a container at the world origin would draw identically
+## and scale catastrophically.
+func _add_bridge_deck(parent: Node3D, pos: Vector3, axis: Vector2i) -> Node3D:
 	var along := Vector3(1.0, 0.0, 0.0) if axis.x != 0 else Vector3(0.0, 0.0, 1.0)
 	var across := Vector3(0.0, 0.0, 1.0) if axis.x != 0 else Vector3(1.0, 0.0, 0.0)
 	var length: float = _terrain.cell_size.x if axis.x != 0 else _terrain.cell_size.z
 	var span: float = _terrain.cell_size.z if axis.x != 0 else _terrain.cell_size.x
 	var width: float = span * BRIDGE_DECK_WIDTH_RATIO
-	var deck_pos := pos + Vector3(0.0, BRIDGE_DECK_HEIGHT, 0.0)
-	_add_box(deck_pos, along * length + across * width + Vector3(0.0, BRIDGE_DECK_THICKNESS, 0.0), BRIDGE_DECK_COLOR)
+	var deck := Node3D.new()
+	deck.name = "BridgeDeck"
+	parent.add_child(deck)
+	deck.position = pos + Vector3(0.0, BRIDGE_DECK_HEIGHT, 0.0)
+	_add_box(deck, Vector3.ZERO, along * length + across * width + Vector3(0.0, BRIDGE_DECK_THICKNESS, 0.0), BRIDGE_DECK_COLOR)
 	var rail_size := along * length + across * BRIDGE_RAIL_THICKNESS + Vector3(0.0, BRIDGE_RAIL_HEIGHT, 0.0)
 	var rail_y := Vector3(0.0, (BRIDGE_DECK_THICKNESS + BRIDGE_RAIL_HEIGHT) * 0.5, 0.0)
 	for side in [1.0, -1.0]:
-		_add_box(deck_pos + across * (width * 0.5 * side) + rail_y, rail_size, BRIDGE_RAIL_COLOR)
+		_add_box(deck, across * (width * 0.5 * side) + rail_y, rail_size, BRIDGE_RAIL_COLOR)
+	return deck
 
-func _add_box(center: Vector3, size: Vector3, color: Color) -> void:
+func _add_box(parent: Node3D, center: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = size
@@ -1907,9 +2205,10 @@ func _add_box(center: Vector3, size: Vector3, color: Color) -> void:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	mesh_instance.material_override = material
-	_grid_visuals.add_child(mesh_instance)
+	parent.add_child(mesh_instance)
+	return mesh_instance
 
-func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
+func _add_tile_box(parent: Node3D, pos: Vector3, color: Color, height: float) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(_terrain.cell_size.x, height, _terrain.cell_size.z)
@@ -1918,7 +2217,8 @@ func _add_tile_box(pos: Vector3, color: Color, height: float) -> void:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	mesh_instance.material_override = material
-	_grid_visuals.add_child(mesh_instance)
+	parent.add_child(mesh_instance)
+	return mesh_instance
 
 func _add_congestion_marker(pos: Vector3, over: bool) -> void:
 	var mesh_instance := MeshInstance3D.new()
