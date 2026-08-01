@@ -222,8 +222,9 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **Nothing about placement moved.** A tile's top face still lands on the same surface height everything else is built around (`map_to_local(cell) + (0, 1, 0)`), so markers, road slabs, bridge decks, the established-route overlay and the click-to-cell plane are all untouched; only the *bottom* of a tile changed. See §8.5, §4.1.
 
 68. **A settlement looks like the place it is.** Every source and settlement was a coloured ball on a pole, and item 41 made a multi-tile place read as bigger by stamping that same pole on every cell it covered -- honest about the footprint, but it drew a City as four identical markers and named bespoke meshes as the follow-up. This is that follow-up.
-    **Three models, one per size** (§10.1): a Village is one house and a tree on 1x1, a Town three houses on 2x1, a City two houses in front of three taller blocks on 2x2. Each stands on a rounded stone plaza covering its whole footprint, which is what still tells the player those cells are unbuildable -- the model is now footprint-sized, so it can be a single marker rather than N copies. Sources keep one crate per cell, since a crate IS the unit their footprint is measured in.
+    **Three models, one per size** (§10.1): a Village is one house and a tree on 1x1, a Town three houses on 2x1, a City three houses in front of three taller blocks on 2x2 -- the City's front row being the Town's own row, so a City reads as a Town that grew. Each stands on a rounded stone plaza covering its whole footprint, which is what still tells the player those cells are unbuildable -- the model is now footprint-sized, so it can be a single marker rather than N copies. Sources keep one crate per cell, since a crate IS the unit their footprint is measured in.
     **Roofs stay the settlement red**, so the map does not lose the colour that means "somewhere food goes". That needs an opt-out from the shared marker tint, which flattens everything under a marker's `Visual` to one colour -- correct for a hub, and it would turn walls, roofs, plaza and tree all the same red. `NodeMarker.self_coloured` is that opt-out.
+    **Everything visible is on the +Z face.** The camera is pitched down 60 degrees looking along -Z, so +Z is the only wall of any building it ever sees: every house's door and every City block's windows go there. A window grid's rows come out of the building's own height rather than being authored per block, so storeys stay one size across three towers of different heights -- otherwise they read as one block scaled three ways. The blocks are near-white for the same reason the plaza is grey: pitched near the plaza's own stone they merge into the ground they stand on.
     **Two numbers the models are authored against.** Nothing exceeds 1.7 world units, because a settlement's chips are bottom-anchored 3.1 above the surface and grow upward, so a taller building eats the column that says what the place wants. And the plaza is a neutral grey rather than a warm sand, which would read as the Dirt route tile arriving at the door.
     `verify_main._test_settlement_markers` asserts one model per settlement, centred on its footprint, self-coloured, across all three sizes -- centring being the one that would fail silently, since a City centred on its top-left corner would sit a tile and a half off its own ground. See §10.1, §0.41.
 
@@ -1867,7 +1868,7 @@ footprint, not as an abstract marker:
 |---|---|---|
 | Village | 1x1 | One house and a tree |
 | Town | 2x1 | Three houses |
-| City | 2x2 | Two houses in front, three taller blocks behind |
+| City | 2x2 | Three houses in front, three taller blocks behind |
 
 Each stands on a rounded stone **plaza spanning its whole footprint**. That is
 the load-bearing part, not the decoration: a settlement's cells are
@@ -1879,6 +1880,16 @@ Town/City meshes as the follow-up. This is that follow-up, and it keeps the
 promise by making the model itself footprint-sized. A settlement now draws
 **one** marker whatever its size; sources still draw one crate per cell, since
 their art is a single crate and the footprint reads straight off it.
+
+**Everything the camera can see is on the +Z face.** The camera is pitched
+down 60 degrees looking along -Z, so +Z is the only wall of any building it
+ever sees: every house's door and every City block's windows go there, and a
+door on any other face is a door nobody will find. A block's window rows come
+out of its own height rather than being authored per building, so storeys stay
+the same size on every one of them -- which is what makes three blocks of
+different heights read as three buildings rather than as one block scaled
+three ways. The City's front row is the Town's own row of three houses, so a
+City reads as a Town that grew rather than as an unrelated place.
 
 **Roofs stay `MarkerColors.SETTLEMENT_COLOR`** -- the red every settlement has
 always been drawn in, and the colour the established-route overlay marks a
@@ -1896,7 +1907,10 @@ above the tile surface and grow upward -- a taller building starts eating the
 column that says what the place wants. And the plaza is a neutral **grey**
 stone rather than a warm sand, which is very close to the Dirt route tile
 (§8.5): a settlement whose ground reads as road surface loses the distinction
-between the place and the route arriving at it.
+between the place and the route arriving at it. For the same reason the City's
+blocks are near-white rather than a light grey: pitched anywhere near the
+plaza's own stone they merge into the ground they stand on, and the City loses
+the skyline that is the whole point of having them.
 
 ### 10.2 Route drawing UI
 

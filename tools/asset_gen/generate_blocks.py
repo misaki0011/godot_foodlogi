@@ -158,9 +158,13 @@ SETTLEMENT_ROOF = (196, 87, 58, 255)  # == MarkerColors.SETTLEMENT_COLOR
 SETTLEMENT_ROOF_DARK = (156, 66, 44, 255)
 HOUSE_WALL = (242, 233, 214, 255)
 HOUSE_WALL_ALT = (224, 210, 186, 255)
-TOWER_WALL = (212, 217, 224, 255)
-TOWER_WALL_ALT = (192, 200, 210, 255)
+# Near-white, and a long way off PLAZA_TOP: pitched anywhere near the plaza's
+# own grey the blocks merge into the ground they stand on and the City loses
+# its skyline entirely.
+TOWER_WALL = (245, 247, 250, 255)
+TOWER_WALL_ALT = (230, 235, 242, 255)
 TOWER_CAP = (152, 148, 158, 255)
+WINDOW = (104, 136, 168, 255)
 DOOR = (122, 96, 74, 255)
 PLAZA_TOP = (202, 198, 192, 255)
 PLAZA_SIDE = (148, 145, 140, 255)
@@ -181,6 +185,13 @@ PLAZA_TOP_Y = PLAZA_BODY_THICKNESS + PLAZA_LIP  # what the buildings stand on
 ## (Main._render_settlement_bubbles), so a building taller than this starts
 ## eating the column that says what the place wants.
 SETTLEMENT_MAX_HEIGHT = 1.7
+
+## Window grid on a tower's front wall. PITCH is one storey; MARGIN is how far
+## the top row sits below the roof. Rows come out of the building's height, so
+## storeys stay the same size whatever the tower.
+WINDOW_SIZE = 0.16
+WINDOW_PITCH = 0.34
+WINDOW_MARGIN = 0.26
 
 
 def _box(extents, translation, color) -> trimesh.Trimesh:
@@ -536,13 +547,18 @@ def _plaza(width, depth) -> list[trimesh.Trimesh]:
     return parts
 
 
-def _house(x, z, width, depth, wall_height, roof_height, wall_color, roof_color, door_side=-1):
+def _house(x, z, width, depth, wall_height, roof_height, wall_color, roof_color):
     """A pitched-roof house standing on the plaza: rounded walls, a hip roof
-    overhanging them a little, and a door so the building has a front.
+    overhanging them a little, and a door on the FRONT.
 
-    The overhang is what stops the roof from reading as a lid: at this camera
-    angle the roof is most of what is visible, and an eave line separating it
-    from the wall is the only thing that says the two are different parts."""
+    Front means +Z, and that is not arbitrary -- the game camera is pitched
+    down 60 degrees looking along -Z, so +Z is the only wall it can ever see.
+    A door on any other face is a door nobody will find.
+
+    The roof overhang is what stops the roof from reading as a lid: at this
+    camera angle the roof is most of what is visible, and an eave line
+    separating it from the wall is the only thing that says the two are
+    different parts."""
     base = PLAZA_TOP_Y
     parts = _chamfered_box(
         (width, wall_height, depth), (x, base + wall_height / 2, z), wall_color, 0.05
@@ -559,17 +575,44 @@ def _house(x, z, width, depth, wall_height, roof_height, wall_color, roof_color,
     parts.append(
         _box(
             (width * 0.28, wall_height * 0.55, 0.05),
-            (x, base + wall_height * 0.275, z + door_side * (depth / 2)),
+            (x, base + wall_height * 0.275, z + depth / 2),
             DOOR,
         )
     )
     return parts
 
 
+def _windows(x, z_front, base_y, width, height, wall_color):
+    """A grid of windows on a tower's front (+Z) wall -- the only wall the
+    camera sees, same as a house's door.
+
+    Rows are derived from the building's height rather than passed in, so a
+    tall block gets more of them and the storeys stay the same size on every
+    tower. That is what makes three blocks of different heights read as three
+    buildings rather than as one block scaled three ways."""
+    rows = max(1, int((height - WINDOW_MARGIN) / WINDOW_PITCH))
+    parts = []
+    for row in range(rows):
+        y = base_y + height - WINDOW_MARGIN - row * WINDOW_PITCH
+        for col in (-1, 1):
+            parts.append(
+                _box(
+                    (WINDOW_SIZE, WINDOW_SIZE * 0.8, 0.04),
+                    (x + col * width * 0.22, y, z_front),
+                    WINDOW,
+                )
+            )
+    return parts
+
+
 def _tower(x, z, width, depth, height, wall_color):
-    """A flat-roofed block -- the taller, plainer buildings that separate a
-    City from a cluster of houses. Capped in slate rather than roof red, so a
-    City still reads as red-roofed but is not five identical red pyramids."""
+    """A flat-roofed block with windows -- the taller, plainer buildings that
+    separate a City from a cluster of houses.
+
+    Capped in slate rather than roof red, so a City still reads as red-roofed
+    without being five identical red pyramids. The walls are near-white on
+    purpose: pitched anywhere near the plaza's own grey they merge into the
+    ground they stand on and the City loses its skyline."""
     base = PLAZA_TOP_Y
     parts = _chamfered_box(
         (width, height, depth), (x, base + height / 2, z), wall_color, 0.05
@@ -577,6 +620,7 @@ def _tower(x, z, width, depth, height, wall_color):
     parts.append(
         _box((width + 0.07, 0.05, depth + 0.07), (x, base + height + 0.01, z), TOWER_CAP)
     )
+    parts += _windows(x, z + depth / 2, base, width, height, wall_color)
     return parts
 
 
@@ -624,26 +668,30 @@ def build_settlement_town() -> trimesh.Trimesh:
     matching silhouettes reads as one long building."""
     parts = _plaza(4.0 - 2 * PLAZA_INSET, 2.0 - 2 * PLAZA_INSET)
     parts += _house(-1.16, 0.16, 0.88, 0.74, 0.46, 0.40, HOUSE_WALL, SETTLEMENT_ROOF)
-    parts += _house(0.04, -0.24, 0.80, 0.68, 0.54, 0.44, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK, door_side=1)
+    parts += _house(0.04, -0.24, 0.80, 0.68, 0.54, 0.44, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK)
     parts += _house(1.16, 0.20, 0.92, 0.76, 0.42, 0.38, HOUSE_WALL, SETTLEMENT_ROOF)
     return trimesh.util.concatenate(parts)
 
 
 def build_settlement_city() -> trimesh.Trimesh:
-    """City: two houses at the front and three taller blocks behind them, on a
-    2x2 plaza. Origin at the centre of the footprint, on the terrain surface.
+    """City: three houses across the front and three taller blocks behind them,
+    on a 2x2 plaza. Origin at the centre of the footprint, on the terrain
+    surface.
 
     Houses forward and blocks behind, rather than mixed: the camera looks down
     the +Z axis, so anything at the back is partly hidden by whatever is in
     front of it, and putting the tall things there is what gives the cluster a
-    skyline instead of a jumble. Nothing exceeds SETTLEMENT_MAX_HEIGHT."""
+    skyline instead of a jumble. The front row is the Town's own row of three
+    houses, which is what makes a City read as a Town that grew rather than as
+    an unrelated place. Nothing exceeds SETTLEMENT_MAX_HEIGHT."""
     width = 4.0 - 2 * PLAZA_INSET
     parts = _plaza(width, width)
-    parts += _tower(-1.02, -1.00, 0.78, 0.78, 1.16, TOWER_WALL)
-    parts += _tower(0.06, -1.14, 0.70, 0.70, 1.42, TOWER_WALL_ALT)
-    parts += _tower(1.10, -0.86, 0.74, 0.74, 0.94, TOWER_WALL)
-    parts += _house(-0.86, 0.86, 0.92, 0.78, 0.50, 0.42, HOUSE_WALL, SETTLEMENT_ROOF)
-    parts += _house(0.82, 1.02, 0.86, 0.74, 0.46, 0.40, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK)
+    parts += _tower(-1.04, -1.02, 0.78, 0.78, 1.16, TOWER_WALL)
+    parts += _tower(0.06, -1.16, 0.70, 0.70, 1.42, TOWER_WALL_ALT)
+    parts += _tower(1.12, -0.88, 0.74, 0.74, 0.94, TOWER_WALL)
+    parts += _house(-1.16, 0.82, 0.90, 0.76, 0.50, 0.42, HOUSE_WALL, SETTLEMENT_ROOF)
+    parts += _house(0.02, 1.04, 0.82, 0.72, 0.46, 0.40, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK)
+    parts += _house(1.18, 0.80, 0.88, 0.74, 0.52, 0.44, HOUSE_WALL, SETTLEMENT_ROOF)
     return trimesh.util.concatenate(parts)
 
 
