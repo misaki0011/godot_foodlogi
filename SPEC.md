@@ -240,6 +240,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The produce is the chip glyphs in three dimensions.** `FoodGlyphs`' rule is that shape carries a food's identity and the same silhouette appears everywhere the food does, so the mark on a settlement's chip is the mark on the source that fills it -- and the carrot is green rather than orange for exactly that reason. They are stylised glyphs made physical rather than props at life scale: each is blown up to fill its slot, because a realistically-sized loaf on a 2x1 yard is a dot from the game camera, which is the same failure the flat glyphs hit at strip size.
     With sources joining settlements at one marker per node, **every node on the map now draws exactly one**. See §4.7, §10.1, §0.41.
 
+71. **Everything the player builds gets a model.** Storage was a wooden chest, a hub was two stacked cones, a placed bridge was a floating slab and a river crossing was a coloured rectangle -- the last four things on the map still drawn from primitives.
+    **Storage is a warehouse and a hub is a depot**, and both had to solve the same problem: their tint is load-bearing, since it is the only thing separating Normal storage from Cool (`MarkerColors.storage_color`), so unlike a settlement they cannot simply carry their own palette. They ship as two named glTF geometries instead -- `body` keeps what was authored, `tint` is the one mesh `NodeMarker` recolours -- and the tinted mesh is the ROOF, because the camera is pitched down 60 degrees and a roof is the largest surface of a small building it can see. Tinting the walls would put the type colour on the sliver that is edge-on to the player. The hub is round where a storage is square, so the two are separable at a glance before the colour is read at all.
+    **The placed bridge is an arch** (§4.1). A flat slab floating at one height reads as a block parked in mid-air; a span that springs from the tile edge and rises over the middle reads as something crossing. The belly stays open, since the point of the structure is that the player can see two roads on that tile. The rise had to come from raising the peak rather than dropping the ends -- the span sits on the road surface and a route plate is 0.22 thick, so an arch springing from lower is buried in the road it is crossing, and a shallow arc foreshortens back into a plank at this camera angle. `BRIDGE_DECK_HEIGHT` moves to 0.78 with the peak, since that is the height the established-route overlay lifts a crossing lane to.
+    **The river crossing is a stone viaduct** (§8.2) on two arched openings, with a balustrade down each side. Opposite decision from the arch: this one IS the road for its tile, so its deck stays flat and cream and continuous with the road either side, and everything architectural is underneath. `RIVER_CROSSING_HEIGHT` rises from 0.16 to 0.30 because an arch needs headroom to be an arch -- at 0.16 there is no room under the deck for an opening and the "bridge" is a painted strip. It is laid along the crossing's own axis, read off the tile's connections rather than assumed east-west, since a route may perfectly well run ALONG the river column and a viaduct broadside to its own road reads as a wall.
+    `verify_main._check_structure_tint` asserts the roof takes the type colour AND that the rest of the building does not -- both halves fail silently otherwise, since the roof is found by glTF node name and a miss falls back to flattening the whole building, which is exactly the look this replaced. See §4.1, §8.2.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -628,9 +634,20 @@ is a structure the player pays for and places deliberately: a **bridge**.
 A bridge is not drawn as part of a route drag. It is a **placed structure**,
 built with its own tool onto **one existing route tile**, the way a hub is
 (§4.4). It turns that tile into a road-over-road crossing: the road already
-there keeps running underneath, and a raised deck spans it at right angles. A
-later drag may then run **straight over the deck**, and the two routes share
-that cell without ever becoming one network.
+there keeps running underneath, and an **arched span** crosses it at right
+angles. A later drag may then run **straight over the deck**, and the two
+routes share that cell without ever becoming one network.
+
+**Why an arch** (v0.7 item 71). The span used to be a flat slab floating at
+one height, which reads as a block parked in mid-air; a deck that springs from
+the tile edge, rises over the middle and comes down the far side reads as
+something *crossing*. Its belly stays open, because the whole point of the
+structure is that the player can see two roads on that tile -- a filled arch
+would hide the one it exists to advertise. The rise has to come from raising
+the peak rather than dropping the ends: the span sits on the road surface and a
+route plate is 0.22 thick, so an arch springing from much lower is buried in
+the road it is meant to be crossing, and at a 60-degree camera a shallow arc
+foreshortens back into a flat plank.
 
 Making it a placed structure rather than an automatic side effect of a drag is
 the point. A crossing becomes a purchase the player decides on and can see on
@@ -1674,6 +1691,17 @@ routes the player will actually draw.
 | Mountain | 3.0x | 1.5x | **0.6x** | 1.0x | Short and expensive vs. long and cheap |
 | Snow | 1.2x | 1.5x | **0.5x** | **0.6x** | Preserves well, moves badly |
 | Water | unbuildable except at a crossing (flat §40, `RIVER_BRIDGE_COST`) | — | 1.0x | 1.0x | Chokepoints |
+
+A paid water crossing draws a **stone viaduct** on two arched openings with a
+balustrade down each side (v0.7 item 71), not the flat coloured slab it used to
+be. It is the opposite design decision from the placed bridge above: that one
+arches because it is a structure crossing *over* a road, while this one IS the
+road for its tile, so its deck stays flat and cream and continuous with the
+tiles either side, and everything architectural about it is underneath. It is
+laid along the crossing's own axis, read off the tile's connections rather than
+assumed east-west -- the river is a column today, so a crossing almost always
+runs across it, but a route may perfectly well be drawn ALONG the column, and a
+viaduct laid broadside to its own road would read as a wall.
 | Blocked | unbuildable, no exception | — | — | — | Cliffs, walls, gated approaches |
 
 These plug into the multipliers §4.1 already writes down and has never used

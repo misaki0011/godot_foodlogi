@@ -761,18 +761,22 @@ def _matte(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     return mesh
 
 
-def _settlement_scene(body_parts, window_parts) -> trimesh.Scene:
-    """A settlement as two NAMED geometries rather than one merged mesh.
+def _named_scene(parts_by_name) -> trimesh.Scene:
+    """A model as several NAMED geometries rather than one merged mesh.
 
-    Everything else in this file exports a single mesh, because nothing else
-    needs a part of itself picked out later. A settlement does: its windows
-    light up at night, which means Godot has to be able to find them, and a
-    glTF scene with named geometries imports as one MeshInstance3D per name."""
+    Most things here export as a single mesh, because nothing needs a part of
+    them picked out later. Two kinds do, and both need Godot to be able to FIND
+    the part: a settlement's windows light up at night, and a storage or hub's
+    roof takes its type colour. A glTF scene with named geometries imports as
+    one MeshInstance3D per name, which is exactly that handle."""
     return trimesh.Scene(
-        {
-            SETTLEMENT_BODY_NODE: _matte(trimesh.util.concatenate(body_parts)),
-            SETTLEMENT_WINDOWS_NODE: _matte(trimesh.util.concatenate(window_parts)),
-        }
+        {name: _matte(trimesh.util.concatenate(parts)) for name, parts in parts_by_name.items()}
+    )
+
+
+def _settlement_scene(body_parts, window_parts) -> trimesh.Scene:
+    return _named_scene(
+        {SETTLEMENT_BODY_NODE: body_parts, SETTLEMENT_WINDOWS_NODE: window_parts}
     )
 
 
@@ -922,6 +926,202 @@ def build_source_base() -> trimesh.Trimesh:
     )
 
 
+# ------------------------------------------------ player-built structures
+#
+# Storage and hubs are TINTED at runtime by their type -- Normal against Cool
+# storage, and the hub's own orange (MarkerColors) -- so unlike a settlement
+# they cannot simply carry their own palette. They export as two named
+# geometries instead: `body` keeps the colours authored here, and `tint` is the
+# one mesh NodeMarker recolours.
+#
+# The roof is the tinted part in both cases, and that is the whole reason these
+# read at all: the camera is pitched down 60 degrees, so a roof is the largest
+# surface of any small building it can see. Tinting the walls instead would put
+# the type colour on the sliver that is edge-on to the player.
+STRUCT_WALL = (238, 232, 220, 255)
+STRUCT_WALL_SHADE = (214, 206, 192, 255)
+STRUCT_TRIM = (120, 110, 98, 255)
+STRUCT_DOOR = (122, 96, 74, 255)
+
+# Bridges. Both are stone-and-timber rather than painted, so a crossing reads
+# as a structure the player built over something rather than as another tile.
+BRIDGE_DECK_COLOR = (199, 183, 155, 255)
+BRIDGE_RAIL_COLOR = (138, 119, 88, 255)
+BRIDGE_PIER_COLOR = (160, 146, 124, 255)
+RIVER_DECK_COLOR = (239, 231, 210, 255)
+RIVER_STONE = (206, 198, 186, 255)
+RIVER_STONE_DARK = (158, 150, 138, 255)
+
+## Where a road-over-road bridge's deck sits. The ENDS are what the arch is
+## for: a flat deck floating at one height reads as a slab parked in mid-air,
+## while a span that springs from the tile edge and rises over the middle reads
+## as something crossing. The peak must stay at Main.BRIDGE_DECK_HEIGHT, which
+## is the height the established-route overlay lifts a crossing lane to.
+## The ends cannot go lower: the deck is placed at the road SURFACE, and a
+## route plate is 0.22 thick, so an arch springing from much under this is
+## buried in the road it is supposed to be crossing. The rise therefore has to
+## come from raising the peak rather than dropping the ends -- at a 60-degree
+## camera a shallow arc foreshortens into a flat plank.
+ARCH_END_Y = 0.30
+ARCH_PEAK_Y = 0.78
+ARCH_DECK_THICKNESS = 0.11
+ARCH_WIDTH = 1.00
+ARCH_SEGMENTS = 9
+
+## The river crossing. Raised from the old flat 0.16 slab because an arch needs
+## headroom to be an arch at all: at 0.16 there is no room under the deck for
+## an opening, and the "bridge" is a painted strip.
+RIVER_DECK_TOP = 0.30
+RIVER_PIER_HEIGHT = 0.20
+
+
+def _arch_y(x, half_length):
+    """The deck's top surface at `x`, as a parabola from ARCH_END_Y at the ends
+    to ARCH_PEAK_Y over the middle."""
+    t = x / half_length
+    return ARCH_END_Y + (ARCH_PEAK_Y - ARCH_END_Y) * (1.0 - t * t)
+
+
+def _arch_run(length, width, thickness, color, drop=0.0):
+    """A run of boxes following the arch, each tilted to the local slope.
+
+    Segments overlap slightly (the 1.12) because a chain of tilted boxes meets
+    at its corners, not its faces -- without the overlap the deck is a dotted
+    line of wedges with daylight between them."""
+    half = length / 2
+    seg = length / ARCH_SEGMENTS
+    parts = []
+    for i in range(ARCH_SEGMENTS):
+        x = -half + seg * (i + 0.5)
+        top = _arch_y(x, half) - drop
+        slope = (_arch_y(x + seg * 0.5, half) - _arch_y(x - seg * 0.5, half)) / seg
+        box = trimesh.creation.box(extents=(seg * 1.12, thickness, width))
+        box.apply_transform(trimesh.transformations.rotation_matrix(math.atan(slope), (0, 0, 1)))
+        box.apply_translation((x, top - thickness / 2, 0))
+        box.visual.vertex_colors = np.tile(color, (len(box.vertices), 1))
+        parts.append(box)
+    return parts
+
+
+def build_bridge_arch() -> trimesh.Trimesh:
+    """The road-over-road bridge: an arched span rising over the road it
+    crosses, with rails following the arc and an abutment at each end.
+
+    Authored along +X with its origin on the ROAD SURFACE, so Main places it at
+    the tile position with no vertical offset and it grows up out of the road
+    when it pops. Rotated a quarter turn when the deck runs along Z; the span
+    is symmetric end to end, so one model serves both directions.
+
+    The middle is deliberately left open. A bridge tile keeps its own road
+    underneath and the whole point of the structure is that the player can see
+    two roads there -- an arch with a filled belly would hide the one it is
+    crossing, which is the thing it exists to advertise."""
+    length = 2.0
+    parts = _arch_run(length, ARCH_WIDTH, ARCH_DECK_THICKNESS, BRIDGE_DECK_COLOR)
+    for side in (1, -1):
+        rail_z = side * (ARCH_WIDTH / 2 - 0.05)
+        for box in _arch_run(length, 0.12, 0.24, BRIDGE_RAIL_COLOR, drop=-0.16):
+            box.apply_translation((0, 0, rail_z))
+            parts.append(box)
+    # Abutments: the span has to stand on something, and they also close the
+    # end of the arch so it does not read as a ramp sawn off at the tile edge.
+    for side in (1, -1):
+        parts += _chamfered_box(
+            (0.26, ARCH_END_Y, ARCH_WIDTH),
+            (side * (length / 2 - 0.13), ARCH_END_Y / 2, 0),
+            BRIDGE_PIER_COLOR,
+            0.05,
+        )
+    return trimesh.util.concatenate(parts)
+
+
+def build_river_bridge() -> trimesh.Trimesh:
+    """The river crossing: a stone viaduct on two arched openings, with a
+    balustrade down each side.
+
+    Automatic rather than placed -- a route drawn onto the river column pays
+    RIVER_BRIDGE_COST and gets this (TERR-05) -- so unlike the arch it is a
+    piece of ROAD and its deck is flat and cream, continuous with the tiles
+    either side. What makes it architectural is underneath: piers standing in
+    the water and openings corbelled into arches between them.
+
+    Authored along +X, origin at the terrain surface, and rotated a quarter
+    turn where the crossing runs north-south."""
+    length = 2.0
+    width = 1.34
+    parts = []
+    # Three piers, so there are two openings for the water to run through.
+    for x in (-0.78, 0.0, 0.78):
+        parts += _chamfered_box(
+            (0.30, RIVER_PIER_HEIGHT, width), (x, RIVER_PIER_HEIGHT / 2, 0), RIVER_STONE_DARK, 0.04
+        )
+    # Corbelled shoulders: two stepped blocks over each side of each opening,
+    # which is what turns a square hole into something that reads as an arch at
+    # this size. A true curve would cost far more geometry to say the same.
+    for center in (-0.39, 0.39):
+        for side in (1, -1):
+            for step, (dx, dy, w) in enumerate([(0.10, 0.015, 0.16), (0.055, 0.05, 0.11)]):
+                parts.append(
+                    _box(
+                        (w, 0.05, width),
+                        (center + side * dx, RIVER_PIER_HEIGHT - 0.025 - dy + step * 0.0, 0),
+                        RIVER_STONE_DARK,
+                    )
+                )
+    # The deck: stone band under a cream road surface, so the crossing reads as
+    # continuous with the road on either side rather than as a grey gap in it.
+    parts += _chamfered_box(
+        (length, 0.07, width), (0, RIVER_DECK_TOP - 0.055, 0), RIVER_STONE, 0.03
+    )
+    parts.append(_box((length, 0.04, width - 0.26), (0, RIVER_DECK_TOP - 0.02, 0), RIVER_DECK_COLOR))
+    # Balustrades, with posts, along both edges.
+    for side in (1, -1):
+        z = side * (width / 2 - 0.06)
+        parts += _chamfered_box((length, 0.13, 0.10), (0, RIVER_DECK_TOP + 0.065, z), RIVER_STONE, 0.03)
+        for x in (-0.84, 0.0, 0.84):
+            parts += _chamfered_box((0.14, 0.19, 0.15), (x, RIVER_DECK_TOP + 0.095, z), RIVER_STONE, 0.04)
+    return trimesh.util.concatenate(parts)
+
+
+def build_storage() -> trimesh.Trimesh:
+    """A warehouse: cream walls, a wide gabled roof, a loading door.
+
+    Returns body/tint as a scene -- the ROOF is the tinted mesh, because it is
+    the largest surface this camera can see on a building this small and the
+    tint is what tells Normal storage from Cool (MarkerColors.storage_color).
+    Authored origin-at-base so it stands on whatever road it is built over."""
+    wall = 0.42
+    parts = _chamfered_box((0.86, wall, 0.66), (0, wall / 2, 0), STRUCT_WALL, 0.05)
+    parts.append(_box((0.24, wall * 0.6, 0.05), (0, wall * 0.3, 0.33), STRUCT_DOOR))
+    parts.append(_box((0.90, 0.05, 0.70), (0, wall + 0.02, 0), STRUCT_TRIM))
+    roof = [_pyramid(1.02, 0.82, 0.34, (0, wall + 0.04, 0), STRUCT_WALL_SHADE)]
+    return _named_scene({"body": parts, "tint": roof})
+
+
+def build_hub() -> trimesh.Trimesh:
+    """A depot: a drum with a conical roof and a finial on top.
+
+    Round rather than square on purpose -- a hub is the one player-built thing
+    that is not a box, so it is separable from a storage at a glance even
+    before the tint is read. Roof is the tinted mesh, same as a storage."""
+    drum = 0.40
+    parts = [_cylinder(0.34, drum, (0, drum / 2, 0), STRUCT_WALL, sections=10)]
+    parts.append(_cylinder(0.38, 0.05, (0, drum + 0.01, 0), STRUCT_TRIM, sections=10))
+    parts.append(_box((0.20, drum * 0.62, 0.05), (0, drum * 0.31, 0.33), STRUCT_DOOR))
+    roof = [_cone(0.46, 0.34, (0, drum + 0.03, 0), STRUCT_WALL_SHADE, sections=10)]
+    roof.append(_cylinder(0.05, 0.16, (0, drum + 0.42, 0), STRUCT_TRIM, sections=6))
+    return _named_scene({"body": parts, "tint": roof})
+
+
+def _cone(radius, height, translation, color, sections=8) -> trimesh.Trimesh:
+    """A Y-up cone with its base at the translation's y and its apex above."""
+    mesh = trimesh.creation.cone(radius=radius, height=height, sections=sections)
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(-math.pi / 2, (1, 0, 0)))
+    mesh.apply_translation(translation)
+    mesh.visual.vertex_colors = np.tile(color, (len(mesh.vertices), 1))
+    return mesh
+
+
 def export(mesh: trimesh.Trimesh, path: str) -> None:
     _matte(mesh)
     mesh.export(path, file_type="glb")
@@ -955,3 +1155,7 @@ if __name__ == "__main__":
     export(build_food_vegetables(), "assets/Environment/glTF/Food_Vegetables.glb")
     export(build_food_milk(), "assets/Environment/glTF/Food_Milk.glb")
     export(build_food_seafood(), "assets/Environment/glTF/Food_Seafood.glb")
+    export_scene(build_storage(), "assets/Environment/glTF/Storage.glb")
+    export_scene(build_hub(), "assets/Environment/glTF/Hub.glb")
+    export(build_bridge_arch(), "assets/Environment/glTF/Bridge_Arch.glb")
+    export(build_river_bridge(), "assets/Environment/glTF/Bridge_River.glb")

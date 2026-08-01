@@ -444,6 +444,35 @@ func _check_structure_renders_on_its_road(terrain: GridMap, cell: Vector2i) -> v
 	var road_height := 2.0 * (road.position.y - world_pos.y)
 	assert(road_height > 0.0, "The road block under a building must have real height")
 	assert(is_equal_approx(marker.position.y, world_pos.y + road_height), "A building marker must stand on top of its road block, not sink into it")
+	_check_structure_tint(marker)
+
+## The type colour lands on the ROOF alone, and the rest of the building keeps
+## the palette it was authored with.
+##
+## Both halves matter and both would fail silently. `NodeMarker` looks the roof
+## up by the glTF node name `tint`, so renaming it in generate_blocks.py errors
+## nothing -- the marker simply falls back to flattening the whole building to
+## one colour, which is exactly the look this replaced. And the tint itself is
+## load-bearing: it is the only thing separating Normal storage from Cool
+## (MarkerColors.storage_color), so a roof that stopped taking it would make
+## the two indistinguishable.
+func _check_structure_tint(marker: NodeMarker) -> void:
+	var roof: MeshInstance3D = marker.call("_find_mesh_named", marker, NodeMarker.TINT_NODE)
+	assert(roof != null, "a storage or hub must ship a '%s' mesh for its type colour" % NodeMarker.TINT_NODE)
+	assert(roof.material_override != null, "the roof must carry the tint")
+	var untinted := 0
+	for mesh in _meshes_under(marker):
+		if mesh != roof and mesh.material_override == null:
+			untinted += 1
+	assert(untinted > 0, "tinting must not flatten the whole building -- walls, door and trim keep their own colours")
+
+func _meshes_under(node: Node) -> Array[MeshInstance3D]:
+	var out: Array[MeshInstance3D] = []
+	if node is MeshInstance3D:
+		out.append(node)
+	for child in node.get_children():
+		out.append_array(_meshes_under(child))
+	return out
 
 ## ROUTE-15: bulldoze and upgrade also work as a drag, applying to every tile
 ## the sweep crosses. Drives real press/drag/release gestures over two

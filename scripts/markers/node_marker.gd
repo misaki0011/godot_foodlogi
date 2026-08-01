@@ -67,7 +67,7 @@ func setup(data: NodeData, tint: Color) -> void:
 func set_window_glow(amount: float) -> void:
 	if not _windows_resolved:
 		_windows_resolved = true
-		_window_mesh = _find_windows(self)
+		_window_mesh = _find_mesh_named(self, WINDOWS_NODE)
 		if _window_mesh != null:
 			# The panes come in vertex-coloured like everything else; an override
 			# is what lets one flat colour take an emission that follows the clock.
@@ -80,22 +80,36 @@ func set_window_glow(amount: float) -> void:
 		return
 	_window_material.emission_energy_multiplier = clampf(amount, 0.0, 1.0) * WINDOW_MAX_EMISSION
 
-func _find_windows(node: Node) -> MeshInstance3D:
-	if node is MeshInstance3D and node.name == WINDOWS_NODE:
-		return node
-	for child in node.get_children():
-		var found := _find_windows(child)
-		if found:
-			return found
-	return null
-
 func apply_tint(color: Color) -> void:
 	_tint_recursive_root(color)
 
+## The type colour goes on the ONE mesh named `tint` when the art ships one,
+## and over everything otherwise.
+##
+## Storage and hubs cannot simply carry their own palette the way a settlement
+## does -- the tint is load-bearing, since it is the only thing separating
+## Normal storage from Cool (MarkerColors.storage_color) -- but flattening a
+## whole building to it loses the walls, the door and the trim. Naming one mesh
+## keeps both: the roof takes the type colour, everything else keeps what it
+## was authored with. The roof specifically, because the camera is pitched down
+## 60 degrees and a roof is the largest surface of a small building it can see.
+const TINT_NODE := "tint"
+
 func _tint_recursive_root(tint: Color) -> void:
 	var visual := get_node_or_null("Visual")
-	if visual:
-		_tint_recursive(visual, tint)
+	if visual == null:
+		return
+	var accent := _find_mesh_named(visual, TINT_NODE)
+	_tint_recursive(accent if accent != null else visual, tint)
+
+func _find_mesh_named(node: Node, mesh_name: String) -> MeshInstance3D:
+	if node is MeshInstance3D and node.name == mesh_name:
+		return node
+	for child in node.get_children():
+		var found := _find_mesh_named(child, mesh_name)
+		if found:
+			return found
+	return null
 
 func _tint_recursive(node: Node, color: Color) -> void:
 	if node is MeshInstance3D:

@@ -39,9 +39,14 @@ const ROUTE_LEVEL_SCENES := {
 	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
 }
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
-## Height of the flat slab drawn instead of a road block where a route tile
-## crosses the river column (TERR-05's automatic water crossing).
-const RIVER_CROSSING_HEIGHT := 0.16
+## Deck height of the viaduct drawn instead of a road block where a route tile
+## crosses the river column (TERR-05's automatic water crossing). Raised from
+## the old flat slab's 0.16 because an arch needs headroom to be an arch: at
+## 0.16 there is no room under the deck for an opening and the "bridge" is a
+## painted strip. Must match RIVER_DECK_TOP in tools/asset_gen/generate_blocks.py.
+const RIVER_CROSSING_HEIGHT := 0.30
+const RIVER_BRIDGE_SCENE := preload("res://assets/Environment/glTF/Bridge_River.glb")
+const BRIDGE_ARCH_SCENE := preload("res://assets/Environment/glTF/Bridge_Arch.glb")
 
 ## Fallback flat-slab colours for a route level whose block scene is missing,
 ## and the river crossing's own slab. Kept in step with the tile palette in
@@ -57,13 +62,12 @@ const RIVER_BRIDGE_COLOR := Color("EFE7D2")
 ## the deck sits high enough above the road surface to leave the tile underneath
 ## clearly visible -- the whole point of the structure is that the player can
 ## see two roads there, not one.
-const BRIDGE_DECK_HEIGHT := 0.62
-const BRIDGE_DECK_THICKNESS := 0.14
-const BRIDGE_DECK_WIDTH_RATIO := 0.5 # of the tile, across the deck's axis
-const BRIDGE_RAIL_HEIGHT := 0.22
-const BRIDGE_RAIL_THICKNESS := 0.09
+## The height the arch's deck reaches over the middle of its tile, which is
+## what the established-route overlay lifts a crossing lane to. Must match
+## ARCH_PEAK_Y in tools/asset_gen/generate_blocks.py.
+const BRIDGE_DECK_HEIGHT := 0.78
+## Legend swatches only -- the spans carry their own colours now.
 const BRIDGE_DECK_COLOR := Color("C7B79B")
-const BRIDGE_RAIL_COLOR := Color("8A7758")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}
 const STORAGE_TOOLS := {"normal": GameEnums.StorageType.NORMAL, "cool": GameEnums.StorageType.COOL}
 const ZOOM_MIN := 14.0
@@ -2179,7 +2183,7 @@ func _source_food_color(source_id: String) -> Color:
 func _add_road_surface(parent: Node3D, world_pos: Vector3, pos: Vector2i, level: String) -> Dictionary:
 	if _map_data.is_river(pos.x, pos.y):
 		return {
-			"node": _add_tile_box(parent, world_pos, RIVER_BRIDGE_COLOR, RIVER_CROSSING_HEIGHT),
+			"node": _add_river_bridge(parent, world_pos, pos),
 			"height": RIVER_CROSSING_HEIGHT,
 		}
 	return {
@@ -2187,34 +2191,54 @@ func _add_road_surface(parent: Node3D, world_pos: Vector3, pos: Vector2i, level:
 		"height": ROUTE_LEVEL_HEIGHTS.get(level, 0.22),
 	}
 
-## The raised deck of a bridge tile: a slab spanning the full cell along the
-## deck's own axis (so it meets the road on either side rather than stopping
-## short), narrowed across that axis and flanked by two rails, which is what
-## makes it read as a crossing rather than a floating block from the fixed
-## isometric camera. The road it crosses is drawn normally underneath and stays
-## visible on both sides of the slab.
+## The arched span of a bridge tile: a deck that springs from the tile edge,
+## rises over the middle, and comes down on the far side, with rails following
+## the arc.
 ##
-## Slab and rails hang off one container node placed at the deck's own centre,
-## with their offsets expressed relative to it, so the deck can be scaled as a
-## single object (_pop_construction) about the point it should pivot on. Positioning
-## them absolutely under a container at the world origin would draw identically
-## and scale catastrophically.
+## An arch rather than the flat slab this replaces, and the difference is not
+## only decorative -- a slab floating at one height reads as a block parked in
+## mid-air, while a span that rises out of the ground reads as something
+## crossing. The belly is deliberately left open: a bridge tile keeps its own
+## road underneath and the whole point of the structure is that the player can
+## see TWO roads there, so a filled arch would hide the one it is advertising.
+##
+## The model is authored along +X with its origin on the road surface, so the
+## quarter turn below is the only thing a Z-running deck needs, and _pop
+## _construction scales it about its own base -- it grows up out of the road
+## rather than inflating around its middle.
 func _add_bridge_deck(parent: Node3D, pos: Vector3, axis: Vector2i) -> Node3D:
-	var along := Vector3(1.0, 0.0, 0.0) if axis.x != 0 else Vector3(0.0, 0.0, 1.0)
-	var across := Vector3(0.0, 0.0, 1.0) if axis.x != 0 else Vector3(1.0, 0.0, 0.0)
-	var length: float = _terrain.cell_size.x if axis.x != 0 else _terrain.cell_size.z
-	var span: float = _terrain.cell_size.z if axis.x != 0 else _terrain.cell_size.x
-	var width: float = span * BRIDGE_DECK_WIDTH_RATIO
-	var deck := Node3D.new()
+	var deck: Node3D = BRIDGE_ARCH_SCENE.instantiate()
 	deck.name = "BridgeDeck"
 	parent.add_child(deck)
-	deck.position = pos + Vector3(0.0, BRIDGE_DECK_HEIGHT, 0.0)
-	_add_box(deck, Vector3.ZERO, along * length + across * width + Vector3(0.0, BRIDGE_DECK_THICKNESS, 0.0), BRIDGE_DECK_COLOR)
-	var rail_size := along * length + across * BRIDGE_RAIL_THICKNESS + Vector3(0.0, BRIDGE_RAIL_HEIGHT, 0.0)
-	var rail_y := Vector3(0.0, (BRIDGE_DECK_THICKNESS + BRIDGE_RAIL_HEIGHT) * 0.5, 0.0)
-	for side in [1.0, -1.0]:
-		_add_box(deck, across * (width * 0.5 * side) + rail_y, rail_size, BRIDGE_RAIL_COLOR)
+	deck.position = pos
+	if axis.x == 0:
+		deck.rotation.y = PI / 2
 	return deck
+
+## The river crossing: a stone viaduct on two arched openings (TERR-05).
+##
+## Automatic rather than placed, and it IS the road for that tile -- which is
+## why its deck is flat and cream, continuous with the tiles either side, where
+## the placed bridge above arches. What makes it architectural is underneath.
+func _add_river_bridge(parent: Node3D, world_pos: Vector3, pos: Vector2i) -> Node3D:
+	var span: Node3D = RIVER_BRIDGE_SCENE.instantiate()
+	parent.add_child(span)
+	span.position = world_pos
+	if _river_crossing_axis(pos).x == 0:
+		span.rotation.y = PI / 2
+	return span
+
+## Which way a river crossing runs, so the viaduct can be laid along it.
+##
+## Read off the tile's own connections rather than assumed east-west: the river
+## is a column today, so a crossing almost always runs across it, but a route
+## may perfectly well be drawn ALONG the column, and a viaduct laid broadside
+## to its own road would read as a wall. Falls back to east-west for a tile
+## with nothing connected yet, which is the crossing the map is shaped for.
+func _river_crossing_axis(cell: Vector2i) -> Vector2i:
+	var horizontal := _state.has_connection(cell, cell + Vector2i(1, 0)) or _state.has_connection(cell, cell + Vector2i(-1, 0))
+	var vertical := _state.has_connection(cell, cell + Vector2i(0, 1)) or _state.has_connection(cell, cell + Vector2i(0, -1))
+	return Vector2i(0, 1) if vertical and not horizontal else Vector2i(1, 0)
 
 func _add_box(parent: Node3D, center: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
