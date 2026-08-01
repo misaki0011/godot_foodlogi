@@ -108,6 +108,28 @@ var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
 var _fx_layer: Node3D
 
+## ---------- undo (BUILD-01) ----------
+##
+## One entry per completed build action, newest last: {label, grid, connections,
+## balance, source_levels}. Snapshots of the state BEFORE the action rather than
+## an inverse operation per tool -- there are eight of those and they compose
+## (a sweep is n bulldozes, a bulldoze hands a road back at whatever level it
+## was, a bridge takes two connections down and leaves the road), so a per-tool
+## inverse is eight chances to hand back the wrong thing. A snapshot cannot
+## disagree with what the action did, because it never has to know.
+##
+## Cheap enough to be uninteresting: region 1 is 21x14, so a full grid is at
+## most 294 tiny dictionaries and a real one is a few dozen.
+##
+## Cleared by the day rollover, and that is the rule that keeps this honest:
+## the day pays out against the network as it stood, so undoing a road after it
+## has earned would refund its cost while the player keeps the income it
+## carried. Undo is for the mistake you just made, not for the week you just
+## played.
+const UNDO_DEPTH := 30
+var _undo_stack: Array[Dictionary] = []
+var _undo_button: Button
+
 ## How much of a node's order book is drawn on the map at rest.
 ##
 ## GLYPHS is the default and the reason this enum exists: a full balloon per
@@ -439,6 +461,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
 		_toggle_pause()
 		return
+	# Ignored mid-gesture: a drag is committed on release against the grid as it
+	# stands, so undoing underneath one would leave it holding cells it worked
+	# out against a board that no longer exists. The button can't be reached
+	# mid-drag anyway -- the mouse is busy -- so this only closes the keyboard's
+	# way in.
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Z \
+			and event.ctrl_pressed and not _drag_active and not _press_eligible:
+		_undo_last()
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_start_press(event.position)
@@ -656,6 +687,7 @@ func _commit_drag() -> void:
 	if _drag_new_cells.is_empty() and _drag_new_connections.is_empty():
 		_show_toast("Nothing new to build or connect along that path.", true)
 		return
+	_push_undo("that route drag")
 	for cell in _drag_new_cells:
 		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
 		_state.grid[cell] = {"kind": "route", "level": "dirt"}
@@ -718,6 +750,7 @@ func _commit_sweep() -> void:
 		return
 	var count := _sweep_cells.size()
 	var plural := "" if count == 1 else "s"
+	_push_undo("that %s sweep" % ("bulldoze" if _tool == "remove" else "upgrade"))
 	if _tool == "remove":
 		# Same rule as a single bulldoze (see _clear_cell): a swept hub,
 		# storage or bridge leaves its road behind rather than taking it with it.
@@ -936,6 +969,7 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 	if _state.balance < cost:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
 		return
+	_push_undo("that route upgrade")
 	_state.balance -= cost
 	cell_data.level = lvl.next
 	# An upgrade swaps the block outright -- Dirt, Paved and Main are three
@@ -966,6 +1000,7 @@ func _do_upgrade_source(n: NodeData) -> void:
 		_show_toast("Not enough treasury to expand %s (§%d needed)." % [n.display_name, roundi(cost)], true)
 		return
 
+	_push_undo("the %s expansion" % n.display_name)
 	_state.balance -= cost
 	n.upgrade_level += 1
 	var gained := []
@@ -993,6 +1028,7 @@ func _do_build_storage(cell: Vector2i) -> void:
 	if _state.balance < st.build:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(st.build), true)
 		return
+	_push_undo("that %s" % st.name.to_lower())
 	_state.balance -= st.build
 	# `level` is the road UNDERNEATH, carried along so the tile can be drawn
 	# under the building and handed back when it's bulldozed -- same contract as
@@ -1024,6 +1060,7 @@ func _do_build_hub(cell: Vector2i) -> void:
 	if _state.balance < cost:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
 		return
+	_push_undo("that hub")
 	_state.balance -= cost
 	# `level` is the road UNDERNEATH, carried along so bulldozing the hub can
 	# hand it back (see _clear_cell). Nothing dispatches on it while the cell is
@@ -1080,6 +1117,7 @@ func _do_build_bridge(cell: Vector2i) -> void:
 	if _state.balance < cost:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
 		return
+	_push_undo("that bridge")
 	_state.balance -= cost
 	cell_data["bridge_axis"] = axis
 	# The deck alone, for the same reason a hub pops only its marker: the road
@@ -1152,6 +1190,7 @@ func _do_bulldoze(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
 		_show_toast("Nothing to remove here.", true)
 		return
+	_push_undo("bulldoze")
 	_spawn_removal_ghost(cell, _state.grid[cell], 0.0)
 	var cleared := _clear_cell(cell).split("|")
 	match cleared[0]:
@@ -1163,6 +1202,84 @@ func _do_bulldoze(cell: Vector2i) -> void:
 			_show_toast("Storage removed. The tile stays as %s route." % GameBalance.ROUTE_LEVELS[cleared[1]].label)
 		_:
 			_show_toast("Tile cleared.")
+
+## ---------- undo (BUILD-01) ----------
+
+## Records the state as it stands, for the action about to be taken. Every
+## caller sits AFTER that action's guards and BEFORE its first mutation, so an
+## attempt that was refused (no treasury, wrong tile, cap reached) leaves the
+## history alone -- otherwise Undo's first press would spend itself on a click
+## that never did anything, which is worse than no Undo at all.
+##
+## `label` names the action in the button's tooltip and the toast, so pressing
+## Undo is never a guess about what is about to come back.
+func _push_undo(label: String) -> void:
+	var source_levels := {}
+	for node_id in _nodes_by_id:
+		var node: NodeData = _nodes_by_id[node_id]
+		if node.node_type == GameEnums.NodeType.SOURCE:
+			source_levels[node_id] = node.upgrade_level
+	_undo_stack.append({
+		"label": label,
+		# duplicate(true) is what makes this a snapshot rather than a second
+		# reference: both dictionaries are one level deep in more dictionaries
+		# (a cell's {kind, level, ...}, a cell's adjacency set), and a shallow
+		# copy would leave those shared and mutating underneath us.
+		"grid": _state.grid.duplicate(true),
+		"connections": _state.connections.duplicate(true),
+		"balance": _state.balance,
+		"source_levels": source_levels,
+	})
+	if _undo_stack.size() > UNDO_DEPTH:
+		_undo_stack.remove_at(0)
+
+## Puts the most recent build action back, treasury included. A source upgrade
+## additionally rebuilds that source's marker, for the same reason
+## _do_upgrade_source does: the yard's produce models are built from
+## `upgrade_level` at spawn time, so the marker has to be made again rather
+## than merely re-rendered.
+func _undo_last() -> void:
+	if _undo_stack.is_empty():
+		_show_toast("Nothing to undo -- the history clears when a day runs.", true)
+		return
+	var snapshot: Dictionary = _undo_stack.pop_back()
+	var refund: float = snapshot.balance - _state.balance
+	_state.grid = snapshot.grid
+	_state.connections = snapshot.connections
+	_state.balance = snapshot.balance
+	for node_id in snapshot.source_levels:
+		var node: NodeData = _nodes_by_id.get(node_id)
+		if node == null or node.upgrade_level == snapshot.source_levels[node_id]:
+			continue
+		node.upgrade_level = snapshot.source_levels[node_id]
+		_node_spawner.refresh_source(node_id)
+	# A removal ghost still crushing belongs to the bulldoze being undone, and a
+	# swept one can have up to TILE_POP_STAGGER_BUDGET of stagger left to run --
+	# so the tile would come back underneath its own disappearance. The payout
+	# labels sharing this layer are left alone: they report a day the undo has
+	# no claim on.
+	for child in _fx_layer.get_children():
+		if child.name.begins_with("RemovalGhost"):
+			child.queue_free()
+	# Rounded, because that is how every other figure reaches the player (the
+	# treasury reads "§ %d"), and an undo that says §60 while the counter moves
+	# by 60 is the only version that reconciles.
+	var money := " §%d back." % roundi(refund) if roundi(refund) > 0 else ""
+	_show_toast("Undid %s.%s" % [snapshot.label, money])
+	_after_action()
+
+## What the next press would put back, for the button's label and tooltip. The
+## button is disabled outright when there is nothing -- a live button that
+## answers "nothing to undo" teaches the player to stop trusting it.
+func _update_undo_button() -> void:
+	if _undo_button == null:
+		return
+	var available := not _undo_stack.is_empty()
+	_undo_button.disabled = not available
+	if available:
+		_undo_button.tooltip_text = "Undo the last build action (%s), refunding what it cost. Ctrl+Z. Only actions taken since the last day ran can be undone." % _undo_stack.back().label
+	else:
+		_undo_button.tooltip_text = "Nothing to undo. Build actions can be undone until the day runs."
 
 func _after_action() -> void:
 	_render_grid()
@@ -1249,6 +1366,9 @@ func _run_day() -> void:
 		_schedule_new_order_reveal()
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
+	# The day has just been paid out against the network as it stood, so nothing
+	# built before it can be handed back for its money any more (BUILD-01).
+	_undo_stack.clear()
 	if _state.auto_run:
 		_advance_day()
 		_show_day_summary(report)
@@ -2346,6 +2466,7 @@ func _update_ui() -> void:
 	_funds_label.text = "§ %d" % roundi(_state.balance)
 	_day_label.text = "Day %d" % _state.day
 	_update_clock_ui()
+	_update_undo_button()
 	if _state.best_grade != "":
 		_best_grade_label.text = _state.best_grade
 		_best_grade_label.add_theme_color_override("font_color", GRADE_COLORS.get(_state.best_grade, Color.WHITE))
@@ -2529,6 +2650,17 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_tool_button(hub_grid, "Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild", "Build a Small Hub on any existing route tile for §%d. Each connected road network supports %d hubs." % [roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), GameBalance.HUB_CAP_PER_NETWORK])
 	_add_tool_button(hub_grid, "Bridge  §%d" % roundi(GameBalance.BRIDGE_BUILD_COST), "bridgeBuild", "Build a Bridge over a straight run of route tile for §%d, so a second route can be drawn straight over it without joining it. §%d/day extra upkeep, the deck costs %.0f× freshness decay to cross, and each connected road network supports %d." % [roundi(GameBalance.BRIDGE_BUILD_COST), roundi(GameBalance.BRIDGE_UPKEEP), GameBalance.BRIDGE_DECK_DECAY_MULT, GameBalance.BRIDGE_CAP_PER_NETWORK])
 	_add_tool_button(hub_grid, "Bulldoze", "remove", "Remove a built tile, along with every connection touching it. A hub, storage or bridge only loses the structure -- the road it was built on stays, at the level it already was, so clearing that too is a second click. No refund.")
+
+	# Full width, and outside the tool grid on purpose: everything in those
+	# grids is a MODE the map then waits for, and Undo is a thing that happens
+	# the moment it is pressed. A ninth two-column cell would have read as a
+	# tenth tool.
+	_undo_button = Button.new()
+	_undo_button.text = "↶  Undo"
+	_undo_button.custom_minimum_size.y = 32
+	_undo_button.pressed.connect(_undo_last)
+	box.add_child(_undo_button)
+	_update_undo_button()
 
 func _build_map_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "MAP")

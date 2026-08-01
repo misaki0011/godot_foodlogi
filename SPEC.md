@@ -254,6 +254,13 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **`validate()` gains the check that would have shipped broken.** A node standing on sea is the obvious failure; a node WALLED IN by it is the one nobody would notice -- it can never be connected while the order book offers lines against it forever, so the run cannot be finished and never says why.
     The dev checks had to move house: their scratch road was laid in exactly this corner, and it is water now. `verify_main._test_sea_is_unbuildable` pins the DIFFERENCE rather than the sea alone -- sea refuses a drag and charges nothing, the river still takes one -- with the treasury asserted either side, since a refusal that silently charged is the bad failure. See §8.4.
 
+73. **The last build can be taken back, until the day it earns.** Every build action was final and none of them refunded, so a road dragged one tile wide of where it was meant to go cost §8 a tile to place and a second gesture to clear, with nothing handed back either way (§4.1). An **Undo** button in the control panel (§10.9) puts the last action back whole -- tiles, connections, treasury and a source's expansion level alike -- and the history keeps up to 30 of them.
+    **Snapshots, not a per-tool inverse.** There are eight build actions and they compose: a sweep is n bulldozes, a bulldoze hands the road back at whatever level it was rather than at dirt, a bridge takes down two deck connections and leaves the road beneath, a hub remembers the paving it covered. An inverse per tool is eight chances to hand back the wrong thing, and the wrong thing here is money. A snapshot of `grid` + `connections` + `balance` + every source's `upgrade_level`, taken before the action, cannot disagree with what the action did -- because it never has to know what that was. It is affordable for the same reason the map is small: region 1 is 21x14, so a whole grid is at most 294 tiny dictionaries.
+    **The rollover clears the history, and that is the rule that keeps it honest.** A day pays out against the network as it stood, so undoing a road *after* it has carried a delivery would refund its cost while the player keeps the income it earned -- an arbitrarily repeatable one, since the same road can be rebuilt and re-sold every day. Undo is for the mistake just made, not for the week just played. It also means Undo never has to reason about `active_orders`, `filled_lines` or a settlement's latched history: nothing it can reach was recorded by a day.
+    **A refused action records nothing.** Every `_push_undo` sits after its action's guards and before its first mutation, so a click that was refused for money, for the wrong tile or for a cap leaves the history alone -- otherwise the first press of Undo would be spent undoing nothing, which is worse than having no Undo at all. For the same reason the button is **disabled** when the history is empty rather than live and apologetic, and its tooltip names what the next press would take back.
+    **Full width, outside the tool grid.** Everything in those two-column grids is a MODE the map then waits for; Undo is a thing that happens when pressed, and a ninth cell in that grid would have read as a tenth tool. Ctrl+Z does the same, for desktop, but the button is the interface -- the game is playable from a phone browser and nothing may depend on a keyboard (§10.7).
+    `verify_main._test_undo` builds and takes back one of each shape -- a drag, a hub over a *paved* tile, a bulldoze, a source expansion -- asserting the grid, the connections and the treasury land back where they started, that a refused build records no step, and that a rollover empties the history. The paved tile is the case a per-tool inverse gets wrong; the treasury is the one it would get wrong expensively. See §10.9.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -2221,6 +2228,7 @@ Top to bottom:
 
 - **Status:** current day and treasury on one row; grade, best score, and 7-day average score as three captioned numbers beneath it (LOOP-01/LOOP-06).
 - **Build tools:** every tool as a short, priced toggle in two columns -- Route §8 / Upgrade, then Normal §80 / Cool §180, then Hub §150 / Bulldoze. The panel is narrow, so a button carries only its name and price; the full explanation is in its tooltip and, once selected, in the bottom hint bar. Each tool now exists exactly once, so there is no shortcut copy to keep in sync.
+- **Undo (added in v0.7 item 73):** one full-width button under the tools, deliberately outside the two-column grid -- every button in that grid selects a *mode*, and this one acts when pressed. Disabled whenever there is nothing to take back. See §10.9.
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
@@ -2252,6 +2260,18 @@ Day runs itself at 0:00
 Directly beneath the panel, an auto-run day posts a **summary card** -- day number, grade and score, profit, average freshness, settlement happiness, plus a personal-best or capacity-blocked line -- which fades on its own after a few seconds. It is non-blocking by design: the auto-run loop can't stop for a dialog every day, so the card carries the headline and the Report button carries the detail.
 
 Like the control panel, this one is usable by mouse or touch and never triggers a tile action underneath it.
+
+### 10.9 Undo (added in v0.7 item 73)
+
+A misplaced build used to be permanent and unrefunded: clearing it cost a second gesture and returned nothing (§4.1). **Undo** takes the last build action back whole, treasury included.
+
+- **What it covers:** every action that changes the board -- a route drag, a bulldoze, a bulldoze or upgrade sweep, a route upgrade, storage, a hub, a bridge, and a source expansion. Up to 30 of them, most recent first.
+- **What it restores:** the tiles, the explicit connections between them, the treasury, and every source's expansion level. A structure hands its road back at the level that road actually was, because the state is restored from a snapshot taken before the action rather than reconstructed by an inverse of it.
+- **What clears it:** the day rollover. The day is paid out against the network as it stood, so a road undone afterwards would be refunded while the income it carried stays -- and the same road could be rebuilt and sold back every day. Undo reaches back to the start of the current day and no further, which is also why it never has to touch the order book.
+- **A refused action records nothing.** A build stopped by its own guards -- no treasury, wrong tile, cap reached -- leaves the history exactly as it was, so the next press of Undo always takes back something the player actually did.
+- **Placement and state:** a full-width button beneath the build tools, disabled when there is nothing to undo, its tooltip naming what the next press would take back. Ctrl+Z is a desktop convenience only; nothing depends on a keyboard (§10.7).
+
+Undo is a *building* control, not a time machine: it never rewinds a simulated day, a delivery, an opened order or a score. Those are the run's history, and the game has no version of undoing them.
 
 ---
 

@@ -249,6 +249,9 @@ func _report() -> void:
 
 	_check_day_clock(state)
 	_check_day_cycle(state)
+	# After the clock checks, because proving the day clears the undo history
+	# means running a day, and those assert the calendar is still on day 1.
+	_test_undo(state)
 
 	var terrain_types_seen := {}
 	for cell in used_cells:
@@ -262,6 +265,113 @@ func _report() -> void:
 	# Garden: everything above still expects the map it started with.
 	_test_source_upgrade()
 	print("verify_main checks passed.")
+
+## BUILD-01: Undo puts the last build action back whole -- tiles, connections,
+## treasury and a source's expansion level alike -- and the day rollover clears
+## the history, so a road can never be sold back after it has already earned.
+##
+## Works on the empty bottom row west of the river (y 13, x 5-7), clear of every
+## node footprint and of the scratch roads the earlier checks left behind, and
+## puts the treasury and the grid back on the way out so the checks after this
+## one still see the map they expect.
+func _test_undo(state: GameState) -> void:
+	# Main's OWN copy of the map: it duplicates the resource at load, so the
+	# NodeData a click reaches is not the one `load()` hands back, and a source
+	# expansion would land on an object this check never looks at.
+	var map_data: MapData = _main.get("_map_data")
+	var a := Vector2i(5, 13)
+	var b := Vector2i(6, 13)
+	var c := Vector2i(7, 13)
+	for cell in [a, b, c]:
+		assert(not state.grid.has(cell), "The undo checks need %s empty to start from" % cell)
+	var saved_balance: float = state.balance
+	var undo_button: Button = _main.get("_undo_button")
+	state.balance = 5000.0
+
+	# Two unestablished route tiles to drag between (ROUTE-14), written
+	# directly so the drag under test is the only action in the history.
+	state.grid[a] = {"kind": "route", "level": "dirt"}
+	state.grid[c] = {"kind": "route", "level": "dirt"}
+	_undo_history().clear()
+	_main.call("_update_ui")
+	assert(undo_button.disabled, "With nothing to undo the button must be disabled, not merely unhelpful")
+
+	var balance_before: float = state.balance
+	var grid_before: int = state.grid.size()
+	_main.call("_set_tool", "route")
+	var path: Array[Vector2i] = [a, b, c]
+	_main.set("_drag_path", path)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "The scratch drag the undo checks build on must be valid")
+	_main.call("_commit_drag")
+	assert(state.grid.has(b) and state.balance < balance_before, "The scratch drag must actually build and charge")
+	assert(_undo_history().size() == 1, "A committed drag must record exactly one undo step")
+	assert(not undo_button.disabled, "The button must come live the moment there is something to undo")
+
+	_main.call("_undo_last")
+	assert(not state.grid.has(b), "Undo must take back every tile the drag built")
+	assert(state.grid.size() == grid_before, "Undo must leave the grid exactly the size it was")
+	assert(not state.has_connection(a, b) and not state.has_connection(b, c), "Undo must take back every connection the drag recorded")
+	assert(is_equal_approx(state.balance, balance_before), "Undo must refund what the drag cost")
+	assert(_undo_history().is_empty(), "Undo must spend the step it used")
+
+	# A refused action records nothing: Undo's first press must never be spent
+	# on a click that did nothing (there is no route tile at `b` to hub).
+	_main.call("_set_tool", "hubBuild")
+	_main.call("_handle_click", b)
+	assert(not state.grid.has(b) and _undo_history().is_empty(), "A refused build must not record an undo step")
+
+	# A structure comes off and hands its road back at the level it really was,
+	# which is the case a per-tool inverse is most likely to get wrong.
+	state.grid[a].level = "paved"
+	var balance_before_hub: float = state.balance
+	_main.call("_handle_click", a)
+	assert(state.grid[a].kind == "hub", "The scratch hub must actually build")
+	_main.call("_undo_last")
+	assert(state.grid[a].kind == "route" and state.grid[a].level == "paved", "Undoing a hub must hand the road back at the level it was")
+	assert(is_equal_approx(state.balance, balance_before_hub), "Undoing a hub must refund it")
+
+	# The other direction: a bulldozed tile comes back, level and all.
+	_main.call("_set_tool", "remove")
+	_main.call("_handle_click", a)
+	assert(not state.grid.has(a), "The scratch bulldoze must actually clear the tile")
+	_main.call("_undo_last")
+	assert(state.grid.has(a) and state.grid[a].level == "paved", "Undo must put a bulldozed tile back exactly as it was")
+
+	# A source expansion lives on NodeData rather than the grid, so it needs
+	# its own line in the snapshot -- and its marker rebuilt, since the yard's
+	# produce models are built from upgrade_level when the marker is spawned.
+	var garden: NodeData = _node_by_id(map_data, "garden")
+	var level_before: int = garden.upgrade_level
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_set_tool", "upgrade")
+	_main.call("_handle_click", garden.grid_position)
+	assert(garden.upgrade_level == level_before + 1, "The scratch expansion must actually happen")
+	_main.call("_undo_last")
+	assert(garden.upgrade_level == level_before, "Undo must take a source's expansion back")
+	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "Undo must refund an expansion")
+
+	# The day pays out against the network as it stood, so the history it
+	# leaves behind is worthless and must not survive the rollover.
+	state.balance = 5000.0
+	_main.call("_set_tool", "remove")
+	_main.call("_handle_click", c)
+	assert(_undo_history().size() == 1, "The pre-rollover bulldoze must record a step")
+	state.day_time_left = 0.01
+	_main.call("_tick_day_clock", 0.05)
+	assert(_undo_history().is_empty(), "A day rollover must clear the undo history")
+	assert(undo_button.disabled, "The button must go dead when the rollover clears the history")
+
+	for cell in [a, b, c]:
+		state.grid.erase(cell)
+		state.remove_connections(cell)
+	state.balance = saved_balance
+	_main.call("_set_tool", "route")
+	_main.call("_after_action")
+	print("Undo (BUILD-01) checks passed.")
+
+func _undo_history() -> Array:
+	return _main.get("_undo_stack")
 
 ## ROUTE-16: every route tile is attributed to the source(s) its network is
 ## explicitly connected to, which is what Main tints the tile by. A road
