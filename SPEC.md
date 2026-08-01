@@ -214,6 +214,14 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The two flourishes stop competing.** Item 57's "a pop outranks a hop" existed because both landed on one render; they now land on different ones, half a second apart, and `_day_just_ran` has been consumed by the time the pop plays. The tie-break stays in the code and in the check as a guard, not as the everyday path.
     **Known limit, stated:** the pop scales the **whole column**, not the new chip alone. A column is one baked texture by design (item 50) -- which is what lets the collapsed and expanded layouts line up exactly -- so per-chip animation would mean splitting it back into separately-positioned billboards and reintroducing the camera-compensation problem that item deleted. The chip is what changed; the column is what moves. `verify_main._test_new_orders_arrive_late` asserts the column is genuinely **shorter** while the order is held (not merely still), that it plays nothing then, that the reveal restores the full column and pops it, and that a second reveal arms nothing -- so a timer firing after an early reveal cannot pop the map twice. See §10.1.
 
+67. **The board becomes a bar of chocolate, and the countryside moves on top of it.** The terrain blocks were chunky cubes with modelled detail baked into every one -- a grass cap, four corner tufts, raised water ripples, cobbles on the paved road -- sitting on a plinth six units deep. Every tile therefore said the same small thing 294 times, and the repetition is what made it read as texture noise rather than as ground.
+    **Tiles are flat plates now** (§8.5): a light coloured top face over a chamfered darker rim, over a full-footprint skirt. Route tiles are built the same way (§4.1), so a road and the ground it crosses are visibly the same kind of object, and the tiers separate by colour -- sand, orange, plum -- rather than by which pattern is stamped on them.
+    **The rim is the grid line, and it has to be colour rather than shading.** Two tiles put their rims together and the seam reads as a dark groove. Letting the chamfer's own shading do that work looked right on desktop and would have failed everywhere else: shadows are desktop-only (§3.6), and with them off a shading-only groove leaves the whole board a single flat green sheet. The skirt is structural for a related reason -- the body is only its full width across a band at its middle, so with nothing full-footprint beneath it the groove between two tiles is a hole the camera sees straight through.
+    **What the tiles gave up, the ground gained.** A tree or a bush now stands on roughly a third of the free plains cells, from four props scattered with a small random yaw, size and offset. Detail moves from *inside* every tile to *on* a minority of them, which is what turns 294 identical squares into countryside.
+    **The breakable part is the bookkeeping, again.** `_render_grid` rebuilds the map on every hover, day and build, so the scatter is a pure function of the cell coordinates rather than a seeded RNG -- anything re-rolled per render makes the forest crawl. Props stand on buildable ground, so the same render hides those on cells in `GameState.grid` and shows the rest; driving it off the whole grid rather than at each build site makes a drag, a sweep, an upgrade and a bulldoze all correct without any of them knowing about it. Nothing grows on a node's footprint or the eight cells around it, since a prop is tall enough to cut across a node's order chips from this camera's fixed angle.
+    **Planters are plum, not the reference art's terracotta.** Red is spoken for on this map (§10.5), and a field of small red dots scattered over open ground reads as a board covered in warnings.
+    **Nothing about placement moved.** A tile's top face still lands on the same surface height everything else is built around (`map_to_local(cell) + (0, 1, 0)`), so markers, road slabs, bridge decks, the established-route overlay and the click-to-cell plane are all untouched; only the *bottom* of a tile changed. See §8.5, §4.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -417,7 +425,7 @@ The day clock also drives the light, so one in-game day is one full sun cycle ra
 - **A stopped clock holds the light.** Pausing, or switching to manual mode, freezes time of day too: the light is the clock, so freezing one freezes the other.
 - **Night stays playable.** Ambient light never drops to zero, so the map, routes and overlays remain readable in the dark; the UI, speech bubbles and route overlay are unshaded and unaffected throughout.
 - **Shadows travel with the sun.** The sun sweeps a full turn over the day (its yaw runs from +78 deg round to -282 deg, the same orientation one turn on, so the sweep never doubles back or snaps at the rollover), and shadow strength rides the same curve: crisp at midday, softer at dawn and dusk, barely there under moonlight. Long raking shadows near sunrise and sunset are the point, so the shadow range is set wide enough to hold them.
-- **Shadows are desktop-only.** A browser hands the page a far smaller GPU budget than a native build, and overrunning it doesn't degrade gracefully -- the browser destroys the WebGL context and the game dies with "WebGL context lost, please reload the page". Shadows are the largest allocation the scene asks for, so the web build runs without them (`DayCycle.shadows_available()`); everything else in the cycle -- sun angle, light colour and energy, sky and ambient tint -- still runs, so a web day still visibly moves from dawn to night. Desktop keeps full-quality shadows: a 4096 map (2048 on native mobile) over a range just wide enough to cover the region from any in-game zoom or pan (70 units), since a wider range spreads the same map over more ground and aliases the grass block's corner tufts into a diagonal hatch.
+- **Shadows are desktop-only.** A browser hands the page a far smaller GPU budget than a native build, and overrunning it doesn't degrade gracefully -- the browser destroys the WebGL context and the game dies with "WebGL context lost, please reload the page". Shadows are the largest allocation the scene asks for, so the web build runs without them (`DayCycle.shadows_available()`); everything else in the cycle -- sun angle, light colour and energy, sky and ambient tint -- still runs, so a web day still visibly moves from dawn to night. Desktop keeps full-quality shadows: a 4096 map (2048 on native mobile) over a range just wide enough to cover the region from any in-game zoom or pan (70 units), since a wider range spreads the same map over more ground and aliases the ground into a diagonal hatch. (A fainter version of that hatch survives on the tile tops at the current range -- shadow acne over one very large coplanar surface -- and predates the flat-tile art of §8.5, which neither caused it nor cures it.)
 - **The clock panel reads the wall-clock time** beside the day number -- "Day 3 - 6:45 pm" -- with the phase name on the line below (§10.8). A day opens at 5:00 am and the clock runs round to 5:00 am again as it rolls over.
 
 ---
@@ -497,15 +505,16 @@ If either check fails, nothing is created and no treasury is deducted.
 ### Route tile visual design (added in v0.4 as directional shapes, replaced with one symmetric mesh per level in v0.5 item 23)
 
 Each route level (Dirt, Paved, Main) renders as a single, radially symmetric
-mesh, the same regardless of a tile's connections, shape, or facing:
+mesh, the same regardless of a tile's connections, shape, or facing. Since
+v0.7 item 67 all three are built exactly like a terrain tile (§8.5) -- a flat
+plate over a chamfered dark rim, so a road and the ground it crosses read as
+the same kind of object -- and the tiers are told apart by colour first:
 
-- **Dirt**: a tan base with a centered square worn-earth patch and four
-  small corner pebbles.
-- **Paved**: a grey base topped with four raised cobblestone pavers (the
-  original design -- this is what the other two levels were brought in
-  line with).
-- **Main**: a dark base with a pale painted cross (both axes, not a single
-  directional line).
+- **Dirt**: a plain sand plate, unmarked.
+- **Paved**: an orange decking plate, split into four panels by a darker
+  seam running across both axes.
+- **Main**: a dark plum plate with a pale painted cross (both axes, not a
+  single directional line).
 
 Because each of these reads identically under any 90-degree rotation, one
 mesh per level covers every route tile everywhere on the map -- a straight
@@ -1632,6 +1641,57 @@ and no bridge -- there is no version of the map where a route gets through it.
 Water says "pay §40 or go around"; blocked ground says "go around". It exists
 so a map can shape an approach rather than merely tax it, which is what makes
 Oldwall's gates (§12.1) a funnel instead of a toll.
+
+### 8.5 Tile art: flat plates and ground vegetation (added in v0.7 item 67)
+
+Every terrain tile is a **flat square plate** -- a bar-of-chocolate board, not
+a field of cubes. A tile is three stacked pieces (see
+`tools/asset_gen/generate_blocks.py`):
+
+| Piece | What it is |
+|---|---|
+| Plate | The light, flat, coloured top face -- the chocolate square itself. Its top lands exactly on the tile surface every other system already assumes. |
+| Body | A chamfered block in the tile's **darker** shade, slightly wider than the plate and slightly shorter, so a dark rim shows all the way round it. |
+| Skirt | A plain, full-footprint block under the body. |
+
+**The rim is the grid line, and it has to be colour.** Two tiles put their
+rims together and the seam reads as a dark groove -- the same job the old
+baked-in border strip did. Deriving the groove from the chamfer's *shading*
+instead would work on desktop and fail everywhere else, because shadows are
+desktop-only (§3.6): with them off, a shading-only groove leaves the whole
+board one flat green sheet. The skirt is likewise structural rather than
+decorative -- the body is only its full width across a band at its middle, so
+without a full-footprint piece beneath it the groove between two tiles would
+be a hole the camera can see straight through.
+
+**A tile carries no modelled detail at all.** The chunky grass cap, the four
+corner tufts and the water's raised ripple ridges are gone; the plate is plain
+colour. What replaces them is **vegetation standing on the ground rather than
+built into it**: a tree or a bush on roughly a third of the free plains cells,
+scattered by `TerrainRenderer`. Four props (a broad round-topped tree, a
+taller slim one, a low bush, and a bush in a planter), each with a small
+random yaw, size and offset.
+
+Three rules keep the scatter from fighting the game:
+
+- **It is a pure function of the cell coordinates.** `_render_grid` rebuilds
+  the map on every hover, day and build, so anything re-rolled per render
+  would make the forest crawl. The same map always grows the same trees in the
+  same places.
+- **A node gets a one-cell clearing.** Nothing grows on a node's footprint or
+  in the eight cells around it. A node marker and its order chips are the most
+  important thing on the board, and a prop is tall enough to cut across one
+  from this camera's fixed angle.
+- **Anything built clears the ground, and bulldozing grows it back.** Props
+  stand on buildable cells, so `_render_grid` hides those on cells in
+  `GameState.grid` and shows the rest. Driving it off the whole grid, rather
+  than at each build site, makes every path that edits a cell -- a drag, a
+  sweep, an upgrade, a bulldoze -- correct without knowing about it.
+
+Planters are **plum, not the reference art's terracotta**. Red is spoken for
+on this map -- an unfilled order, an over-congested tile, a settlement in need
+(§10.5) -- and a field of small red dots scattered over open ground reads as a
+board covered in warnings from the game's own camera height.
 
 ### Terrain example
 

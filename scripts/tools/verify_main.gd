@@ -256,6 +256,7 @@ func _report() -> void:
 		var item_name: String = terrain.mesh_library.get_item_name(item_id)
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
+	_test_ground_vegetation(map_data, terrain, state)
 	# Last, because it spends the treasury and permanently doubles the
 	# Garden: everything above still expects the map it started with.
 	_test_source_upgrade()
@@ -1137,6 +1138,53 @@ func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 ## Grid children currently mid-flourish. Nothing else in GridVisuals is ever
 ## scaled (the route overlay and the bubble columns size themselves by mesh and
 ## viewport instead), so an unexpected one here is a pop that did not clear.
+## TERR-09: the scattered trees and bushes. Four properties, and the first two
+## are the ones that would quietly rot: the scatter must be the SAME on every
+## render (Main rebuilds the grid on each hover, so a re-rolled scatter makes
+## the forest crawl), and it must leave a clearing around every node (a prop is
+## tall enough to cut across a node's order chips). The other two are the
+## contract with building: a prop gets out of the way of what the player
+## builds, and comes back when it is bulldozed.
+func _test_ground_vegetation(map_data: MapData, terrain: GridMap, state: GameState) -> void:
+	var decor: Dictionary = terrain.get("_decor_by_cell")
+	assert(not decor.is_empty(), "The terrain must scatter some vegetation over open ground")
+
+	var blocked := {}
+	for node in map_data.node_placements:
+		for node_cell in node.cells():
+			for dx in range(-1, 2):
+				for dy in range(-1, 2):
+					blocked[node_cell + Vector2i(dx, dy)] = true
+	var eligible := 0
+	for y in range(map_data.grid_size.y):
+		for x in range(map_data.grid_size.x):
+			if map_data.get_terrain(x, y) == GameEnums.TerrainType.PLAINS and not blocked.has(Vector2i(x, y)):
+				eligible += 1
+	for cell in decor:
+		assert(not map_data.is_river(cell.x, cell.y), "Nothing may grow in the river at %s" % cell)
+		assert(not blocked.has(cell), "%s is inside a node's one-cell clearing and must stay bare" % cell)
+	var share := float(decor.size()) / float(maxi(eligible, 1))
+	assert(share > 0.1 and share < 0.6, "Vegetation should dress open ground, not carpet or barely touch it (got %.2f)" % share)
+
+	# The same map must grow the same trees in the same places, however many
+	# times it is rendered.
+	var first := decor.keys()
+	terrain.call("render", map_data)
+	var second: Dictionary = terrain.get("_decor_by_cell")
+	assert(second.size() == first.size(), "A re-render must scatter the same number of props")
+	for cell in first:
+		assert(second.has(cell), "A re-render moved the prop that was on %s" % cell)
+
+	# Building clears the ground under it; bulldozing grows it back.
+	var built_cell: Vector2i = first[0]
+	state.grid[built_cell] = {"kind": "route", "level": "dirt"}
+	_main.call("_render_grid")
+	assert(not (second[built_cell] as Node3D).visible, "A prop must hide under a tile built on its cell")
+	state.grid.erase(built_cell)
+	_main.call("_render_grid")
+	assert((second[built_cell] as Node3D).visible, "Bulldozing a tile must grow its vegetation back")
+	print("Ground vegetation (TERR-09): %d props on %d open cells, stable across renders, clear of every node, hidden under what is built." % [decor.size(), eligible])
+
 func _squashed_nodes() -> Array[Node3D]:
 	var found: Array[Node3D] = []
 	for child in (_main.get_node("GridVisuals") as Node3D).get_children():

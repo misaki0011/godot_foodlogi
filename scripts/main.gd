@@ -43,8 +43,12 @@ const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must 
 ## crosses the river column (TERR-05's automatic water crossing).
 const RIVER_CROSSING_HEIGHT := 0.16
 
-const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
-const RIVER_BRIDGE_COLOR := Color("8FB9D8")
+## Fallback flat-slab colours for a route level whose block scene is missing,
+## and the river crossing's own slab. Kept in step with the tile palette in
+## tools/asset_gen/generate_blocks.py so a fallback never reads as a different
+## art style.
+const ROUTE_LEVEL_COLORS := {"dirt": Color("E9DBB2"), "paved": Color("E8A654"), "main": Color("5C3E60")}
+const RIVER_BRIDGE_COLOR := Color("EFE7D2")
 
 ## ---------- bridge decks ----------
 ## A bridge tile draws its ordinary road block plus a raised deck slab running
@@ -1436,6 +1440,11 @@ func _show_report(r: DayReportData) -> void:
 
 func _render_grid() -> void:
 	_clear_children(_grid_visuals)
+	# The scattered trees and bushes stand on buildable ground, so anything
+	# built has to clear them out of the way -- and bulldozing has to grow them
+	# back. Driving it off the whole grid here, rather than at each build site,
+	# means every path that edits a cell gets it right without knowing about it.
+	_terrain.hide_decor_on(_state.grid)
 	# Both are rebuilt by this render; the markers they point at are about to
 	# be freed, so holding last frame's would be holding freed instances.
 	_columns_by_node.clear()
@@ -1514,8 +1523,8 @@ func _build_cell_visuals(parent: Node3D, pos: Vector2i, cell: Dictionary) -> Dic
 ## height. One motion covers both because each part gets its own amounts.
 ##
 ## The geometry pays for the rest. A road block's own origin sits at its
-## mid-height, so a flattened slab has half its shrink below the grass cap it
-## stands on and the terrain plinth occludes it -- the tile emerges from the
+## mid-height, so a flattened slab has half its shrink below the terrain
+## surface it stands on and the tile body occludes it -- the tile emerges from the
 ## ground with no pivot node to maintain. Markers are authored origin-at-base
 ## (see hub_marker.tscn), so they grow up out of the road instead.
 ##
