@@ -33,16 +33,16 @@ func _report() -> void:
 	var expected_cells: int = map_data.grid_size.x * map_data.grid_size.y
 	print("Terrain cells populated: %d (expected %d for %dx%d)" % [used_cells.size(), expected_cells, map_data.grid_size.x, map_data.grid_size.y])
 	assert(used_cells.size() == expected_cells)
-	# One marker per occupied CELL, not per node (DEV-02): a 2x1 Town and a
-	# 2x2 City each stand on several tiles, and the markers are what show the
-	# player which tiles those are.
-	var expected_markers := 0
-	for node in map_data.node_placements:
-		expected_markers += node.cells().size()
+	# One marker per NODE now, whatever its size. Every node's model is authored
+	# at its footprint's real extent and covers those cells itself -- which is
+	# what DEV-02's one-marker-per-cell rule was standing in for until the art
+	# could do it, and the reason a 2x2 City no longer draws four of anything.
+	var expected_markers: int = map_data.node_placements.size()
 	print("Node markers spawned: %d (expected %d for %d nodes)" % [
 		markers.get_child_count(), expected_markers, map_data.node_placements.size(),
 	])
 	assert(markers.get_child_count() == expected_markers)
+	_test_settlement_markers(map_data, markers, terrain)
 	assert(_main.get_node_or_null("GridVisuals") != null)
 	var ui_root: Control = _main.get_node("UILayer/GameUI")
 	assert(ui_root.mouse_filter == Control.MOUSE_FILTER_IGNORE)
@@ -256,6 +256,8 @@ func _report() -> void:
 		var item_name: String = terrain.mesh_library.get_item_name(item_id)
 		terrain_types_seen[item_name] = terrain_types_seen.get(item_name, 0) + 1
 	print("Block types used: %s" % terrain_types_seen)
+	_test_sea_is_unbuildable(map_data, state, terrain_types_seen)
+	_test_ground_vegetation(map_data, terrain, state)
 	# Last, because it spends the treasury and permanently doubles the
 	# Garden: everything above still expects the map it started with.
 	_test_source_upgrade()
@@ -291,7 +293,10 @@ func _check_route_source_attribution(state: GameState, farm_road: Vector2i, sour
 ## over the deck. Works in an empty corner of the map (column 17, rows 9-13,
 ## clear of every node placement) so nothing here disturbs the earlier checks.
 func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) -> void:
-	var road: Array[Vector2i] = [Vector2i(17, 9), Vector2i(17, 10), Vector2i(17, 11), Vector2i(17, 12), Vector2i(17, 13)]
+	# West of the river and clear of every node: the map's south-east corner,
+	# where these checks used to lay their scratch road, is open sea now
+	# (TERR-10) and nothing can be built on it.
+	var road: Array[Vector2i] = [Vector2i(7, 4), Vector2i(7, 5), Vector2i(7, 6), Vector2i(7, 7), Vector2i(7, 8)]
 	for cell in road:
 		assert(not state.grid.has(cell), "The bridge checks need a clear stretch of map to work in")
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
@@ -332,34 +337,34 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	# Now the crossing route itself: two unfinished stubs either side, dragged
 	# straight over the deck. This is the ONE case where a drag may run over a
 	# cell that already exists.
-	var west := Vector2i(15, 11)
-	var east := Vector2i(19, 11)
+	var west := Vector2i(5, 6)
+	var east := Vector2i(9, 6)
 	for cell in [west, east]:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
-	var across: Array[Vector2i] = [west, Vector2i(16, 11), bridge, Vector2i(18, 11), east]
+	var across: Array[Vector2i] = [west, Vector2i(6, 6), bridge, Vector2i(8, 6), east]
 	_main.set("_drag_path", across)
 	_main.call("_recompute_drag_validity")
 	assert(_main.get("_drag_valid"), "A drag straight over a bridge deck must be valid: %s" % _main.get("_drag_invalid_reason"))
 	var balance_before_cross: float = state.balance
 	_main.call("_commit_drag")
-	assert(state.grid.has(Vector2i(16, 11)) and state.grid.has(Vector2i(18, 11)), "The crossing drag must build the fresh ground either side of the deck")
+	assert(state.grid.has(Vector2i(6, 6)) and state.grid.has(Vector2i(8, 6)), "The crossing drag must build the fresh ground either side of the deck")
 	assert(is_equal_approx(state.balance, balance_before_cross - 2 * GameBalance.ROUTE_BUILD_COST), "A crossing drag pays only for the new tiles, never again for the bridge it crosses")
 
 	# The whole point: two routes through one cell, still two networks.
 	var comp_of := SimulationEngine.road_components(state)
-	assert(comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)] != comp_of[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+	assert(comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)] != comp_of[SimulationEngine.vertex(Vector2i(6, 6), SimulationEngine.LANE_GROUND)],
 		"Two routes crossing at a bridge must stay separate connected networks")
 	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] == comp_of[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)],
 		"A bridge's ground lane belongs to the road running underneath it")
-	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_DECK)] == comp_of[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+	assert(comp_of[SimulationEngine.vertex(bridge, SimulationEngine.LANE_DECK)] == comp_of[SimulationEngine.vertex(Vector2i(6, 6), SimulationEngine.LANE_GROUND)],
 		"A bridge's deck belongs to the route crossing over it")
 
 	# Straight over, or not at all: no turning on the deck, no stopping on it.
-	var turns: Array[Vector2i] = [west, Vector2i(16, 11), bridge, road[3]]
+	var turns: Array[Vector2i] = [west, Vector2i(6, 6), bridge, road[3]]
 	_main.set("_drag_path", turns)
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag must not turn a corner on a bridge deck")
-	var stops: Array[Vector2i] = [west, Vector2i(16, 11), bridge]
+	var stops: Array[Vector2i] = [west, Vector2i(6, 6), bridge]
 	_main.set("_drag_path", stops)
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag must not stop on a bridge deck")
@@ -386,10 +391,10 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	assert(state.grid[bridge].kind == "route", "A bulldozed bridge must leave a route tile")
 	assert(state.grid[bridge].level == "paved", "A bulldozed bridge must hand its road back at the level it was, not reset it to dirt")
 	assert(state.has_connection(bridge, road[1]) and state.has_connection(bridge, road[3]), "The road under a bulldozed bridge must stay connected")
-	assert(not state.has_connection(bridge, Vector2i(16, 11)) and not state.has_connection(bridge, Vector2i(18, 11)),
+	assert(not state.has_connection(bridge, Vector2i(6, 6)) and not state.has_connection(bridge, Vector2i(8, 6)),
 		"Bulldozing a bridge must cut the route that crossed over it, not merge it into the road below")
 	var comp_after := SimulationEngine.road_components(state)
-	assert(comp_after[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] != comp_after[SimulationEngine.vertex(Vector2i(16, 11), SimulationEngine.LANE_GROUND)],
+	assert(comp_after[SimulationEngine.vertex(bridge, SimulationEngine.LANE_GROUND)] != comp_after[SimulationEngine.vertex(Vector2i(6, 6), SimulationEngine.LANE_GROUND)],
 		"The two roads must stay separate networks after the bridge between them is cleared")
 	assert(is_equal_approx(state.balance, balance_before_clear), "Bulldoze must not refund")
 
@@ -443,6 +448,35 @@ func _check_structure_renders_on_its_road(terrain: GridMap, cell: Vector2i) -> v
 	var road_height := 2.0 * (road.position.y - world_pos.y)
 	assert(road_height > 0.0, "The road block under a building must have real height")
 	assert(is_equal_approx(marker.position.y, world_pos.y + road_height), "A building marker must stand on top of its road block, not sink into it")
+	_check_structure_tint(marker)
+
+## The type colour lands on the ROOF alone, and the rest of the building keeps
+## the palette it was authored with.
+##
+## Both halves matter and both would fail silently. `NodeMarker` looks the roof
+## up by the glTF node name `tint`, so renaming it in generate_blocks.py errors
+## nothing -- the marker simply falls back to flattening the whole building to
+## one colour, which is exactly the look this replaced. And the tint itself is
+## load-bearing: it is the only thing separating Normal storage from Cool
+## (MarkerColors.storage_color), so a roof that stopped taking it would make
+## the two indistinguishable.
+func _check_structure_tint(marker: NodeMarker) -> void:
+	var roof: MeshInstance3D = marker.call("_find_mesh_named", marker, NodeMarker.TINT_NODE)
+	assert(roof != null, "a storage or hub must ship a '%s' mesh for its type colour" % NodeMarker.TINT_NODE)
+	assert(roof.material_override != null, "the roof must carry the tint")
+	var untinted := 0
+	for mesh in _meshes_under(marker):
+		if mesh != roof and mesh.material_override == null:
+			untinted += 1
+	assert(untinted > 0, "tinting must not flatten the whole building -- walls, door and trim keep their own colours")
+
+func _meshes_under(node: Node) -> Array[MeshInstance3D]:
+	var out: Array[MeshInstance3D] = []
+	if node is MeshInstance3D:
+		out.append(node)
+	for child in node.get_children():
+		out.append_array(_meshes_under(child))
+	return out
 
 ## ROUTE-15: bulldoze and upgrade also work as a drag, applying to every tile
 ## the sweep crosses. Drives real press/drag/release gestures over two
@@ -1093,24 +1127,22 @@ func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 	var markers: Node3D = _main.get_node("NodeMarkers")
 	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_do_upgrade_source", source)
-	assert(source.upgraded, "the source upgrade must have gone through")
+	assert(source.upgrade_level == 1, "the source upgrade must have gone through")
 	var landed := 0
 	for marker in markers.get_children():
 		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
 			assert(not is_equal_approx(marker.scale.y, 1.0),
-				"an expanded source's markers must land, got scale %s" % marker.scale)
+				"an expanded source's marker must land, got scale %s" % marker.scale)
 			landed += 1
-	assert(landed == source.cells().size(),
-		"every cell of an expanded source must land, got %d of %d" % [landed, source.cells().size()])
+	assert(landed == 1, "an expanded source has one marker over its whole footprint, got %d" % landed)
 	_main.call("_render_grid")
 	for marker in markers.get_children():
 		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_id == source.node_id:
 			assert(not is_equal_approx(marker.scale.y, 1.0),
 				"a re-render must not cancel a source marker's landing -- it is not in GridVisuals")
 			marker.scale = Vector3.ONE
-	source.upgraded = false
-	for food_id in source.produces:
-		source.produces[food_id] /= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
+	source.upgrade_level = 0
+	_main.get_node("NodeMarkers").call("refresh_source", source.node_id)
 
 	# Bulldozing is the inverse, and its copy lives on Effects -- parented to
 	# GridVisuals it would be destroyed by the render that immediately follows.
@@ -1137,6 +1169,204 @@ func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 ## Grid children currently mid-flourish. Nothing else in GridVisuals is ever
 ## scaled (the route overlay and the bubble columns size themselves by mesh and
 ## viewport instead), so an unexpected one here is a pop that did not clear.
+## SETT-05: each settlement draws one bespoke model, sized to its own
+## footprint and centred on it.
+##
+## Two things worth pinning down. A settlement's model must be CENTRED on its
+## footprint, because that is what makes the plaza cover exactly the cells the
+## place blocks -- a City centred on its top-left corner would sit a tile and a
+## half off its own ground. And the marker must be left self-coloured: the
+## shared tint flattens every mesh under "Visual" to one colour, which is right
+## for a hub and would turn a settlement's walls, roofs, plaza and tree all the
+## same red.
+func _test_settlement_markers(map_data: MapData, markers: Node3D, terrain: GridMap) -> void:
+	var seen := {}
+	for marker in markers.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_type == GameEnums.NodeType.SETTLEMENT:
+			assert(not seen.has(marker.node_data.node_id), "%s drew more than one model" % marker.node_data.node_id)
+			seen[marker.node_data.node_id] = marker
+	var by_type := {}
+	for node in map_data.node_placements:
+		if node.node_type != GameEnums.NodeType.SETTLEMENT:
+			continue
+		var marker: NodeMarker = seen.get(node.node_id)
+		assert(marker != null, "%s drew no model at all" % node.node_id)
+		assert(marker.self_coloured, "%s must keep its own palette, not be tinted flat" % node.node_id)
+		var near: Vector3 = terrain.map_to_local(Vector3i(node.grid_position.x, 0, node.grid_position.y))
+		var far_cell := node.far_cell()
+		var far: Vector3 = terrain.map_to_local(Vector3i(far_cell.x, 0, far_cell.y))
+		var want: Vector3 = (near + far) * 0.5 + Vector3(0, 1.0, 0)
+		assert(marker.position.is_equal_approx(want), "%s is not centred on its footprint" % node.node_id)
+		by_type[node.settlement_type] = by_type.get(node.settlement_type, 0) + 1
+	assert(by_type.size() == 3, "the map should exercise all three settlement sizes")
+	_test_windows_light_at_night(seen.values(), markers)
+	print("Settlement models (SETT-05): %d places, one model each, centred on their footprints across %d sizes." % [seen.size(), by_type.size()])
+
+## LOOP-08: the windows come on after dark.
+##
+## The part that would rot silently is the NAME. The panes are found by looking
+## for a mesh called `windows`, which is a glTF node name coming out of
+## generate_blocks.py -- rename it there and nothing errors, the lights simply
+## never come on again. So this asserts a real mesh was found and a real
+## emission landed on it, rather than that the call did not crash.
+func _test_windows_light_at_night(settlements: Array, markers: Node3D) -> void:
+	assert(DayCycle.sample(0.40).window_glow == 0.0, "Nobody has the lights on at midday")
+	assert(DayCycle.sample(0.95).window_glow > DayCycle.sample(0.76).window_glow, "Night must be more lit than sunset")
+	assert(DayCycle.sample(0.0).window_glow == DayCycle.sample(1.0).window_glow, "The glow must be continuous across the day rollover")
+
+	for marker in settlements:
+		marker.set_window_glow(0.0)
+		var mesh: MeshInstance3D = marker.get("_window_mesh")
+		assert(mesh != null, "%s has no '%s' mesh -- the panes cannot be lit" % [marker.node_data.node_id, NodeMarker.WINDOWS_NODE])
+		var material: StandardMaterial3D = mesh.material_override
+		assert(material != null and material.emission_enabled, "%s's panes must carry an emissive material" % marker.node_data.node_id)
+		assert(material.emission_energy_multiplier == 0.0, "%s must be dark by day" % marker.node_data.node_id)
+		marker.set_window_glow(1.0)
+		assert(material.emission_energy_multiplier > 0.0, "%s must be lit at night" % marker.node_data.node_id)
+
+	# Every OTHER marker has no windows and must survive the same sweep -- the
+	# spawner applies the glow to all of them without asking what kind each is.
+	for marker in markers.get_children():
+		if marker is NodeMarker:
+			marker.set_window_glow(1.0)
+
+	# Left as the moment the map is actually at, so nothing downstream inherits
+	# a night this check turned on.
+	_main.call("_apply_day_cycle")
+
+## DEV-03: a source's yard shows one produce model per base unit of output, all
+## the way to the cap.
+##
+## The claim being defended is that THE PILE IS THE SUPPLY FIGURE -- a player
+## reading four carrots off the map is reading four times the authored supply.
+## That holds only while the model count, the supply multiplier and the cap
+## agree, and all three live in different files, so it is asserted at every
+## level rather than at one. The sixth slot is the one that would fail first:
+## SOURCE_UPGRADE_MAX + 1 models have to fit in SourceMarker.SLOTS.
+##
+## Leaves the source at the level it found it, since the caller's own print
+## reports it and the map is shared with the checks that follow.
+func _test_source_models(source: NodeData, state: GameState) -> void:
+	var marker: SourceMarker = _source_marker(source.node_id)
+	assert(marker != null, "%s drew no source marker" % source.node_id)
+	assert(SourceMarker.SLOTS.size() == GameBalance.SOURCE_UPGRADE_MAX + 1,
+		"a source needs a slot for its base model plus every upgrade, got %d for %d" % [
+			SourceMarker.SLOTS.size(), GameBalance.SOURCE_UPGRADE_MAX,
+		])
+	var restore := source.upgrade_level
+	var base: float = source.produces.vegetables
+	for level in range(GameBalance.SOURCE_UPGRADE_MAX + 1):
+		source.upgrade_level = level
+		marker.refresh_produce()
+		assert(marker.produce_count() == level + 1,
+			"level %d must show %d models, got %d" % [level, level + 1, marker.produce_count()])
+		assert(is_equal_approx(source.supply_of("vegetables"), base * (level + 1)),
+			"level %d must supply %d base units" % [level, level + 1])
+	assert(not source.can_upgrade(), "a source at the cap must offer no further upgrade")
+
+	# And the cap is enforced where the money changes hands, not only in
+	# can_upgrade(): a click at the cap must charge nothing.
+	var balance_before := state.balance
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_do_upgrade_source", source)
+	assert(source.upgrade_level == GameBalance.SOURCE_UPGRADE_MAX, "a capped source must not expand again")
+	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "a refused upgrade must not charge")
+	state.balance = balance_before
+
+	source.upgrade_level = restore
+	marker.refresh_produce()
+
+func _source_marker(node_id: String) -> SourceMarker:
+	for marker in (_main.get_node("NodeMarkers") as Node3D).get_children():
+		if marker is SourceMarker and marker.node_data != null and marker.node_data.node_id == node_id:
+			return marker
+	return null
+
+## TERR-10: open sea is a wall, and the river beside it is still a crossing.
+##
+## Those two sitting on one board is the whole risk. They are both water, both
+## drawn as a flat blue plate, and they answer the same gesture in opposite
+## ways -- so the check pins the DIFFERENCE rather than the sea alone: sea
+## refuses a drag and charges nothing, the river still takes one for §40.
+##
+## A refusal that silently charged would be the bad failure, which is why the
+## treasury is asserted either side and not just the grid.
+func _test_sea_is_unbuildable(map_data: MapData, state: GameState, blocks_seen: Dictionary) -> void:
+	var sea := Vector2i(18, 10)
+	assert(map_data.is_sea(sea.x, sea.y), "%s should be the coast south of the Harbor" % sea)
+	assert(not map_data.is_buildable(sea.x, sea.y), "sea must never be buildable")
+	assert(not map_data.is_river(sea.x, sea.y), "sea is not a river cell -- it has no crossing price")
+	assert(map_data.get_terrain(sea.x, sea.y) == GameEnums.TerrainType.SEA)
+	assert(map_data.is_buildable(map_data.river_col, 0), "the river is a crossing, not a wall")
+	assert(blocks_seen.get("Block_Sea", 0) > 0, "the sea must actually draw its own block")
+
+	# A drag that touches sea is refused whole, and costs nothing.
+	var balance_before: float = state.balance
+	var built_before: int = state.grid.size()
+	var into_sea: Array[Vector2i] = [Vector2i(18, 9), sea, Vector2i(18, 11)]
+	_main.set("_drag_path", into_sea)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "a drag onto open sea must be refused")
+	assert("sea" in String(_main.get("_drag_invalid_reason")).to_lower(),
+		"the refusal must say it is the sea, not read as a treasury problem: %s" % _main.get("_drag_invalid_reason"))
+	_main.call("_commit_drag")
+	assert(state.grid.size() == built_before, "a refused sea drag must build nothing")
+	assert(is_equal_approx(state.balance, balance_before), "a refused sea drag must charge nothing")
+	_main.call("_clear_drag_preview")
+
+	# Nothing grows in it either -- the scatter is plains-only.
+	var decor: Dictionary = (_main.get_node("TerrainMap") as GridMap).get("_decor_by_cell")
+	for cell in decor:
+		assert(not map_data.is_sea(cell.x, cell.y), "vegetation must not grow at sea (%s)" % cell)
+	print("Open sea (TERR-10): %d cells, unbuildable at any price, river still crossable." % blocks_seen.get("Block_Sea", 0))
+
+## TERR-09: the scattered trees and bushes. Four properties, and the first two
+## are the ones that would quietly rot: the scatter must be the SAME on every
+## render (Main rebuilds the grid on each hover, so a re-rolled scatter makes
+## the forest crawl), and it must leave a clearing around every node (a prop is
+## tall enough to cut across a node's order chips). The other two are the
+## contract with building: a prop gets out of the way of what the player
+## builds, and comes back when it is bulldozed.
+func _test_ground_vegetation(map_data: MapData, terrain: GridMap, state: GameState) -> void:
+	var decor: Dictionary = terrain.get("_decor_by_cell")
+	assert(not decor.is_empty(), "The terrain must scatter some vegetation over open ground")
+
+	var blocked := {}
+	for node in map_data.node_placements:
+		for node_cell in node.cells():
+			for dx in range(-1, 2):
+				for dy in range(-1, 2):
+					blocked[node_cell + Vector2i(dx, dy)] = true
+	var eligible := 0
+	for y in range(map_data.grid_size.y):
+		for x in range(map_data.grid_size.x):
+			if map_data.get_terrain(x, y) == GameEnums.TerrainType.PLAINS and not blocked.has(Vector2i(x, y)):
+				eligible += 1
+	for cell in decor:
+		assert(not map_data.is_river(cell.x, cell.y), "Nothing may grow in the river at %s" % cell)
+		assert(not blocked.has(cell), "%s is inside a node's one-cell clearing and must stay bare" % cell)
+	var share := float(decor.size()) / float(maxi(eligible, 1))
+	assert(share > 0.1 and share < 0.6, "Vegetation should dress open ground, not carpet or barely touch it (got %.2f)" % share)
+
+	# The same map must grow the same trees in the same places, however many
+	# times it is rendered.
+	var first := decor.keys()
+	terrain.call("render", map_data)
+	var second: Dictionary = terrain.get("_decor_by_cell")
+	assert(second.size() == first.size(), "A re-render must scatter the same number of props")
+	for cell in first:
+		assert(second.has(cell), "A re-render moved the prop that was on %s" % cell)
+
+	# Building clears the ground under it; bulldozing grows it back.
+	var built_cell: Vector2i = first[0]
+	state.grid[built_cell] = {"kind": "route", "level": "dirt"}
+	_main.call("_render_grid")
+	assert(not (second[built_cell] as Node3D).visible, "A prop must hide under a tile built on its cell")
+	state.grid.erase(built_cell)
+	_main.call("_render_grid")
+	assert((second[built_cell] as Node3D).visible, "Bulldozing a tile must grow its vegetation back")
+	print("Ground vegetation (TERR-09): %d props on %d open cells, stable across renders, clear of every node, hidden under what is built." % [decor.size(), eligible])
+
 func _squashed_nodes() -> Array[Node3D]:
 	var found: Array[Node3D] = []
 	for child in (_main.get_node("GridVisuals") as Node3D).get_children():
@@ -1186,29 +1416,35 @@ func _test_source_upgrade() -> void:
 	var footprint := garden.cells()
 	assert(footprint.size() == 2, "A source should stand on 2 tiles, got %d" % footprint.size())
 
-	var supply_before: float = garden.produces.vegetables
+	var base_supply: float = garden.produces.vegetables
 	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_set_tool", "upgrade")
 	_main.call("_handle_click", garden.grid_position)
-	assert(is_equal_approx(garden.produces.vegetables, supply_before * GameBalance.SOURCE_UPGRADE_SUPPLY_MULT), "Upgrading must double output")
+	assert(is_equal_approx(garden.supply_of("vegetables"), base_supply * 2.0), "The first upgrade must double output")
+	assert(is_equal_approx(garden.produces.vegetables, base_supply), "`produces` is the authored BASE and must never be scaled in place")
 	assert(is_equal_approx(state.balance, 0.0), "The upgrade must cost SOURCE_UPGRADE_COST")
 	assert(garden.cells() == footprint, "Upgrading must not move or resize a source")
-	assert(not garden.can_upgrade(), "An expanded source must not offer another upgrade")
+	assert(garden.can_upgrade(), "A source expanded once must still offer the rest of its %d" % GameBalance.SOURCE_UPGRADE_MAX)
 
 	# Tapping the source's OTHER cell must work too -- every cell of a
 	# footprint resolves to the same node (DEV-02).
 	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_handle_click", garden.far_cell())
-	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "A second upgrade must not charge")
+	assert(garden.upgrade_level == 2, "Either cell of a source's footprint must expand it")
+	assert(is_equal_approx(state.balance, 0.0), "The second upgrade must charge like the first")
+
+	_test_source_models(garden, state)
 
 	# The Upgrade tool must still refuse a settlement.
 	var village: NodeData = _node_by_id(map_data, "villageA")
 	assert(not village.can_upgrade(), "A settlement is never upgradeable")
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
 	_main.call("_handle_click", village.grid_position)
 	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "Tapping a settlement with Upgrade must not charge")
 
-	print("Source upgrade (DEV-03): Garden %d -> %d, footprint %s unchanged." % [
-		roundi(supply_before), roundi(garden.produces.vegetables), garden.size,
+	print("Source upgrade (DEV-03): Garden base %d, %d/%d expansions bought -> %d/day, footprint %s unchanged." % [
+		roundi(base_supply), garden.upgrade_level, GameBalance.SOURCE_UPGRADE_MAX,
+		roundi(garden.supply_of("vegetables")), garden.size,
 	])
 	state.balance = saved_balance
 	_main.call("_set_tool", "route")

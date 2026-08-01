@@ -39,12 +39,24 @@ const ROUTE_LEVEL_SCENES := {
 	"main": preload("res://assets/Blocks/glTF/Block_Road_Main.glb"),
 }
 const ROUTE_LEVEL_HEIGHTS := {"dirt": 0.22, "paved": 0.22, "main": 0.24} # must match tools/asset_gen/generate_blocks.py
-## Height of the flat slab drawn instead of a road block where a route tile
-## crosses the river column (TERR-05's automatic water crossing).
-const RIVER_CROSSING_HEIGHT := 0.16
+## Deck height of the viaduct drawn instead of a road block where a route tile
+## crosses the river column (TERR-05's automatic water crossing). Raised from
+## the old flat slab's 0.16 because an arch needs headroom to be an arch: at
+## 0.16 there is no room under the deck for an opening and the "bridge" is a
+## painted strip. Must match RIVER_DECK_TOP in tools/asset_gen/generate_blocks.py.
+const RIVER_CROSSING_HEIGHT := 0.30
+## Legend swatch only -- the sea's own block carries the colour. Mirrors
+## SEA_TOP in tools/asset_gen/generate_blocks.py.
+const SEA_COLOR := Color("3A749E")
+const RIVER_BRIDGE_SCENE := preload("res://assets/Environment/glTF/Bridge_River.glb")
+const BRIDGE_ARCH_SCENE := preload("res://assets/Environment/glTF/Bridge_Arch.glb")
 
-const ROUTE_LEVEL_COLORS := {"dirt": Color("B99A6B"), "paved": Color("9C8F7A"), "main": Color("6E6252")}
-const RIVER_BRIDGE_COLOR := Color("8FB9D8")
+## Fallback flat-slab colours for a route level whose block scene is missing,
+## and the river crossing's own slab. Kept in step with the tile palette in
+## tools/asset_gen/generate_blocks.py so a fallback never reads as a different
+## art style.
+const ROUTE_LEVEL_COLORS := {"dirt": Color("E9DBB2"), "paved": Color("E8A654"), "main": Color("925C28")}
+const RIVER_BRIDGE_COLOR := Color("EFE7D2")
 
 ## ---------- bridge decks ----------
 ## A bridge tile draws its ordinary road block plus a raised deck slab running
@@ -53,13 +65,12 @@ const RIVER_BRIDGE_COLOR := Color("8FB9D8")
 ## the deck sits high enough above the road surface to leave the tile underneath
 ## clearly visible -- the whole point of the structure is that the player can
 ## see two roads there, not one.
+## The height the arch's deck reaches over the middle of its tile, which is
+## what the established-route overlay lifts a crossing lane to. Must match
+## ARCH_PEAK_Y in tools/asset_gen/generate_blocks.py.
 const BRIDGE_DECK_HEIGHT := 0.62
-const BRIDGE_DECK_THICKNESS := 0.14
-const BRIDGE_DECK_WIDTH_RATIO := 0.5 # of the tile, across the deck's axis
-const BRIDGE_RAIL_HEIGHT := 0.22
-const BRIDGE_RAIL_THICKNESS := 0.09
+## Legend swatches only -- the spans carry their own colours now.
 const BRIDGE_DECK_COLOR := Color("C7B79B")
-const BRIDGE_RAIL_COLOR := Color("8A7758")
 const GRADE_COLORS := {"S": Color("C9A227"), "A": Color("5C8A5C"), "B": Color("5B8FA8"), "C": Color("D98E4A"), "D": Color("C4573A")}
 const STORAGE_TOOLS := {"normal": GameEnums.StorageType.NORMAL, "cool": GameEnums.StorageType.COOL}
 const ZOOM_MIN := 14.0
@@ -70,7 +81,7 @@ const PAN_MAP_MARGIN := 10.0 # world units of empty space pannable past the map 
 const HOLD_TO_DRAG_MSEC := 350 # how long a press must hold still before route drawing switches to drag mode
 const TOOL_HINTS := {
 	"route": "Press and hold on a source, a built hub, or an unfinished route tile, then drag over empty ground until you reach a hub, a settlement, or another unfinished route tile, and release to commit the whole path. A route can't cross or reuse an already-established tile.",
-	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it for §300 instead: it doubles its daily output, once.",
+	"upgrade": "Click a Dirt or Paved route tile to upgrade it, or drag across several to upgrade the whole run at once (all or nothing -- the sweep needs to cover its full cost). Click a food source to expand it for §300 instead: each expansion adds one more day's worth of its output, up to 5 times.",
 	"normal": "Click an existing route tile to build Normal Storage there (good for grain, bread).",
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
@@ -567,6 +578,15 @@ func _recompute_drag_validity() -> void:
 		_drag_new_connections.append([prev, cell])
 		if newly_built.has(cell):
 			continue
+		# Open sea is the one terrain with no price at all (TERR-10). The river
+		# beside it IS a §40 crossing, so the message has to say which of the
+		# two this is -- otherwise a refusal reads as a treasury problem and the
+		# player comes back with more money.
+		if not _map_data.is_buildable(cell.x, cell.y):
+			if _drag_invalid_reason == "":
+				_drag_valid = false
+				_drag_invalid_reason = "A route can't be built on open sea -- unlike the river, there's no crossing at any price. Go around."
+			continue
 		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell)
 		if pre_existing:
 			if i == last_index or _crosses_bridge_at(i):
@@ -860,7 +880,7 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 	var n := _node_at(cell)
 	if n:
 		# The Upgrade tool is the one tool that does anything to a node: it
-		# widens a source and doubles its output (DEV-03). This is not the
+		# expands a source by one step (DEV-03). This is not the
 		# discoverability trap the old tap-to-accept offer was -- there the
 		# tap was passive and unprompted, here the player has already picked
 		# a tool that says "upgrade what I touch".
@@ -895,6 +915,9 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 ## tap-to-cycle-shape feature). Tapping just explains that a drag is needed,
 ## whether the cell is empty ground or an already-built tile.
 func _do_tap_route(cell: Vector2i) -> void:
+	if not _map_data.is_buildable(cell.x, cell.y):
+		_show_toast("That's open sea -- no route can be built on it, at any price. The river is the crossing you can pay for.", true)
+		return
 	if not _state.grid.has(cell):
 		_show_toast("Press and hold on a source, a built hub, or an unfinished route tile, then drag here to build and connect a new one.", true)
 		return
@@ -921,18 +944,22 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 	_pending_tile_pops[cell] = {"part": TilePart.ROAD, "delay": 0.0}
 	_show_toast("Upgraded to %s for §%d." % [GameBalance.ROUTE_LEVELS[cell_data.level].label, roundi(cost)])
 
-## Doubles a source's daily output (DEV-03). The footprint does not change --
-## a source already stands on its full 2x1 -- so the only thing this can fail
-## for is money.
+## Expands a source by one step (DEV-03), up to GameBalance.SOURCE_UPGRADE_MAX
+## times. The footprint does not change -- a source already stands on its full
+## 2x1 -- so the only things this can fail for are money and the cap.
 ##
-## Mutates the NodeData, which is safe because Main duplicates the map
-## resource at load; the engine reads supply straight off `produces`, so the
-## bigger output is live on the next simulated day with nothing to thread
-## through, and the source's own bubble reads "0/180" instead of "0/90" as
-## soon as the grid re-renders.
+## Raises `upgrade_level` on the NodeData, which is safe because Main
+## duplicates the map resource at load. Everything that asks what a source
+## makes goes through NodeData.supply_of(), so the bigger output is live on the
+## next simulated day with nothing to thread through, and the source's own chip
+## reads "0/180" where it read "0/90" as soon as the grid re-renders.
+##
+## The source's yard grows a produce model per step (SourceMarker), which is
+## why the marker is refreshed here rather than merely popped: at this point
+## the model it should be showing does not exist yet.
 func _do_upgrade_source(n: NodeData) -> void:
 	if not n.can_upgrade():
-		_show_toast("%s is already expanded." % n.display_name, true)
+		_show_toast("%s is already expanded as far as it goes (%d times)." % [n.display_name, GameBalance.SOURCE_UPGRADE_MAX], true)
 		return
 	var cost := GameBalance.SOURCE_UPGRADE_COST
 	if _state.balance < cost:
@@ -940,16 +967,18 @@ func _do_upgrade_source(n: NodeData) -> void:
 		return
 
 	_state.balance -= cost
-	n.upgraded = true
+	n.upgrade_level += 1
 	var gained := []
 	for food_id in n.produces:
-		n.produces[food_id] *= GameBalance.SOURCE_UPGRADE_SUPPLY_MULT
-		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.produces[food_id])])
+		gained.append("%s %d/day" % [GameBalance.food_types()[food_id].display_name, roundi(n.supply_of(food_id))])
 
+	_node_spawner.refresh_source(n.node_id)
 	_pop_node_markers(n.node_id)
 	_render_grid()
 	_update_ui()
-	_show_toast("%s expanded for §%d — now %s." % [n.display_name, roundi(cost), ", ".join(gained)])
+	var left := GameBalance.SOURCE_UPGRADE_MAX - n.upgrade_level
+	var remaining := " (%d expansion%s left)" % [left, "" if left == 1 else "s"] if left > 0 else " (fully expanded)"
+	_show_toast("%s expanded for §%d — now %s%s." % [n.display_name, roundi(cost), ", ".join(gained), remaining])
 
 func _do_build_storage(cell: Vector2i) -> void:
 	var cell_data = _state.grid.get(cell)
@@ -1190,7 +1219,12 @@ func _day_phase() -> float:
 	return clampf(1.0 - _state.day_time_left / GameBalance.DAY_LENGTH_SEC, 0.0, 1.0)
 
 func _apply_day_cycle() -> void:
-	DayCycle.apply(_day_phase(), _sun, _world_environment.environment)
+	var moment := DayCycle.apply(_day_phase(), _sun, _world_environment.environment)
+	# Settlement windows light up as the sun goes down. Driven from the same
+	# sampled moment as the sun and sky rather than from a clock of their own,
+	# so the lamps can never disagree with the light they are supposed to be
+	# answering.
+	_node_spawner.apply_window_glow(moment.window_glow)
 
 ## Simulates one day, from either the clock hitting zero or the player asking
 ## for it early. Always restarts the clock, so an early run costs the rest of
@@ -1436,6 +1470,11 @@ func _show_report(r: DayReportData) -> void:
 
 func _render_grid() -> void:
 	_clear_children(_grid_visuals)
+	# The scattered trees and bushes stand on buildable ground, so anything
+	# built has to clear them out of the way -- and bulldozing has to grow them
+	# back. Driving it off the whole grid here, rather than at each build site,
+	# means every path that edits a cell gets it right without knowing about it.
+	_terrain.hide_decor_on(_state.grid)
 	# Both are rebuilt by this render; the markers they point at are about to
 	# be freed, so holding last frame's would be holding freed instances.
 	_columns_by_node.clear()
@@ -1514,8 +1553,8 @@ func _build_cell_visuals(parent: Node3D, pos: Vector2i, cell: Dictionary) -> Dic
 ## height. One motion covers both because each part gets its own amounts.
 ##
 ## The geometry pays for the rest. A road block's own origin sits at its
-## mid-height, so a flattened slab has half its shrink below the grass cap it
-## stands on and the terrain plinth occludes it -- the tile emerges from the
+## mid-height, so a flattened slab has half its shrink below the terrain
+## surface it stands on and the tile body occludes it -- the tile emerges from the
 ## ground with no pivot node to maintain. Markers are authored origin-at-base
 ## (see hub_marker.tscn), so they grow up out of the road instead.
 ##
@@ -1837,7 +1876,7 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 	# which is now the only place it lives.
 	var entries: Array = []
 	for food_id in n.produces:
-		var produced: float = n.produces[food_id]
+		var produced: float = n.supply_of(food_id)
 		var used: float = 0.0
 		if status.has(food_id):
 			used = status[food_id].used
@@ -2159,7 +2198,7 @@ func _source_food_color(source_id: String) -> Color:
 func _add_road_surface(parent: Node3D, world_pos: Vector3, pos: Vector2i, level: String) -> Dictionary:
 	if _map_data.is_river(pos.x, pos.y):
 		return {
-			"node": _add_tile_box(parent, world_pos, RIVER_BRIDGE_COLOR, RIVER_CROSSING_HEIGHT),
+			"node": _add_river_bridge(parent, world_pos, pos),
 			"height": RIVER_CROSSING_HEIGHT,
 		}
 	return {
@@ -2167,34 +2206,54 @@ func _add_road_surface(parent: Node3D, world_pos: Vector3, pos: Vector2i, level:
 		"height": ROUTE_LEVEL_HEIGHTS.get(level, 0.22),
 	}
 
-## The raised deck of a bridge tile: a slab spanning the full cell along the
-## deck's own axis (so it meets the road on either side rather than stopping
-## short), narrowed across that axis and flanked by two rails, which is what
-## makes it read as a crossing rather than a floating block from the fixed
-## isometric camera. The road it crosses is drawn normally underneath and stays
-## visible on both sides of the slab.
+## The arched span of a bridge tile: a deck that springs from the tile edge,
+## rises over the middle, and comes down on the far side, with rails following
+## the arc.
 ##
-## Slab and rails hang off one container node placed at the deck's own centre,
-## with their offsets expressed relative to it, so the deck can be scaled as a
-## single object (_pop_construction) about the point it should pivot on. Positioning
-## them absolutely under a container at the world origin would draw identically
-## and scale catastrophically.
+## An arch rather than the flat slab this replaces, and the difference is not
+## only decorative -- a slab floating at one height reads as a block parked in
+## mid-air, while a span that rises out of the ground reads as something
+## crossing. The belly is deliberately left open: a bridge tile keeps its own
+## road underneath and the whole point of the structure is that the player can
+## see TWO roads there, so a filled arch would hide the one it is advertising.
+##
+## The model is authored along +X with its origin on the road surface, so the
+## quarter turn below is the only thing a Z-running deck needs, and _pop
+## _construction scales it about its own base -- it grows up out of the road
+## rather than inflating around its middle.
 func _add_bridge_deck(parent: Node3D, pos: Vector3, axis: Vector2i) -> Node3D:
-	var along := Vector3(1.0, 0.0, 0.0) if axis.x != 0 else Vector3(0.0, 0.0, 1.0)
-	var across := Vector3(0.0, 0.0, 1.0) if axis.x != 0 else Vector3(1.0, 0.0, 0.0)
-	var length: float = _terrain.cell_size.x if axis.x != 0 else _terrain.cell_size.z
-	var span: float = _terrain.cell_size.z if axis.x != 0 else _terrain.cell_size.x
-	var width: float = span * BRIDGE_DECK_WIDTH_RATIO
-	var deck := Node3D.new()
+	var deck: Node3D = BRIDGE_ARCH_SCENE.instantiate()
 	deck.name = "BridgeDeck"
 	parent.add_child(deck)
-	deck.position = pos + Vector3(0.0, BRIDGE_DECK_HEIGHT, 0.0)
-	_add_box(deck, Vector3.ZERO, along * length + across * width + Vector3(0.0, BRIDGE_DECK_THICKNESS, 0.0), BRIDGE_DECK_COLOR)
-	var rail_size := along * length + across * BRIDGE_RAIL_THICKNESS + Vector3(0.0, BRIDGE_RAIL_HEIGHT, 0.0)
-	var rail_y := Vector3(0.0, (BRIDGE_DECK_THICKNESS + BRIDGE_RAIL_HEIGHT) * 0.5, 0.0)
-	for side in [1.0, -1.0]:
-		_add_box(deck, across * (width * 0.5 * side) + rail_y, rail_size, BRIDGE_RAIL_COLOR)
+	deck.position = pos
+	if axis.x == 0:
+		deck.rotation.y = PI / 2
 	return deck
+
+## The river crossing: a stone viaduct on two arched openings (TERR-05).
+##
+## Automatic rather than placed, and it IS the road for that tile -- which is
+## why its deck is flat and cream, continuous with the tiles either side, where
+## the placed bridge above arches. What makes it architectural is underneath.
+func _add_river_bridge(parent: Node3D, world_pos: Vector3, pos: Vector2i) -> Node3D:
+	var span: Node3D = RIVER_BRIDGE_SCENE.instantiate()
+	parent.add_child(span)
+	span.position = world_pos
+	if _river_crossing_axis(pos).x == 0:
+		span.rotation.y = PI / 2
+	return span
+
+## Which way a river crossing runs, so the viaduct can be laid along it.
+##
+## Read off the tile's own connections rather than assumed east-west: the river
+## is a column today, so a crossing almost always runs across it, but a route
+## may perfectly well be drawn ALONG the column, and a viaduct laid broadside
+## to its own road would read as a wall. Falls back to east-west for a tile
+## with nothing connected yet, which is the crossing the map is shaped for.
+func _river_crossing_axis(cell: Vector2i) -> Vector2i:
+	var horizontal := _state.has_connection(cell, cell + Vector2i(1, 0)) or _state.has_connection(cell, cell + Vector2i(-1, 0))
+	var vertical := _state.has_connection(cell, cell + Vector2i(0, 1)) or _state.has_connection(cell, cell + Vector2i(0, -1))
+	return Vector2i(0, 1) if vertical and not horizontal else Vector2i(1, 0)
 
 func _add_box(parent: Node3D, center: Vector3, size: Vector3, color: Color) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
@@ -2456,7 +2515,7 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "ROUTES")
 	var route_grid := _add_tool_grid(box)
 	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.RIVER_BRIDGE_COST)])
-	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d) or Paved to Main (§%d); a food source to double its output (§%d)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), roundi(GameBalance.SOURCE_UPGRADE_COST)])
+	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d) or Paved to Main (§%d); a food source to expand it, up to %d times (§%d each)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), GameBalance.SOURCE_UPGRADE_MAX, roundi(GameBalance.SOURCE_UPGRADE_COST)])
 
 	_add_section_title(box, "STORAGE")
 	var storage_grid := _add_tool_grid(box)
@@ -2543,6 +2602,7 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
 	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
 	_add_legend_row(_legend_box, RIVER_BRIDGE_COLOR, "River / river crossing")
+	_add_legend_row(_legend_box, SEA_COLOR, "Open sea -- no route, at any price")
 	_add_legend_row(_legend_box, BRIDGE_DECK_COLOR, "Bridge deck -- routes cross, never join")
 
 	# Which delivery line belongs to which supply (ROUTE-16). Built from the

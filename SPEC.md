@@ -214,6 +214,46 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The two flourishes stop competing.** Item 57's "a pop outranks a hop" existed because both landed on one render; they now land on different ones, half a second apart, and `_day_just_ran` has been consumed by the time the pop plays. The tie-break stays in the code and in the check as a guard, not as the everyday path.
     **Known limit, stated:** the pop scales the **whole column**, not the new chip alone. A column is one baked texture by design (item 50) -- which is what lets the collapsed and expanded layouts line up exactly -- so per-chip animation would mean splitting it back into separately-positioned billboards and reintroducing the camera-compensation problem that item deleted. The chip is what changed; the column is what moves. `verify_main._test_new_orders_arrive_late` asserts the column is genuinely **shorter** while the order is held (not merely still), that it plays nothing then, that the reveal restores the full column and pops it, and that a second reveal arms nothing -- so a timer firing after an early reveal cannot pop the map twice. See §10.1.
 
+67. **The board becomes a bar of chocolate, and the countryside moves on top of it.** The terrain blocks were chunky cubes with modelled detail baked into every one -- a grass cap, four corner tufts, raised water ripples, cobbles on the paved road -- sitting on a plinth six units deep. Every tile therefore said the same small thing 294 times, and the repetition is what made it read as texture noise rather than as ground.
+    **Tiles are flat plates now** (§8.5): a light coloured top face over a chamfered darker rim, over a full-footprint skirt. Route tiles are built the same way (§4.1), so a road and the ground it crosses are visibly the same kind of object, and the tiers separate by colour -- sand, orange, umber -- rather than by which pattern is stamped on them, with Main reusing Paved's deck a long way down the value ramp rather than carrying a design of its own.
+    **The rim is the grid line, and it has to be colour rather than shading.** Two tiles put their rims together and the seam reads as a dark groove. Letting the chamfer's own shading do that work looked right on desktop and would have failed everywhere else: shadows are desktop-only (§3.6), and with them off a shading-only groove leaves the whole board a single flat green sheet. The skirt is structural for a related reason -- the body is only its full width across a band at its middle, so with nothing full-footprint beneath it the groove between two tiles is a hole the camera sees straight through.
+    **What the tiles gave up, the ground gained.** A tree or a bush now stands on roughly a third of the free plains cells, from four props -- two trees, and two bushes that are rounded blocks sitting straight on the grass, one square and one rectangular, with leaves sprouting out of the top and nothing underneath them. Detail moves from *inside* every tile to *on* a minority of them, which is what turns 294 identical squares into countryside.
+    **The breakable part is the bookkeeping, again.** `_render_grid` rebuilds the map on every hover, day and build, so the scatter is a pure function of the cell coordinates rather than a seeded RNG -- anything re-rolled per render makes the forest crawl. Props stand on buildable ground, so the same render hides those on cells in `GameState.grid` and shows the rest; driving it off the whole grid rather than at each build site makes a drag, a sweep, an upgrade and a bulldoze all correct without any of them knowing about it. Nothing grows on a node's footprint or the eight cells around it, since a prop is tall enough to cut across a node's order chips from this camera's fixed angle.
+    **Nothing about placement moved.** A tile's top face still lands on the same surface height everything else is built around (`map_to_local(cell) + (0, 1, 0)`), so markers, road slabs, bridge decks, the established-route overlay and the click-to-cell plane are all untouched; only the *bottom* of a tile changed. See §8.5, §4.1.
+
+68. **A settlement looks like the place it is.** Every source and settlement was a coloured ball on a pole, and item 41 made a multi-tile place read as bigger by stamping that same pole on every cell it covered -- honest about the footprint, but it drew a City as four identical markers and named bespoke meshes as the follow-up. This is that follow-up.
+    **Three models, one per size** (§10.1): a Village is one house and a tree on 1x1, a Town three houses on 2x1, a City three houses in front of three taller blocks on 2x2 -- the City's front row being the Town's own row, so a City reads as a Town that grew. Each stands on a rounded stone plaza covering its whole footprint, which is what still tells the player those cells are unbuildable -- the model is now footprint-sized, so it can be a single marker rather than N copies. Sources keep one crate per cell, since a crate IS the unit their footprint is measured in.
+    **Roofs stay the settlement red**, so the map does not lose the colour that means "somewhere food goes". That needs an opt-out from the shared marker tint, which flattens everything under a marker's `Visual` to one colour -- correct for a hub, and it would turn walls, roofs, plaza and tree all the same red. `NodeMarker.self_coloured` is that opt-out.
+    **Everything visible is on the +Z face.** The camera is pitched down 60 degrees looking along -Z, so +Z is the only wall of any building it ever sees: every house's door and every City block's windows go there. A window grid's rows come out of the building's own height rather than being authored per block, so storeys stay one size across three towers of different heights -- otherwise they read as one block scaled three ways. The blocks are near-white for the same reason the plaza is grey: pitched near the plaza's own stone they merge into the ground they stand on.
+    **Two numbers the models are authored against.** Nothing exceeds 1.7 world units, because a settlement's chips are bottom-anchored 3.1 above the surface and grow upward, so a taller building eats the column that says what the place wants. And the plaza is a neutral grey rather than a warm sand, which would read as the Dirt route tile arriving at the door.
+    `verify_main._test_settlement_markers` asserts one model per settlement, centred on its footprint, self-coloured, across all three sizes -- centring being the one that would fail silently, since a City centred on its top-left corner would sit a tile and a half off its own ground. See §10.1, §0.41.
+
+69. **The lights come on.** Two changes to the settlement models, and the second is the point of the first. Every house gains a **window beside its door** -- offset rather than symmetric about the middle, since symmetry reads as two doors or two windows at a distance where neither shape resolves, while an offset pair reads as a frontage. And every pane in the game, on houses and on City blocks alike, now **lights up at night**: at 11pm the settlements are the only warm lights on a dark board, and a player can see where the places are without reading a label.
+    **`window_glow` is authored per keyframe, not derived from the sun.** "Are the lights on" is a different question from "how bright is the sun": lamps come on at dusk while there is still plenty of light, and stay on into a dawn that is already brightening. Deriving one from the other would have made the lights fade in exactly as the sun faded out, which is the one thing they do not do. Living in `DayCycle` beside the sun angle and sky tint also keeps it assertable without a scene, and `apply()` now hands its sampled moment back so Main does not sample the same phase twice a frame.
+    **The panes are their own glTF geometry.** A settlement exports as two NAMED meshes, `body` and `windows`, so Godot imports the panes as a MeshInstance3D of their own and `NodeMarker` can find them. Merged into the walls they could not glow without the walls glowing too. Everything else in the pipeline exports as one merged mesh; a settlement is the only thing needing a part of itself addressable later. The lookup is by node NAME, which is the part that would rot silently -- rename it in `generate_blocks.py` and nothing errors, the lights simply never come on again -- so the check asserts a real mesh was found and a real emission landed on it.
+    **Emission, not a light source.** Five settlements' worth of `OmniLight3D`s would be five more lights for what is the compatibility renderer on a phone browser, lighting nothing but themselves. The pane is a saturated amber at a modest multiplier rather than a pale cream at a big one: emission is added to the lit colour and then clipped, so a near-white lamp pushed hard clips on all three channels and the window comes out white -- a hole in the wall rather than a light on. Unlike shadows this is not desktop-only; it is emission on a mesh that already exists, so a web night is lit too. See §10.1, §3.6.
+
+70. **A source is a yard with its produce standing on it, and it can be expanded five times.** Sources were two identical crates -- item 41's one-marker-per-cell stand-in, the last of it left in the game -- and could be upgraded exactly once.
+    **Five steps, linear.** §300 now buys one BASE unit of daily output, up to `SOURCE_UPGRADE_MAX` (5) times, so a source ramps 1x, 2x, 3x ... 6x. The first upgrade is still the doubling the tool has always promised. Five *doublings* would put a maxed Garden at 32x its authored 90/day against a region that demands 110 -- a number running away rather than a decision the player is making -- and each §300 buying the same absolute amount is the only version a player can price without doing algebra. The cost does not escalate and does not need to: a source already out-supplying every line it feeds earns nothing from its next upgrade, so the back half of the ramp is headroom rather than a purchase anyone makes today.
+    **`produces` stops being mutated.** It is the authored base now, read through `NodeData.supply_of()`. Scaling the dictionary in place worked at one upgrade and breaks at five: the base becomes unrecoverable, and every later step would be derived from an already-scaled number.
+    **The pile is the supply figure.** A source is a 2x1 yard carrying one produce model per base unit of output, so a Garden showing four carrots is making four times its authored supply and a player can read that off the map without opening anything. It holds only while the model count, the supply multiplier and the cap agree -- three numbers in three files -- so the yard has exactly `SOURCE_UPGRADE_MAX + 1` slots and the check asserts all three at every level.
+    **The produce is the chip glyphs in three dimensions.** `FoodGlyphs`' rule is that shape carries a food's identity and the same silhouette appears everywhere the food does, so the mark on a settlement's chip is the mark on the source that fills it -- and the carrot is green rather than orange for exactly that reason. They are stylised glyphs made physical rather than props at life scale: each is blown up to fill its slot, because a realistically-sized loaf on a 2x1 yard is a dot from the game camera, which is the same failure the flat glyphs hit at strip size.
+    With sources joining settlements at one marker per node, **every node on the map now draws exactly one**. See §4.7, §10.1, §0.41.
+
+71. **Everything the player builds gets a model.** Storage was a wooden chest, a hub was two stacked cones, a placed bridge was a floating slab and a river crossing was a coloured rectangle -- the last four things on the map still drawn from primitives.
+    **Storage is a warehouse and a hub is a depot**, and both had to solve the same problem: their tint is load-bearing, since it is the only thing separating Normal storage from Cool (`MarkerColors.storage_color`), so unlike a settlement they cannot simply carry their own palette. They ship as two named glTF geometries instead -- `body` keeps what was authored, `tint` is the one mesh `NodeMarker` recolours -- and the tinted mesh is the ROOF, because the camera is pitched down 60 degrees and a roof is the largest surface of a small building it can see. Tinting the walls would put the type colour on the sliver that is edge-on to the player. The hub is round where a storage is square, so the two are separable at a glance before the colour is read at all.
+    **The placed bridge is an arch** (§4.1). A flat slab floating at one height reads as a block parked in mid-air; a span that springs from the tile edge and rises over the middle reads as something crossing. The belly stays open, since the point of the structure is that the player can see two roads on that tile.
+    **The first version of it looked broken, and the fix was to make the arch SMALLER.** The instinct was that a shallow arc foreshortens into a plank from a 60-degree camera, so the peak went up -- but the deck is built from straight segments, and a tall rise puts the end ones at forty-odd degrees against flat ground, which reads as snapped rather than arched. Worse, the profile was a parabola, which arrives at the ground at the steepest slope of the whole span -- exactly where a kink shows most. It is a raised cosine now, flat at both ends as well as at the peak, over a modest rise, with `BRIDGE_DECK_HEIGHT` back at 0.62 (the height the established-route overlay lifts a crossing lane to). What carries the arch instead is **planking and railings**: cross-planks say "walkable timber span" at any pitch where a smooth deck says nothing, and the rails stand proud of the deck along both edges, drawing the curve twice in silhouette. The deck also went from pale stone to warm timber, since against an orange Paved tile the only thing separating the two was brightness and it read as a blank panel laid on the road.
+    **The river crossing is a stone viaduct** (§8.2) on two arched openings, with a balustrade down each side. Opposite decision from the arch: this one IS the road for its tile, so its deck stays flat and cream and continuous with the road either side, and everything architectural is underneath. `RIVER_CROSSING_HEIGHT` rises from 0.16 to 0.30 because an arch needs headroom to be an arch -- at 0.16 there is no room under the deck for an opening and the "bridge" is a painted strip. It is laid along the crossing's own axis, read off the tile's connections rather than assumed east-west, since a route may perfectly well run ALONG the river column and a viaduct broadside to its own road reads as a wall.
+    `verify_main._check_structure_tint` asserts the roof takes the type colour AND that the rest of the building does not -- both halves fail silently otherwise, since the roof is found by glTF node name and a miss falls back to flattening the whole building, which is exactly the look this replaced. See §4.1, §8.2.
+
+72. **The map gets a coastline, and it is a wall rather than a toll.** The south-east corner is open sea now (§8.4): no route may be built on it at any price, so it is a shape the player routes AROUND where the river is one they pay §40 to get through.
+    **Two kinds of water on one board is the whole risk.** They are both flat blue plates and they answer the same gesture in opposite ways, so the difference has to survive being seen small and in passing -- the sea is a long way DARKER, with its swell running on the diagonal rather than in a channel's neat bands, because a paler strip with two banks invites a crossing and deep water does not. The refusal message names the sea specifically for the same reason: a bare "can't build here" reads as a treasury problem, and the player comes back with more money.
+    **The coast is placed so the Harbor stands on it.** (18, 9) was inland; it is on the water's edge now, which is where a harbor belongs and which starts the seafood run at the shore.
+    **Authored as rectangles, not a cell list.** A coastline is a region, and forty `Vector2i` in a `.tres` is neither readable nor editable by hand. Stop-gap for the same data TERR-06's per-cell grid will hold.
+    **`validate()` gains the check that would have shipped broken.** A node standing on sea is the obvious failure; a node WALLED IN by it is the one nobody would notice -- it can never be connected while the order book offers lines against it forever, so the run cannot be finished and never says why.
+    The dev checks had to move house: their scratch road was laid in exactly this corner, and it is water now. `verify_main._test_sea_is_unbuildable` pins the DIFFERENCE rather than the sea alone -- sea refuses a drag and charges nothing, the river still takes one -- with the treasury asserted either side, since a refusal that silently charged is the bad failure. See §8.4.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -417,7 +457,14 @@ The day clock also drives the light, so one in-game day is one full sun cycle ra
 - **A stopped clock holds the light.** Pausing, or switching to manual mode, freezes time of day too: the light is the clock, so freezing one freezes the other.
 - **Night stays playable.** Ambient light never drops to zero, so the map, routes and overlays remain readable in the dark; the UI, speech bubbles and route overlay are unshaded and unaffected throughout.
 - **Shadows travel with the sun.** The sun sweeps a full turn over the day (its yaw runs from +78 deg round to -282 deg, the same orientation one turn on, so the sweep never doubles back or snaps at the rollover), and shadow strength rides the same curve: crisp at midday, softer at dawn and dusk, barely there under moonlight. Long raking shadows near sunrise and sunset are the point, so the shadow range is set wide enough to hold them.
-- **Shadows are desktop-only.** A browser hands the page a far smaller GPU budget than a native build, and overrunning it doesn't degrade gracefully -- the browser destroys the WebGL context and the game dies with "WebGL context lost, please reload the page". Shadows are the largest allocation the scene asks for, so the web build runs without them (`DayCycle.shadows_available()`); everything else in the cycle -- sun angle, light colour and energy, sky and ambient tint -- still runs, so a web day still visibly moves from dawn to night. Desktop keeps full-quality shadows: a 4096 map (2048 on native mobile) over a range just wide enough to cover the region from any in-game zoom or pan (70 units), since a wider range spreads the same map over more ground and aliases the grass block's corner tufts into a diagonal hatch.
+- **Shadows are desktop-only.** A browser hands the page a far smaller GPU budget than a native build, and overrunning it doesn't degrade gracefully -- the browser destroys the WebGL context and the game dies with "WebGL context lost, please reload the page". Shadows are the largest allocation the scene asks for, so the web build runs without them (`DayCycle.shadows_available()`); everything else in the cycle -- sun angle, light colour and energy, sky and ambient tint -- still runs, so a web day still visibly moves from dawn to night. Desktop keeps full-quality shadows: a 4096 map (2048 on native mobile) over a range just wide enough to cover the region from any in-game zoom or pan (70 units), since a wider range spreads the same map over more ground and aliases the ground into a diagonal hatch. (A fainter version of that hatch survives on the tile tops at the current range -- shadow acne over one very large coplanar surface -- and predates the flat-tile art of §8.5, which neither caused it nor cures it.)
+- **Settlement windows come on after dark.** The same sampled moment that
+  drives the sun and sky carries a `window_glow`, which lights every
+  settlement's panes (§10.1). It is authored per keyframe rather than derived
+  from the sun's energy, because lamps come on at dusk while there is still
+  light and stay on into a brightening dawn. Unlike shadows this is not a
+  desktop-only luxury -- it is emission on a mesh that already exists, so a web
+  night is lit too.
 - **The clock panel reads the wall-clock time** beside the day number -- "Day 3 - 6:45 pm" -- with the phase name on the line below (§10.8). A day opens at 5:00 am and the clock runs round to 5:00 am again as it rolls over.
 
 ---
@@ -497,15 +544,22 @@ If either check fails, nothing is created and no treasury is deducted.
 ### Route tile visual design (added in v0.4 as directional shapes, replaced with one symmetric mesh per level in v0.5 item 23)
 
 Each route level (Dirt, Paved, Main) renders as a single, radially symmetric
-mesh, the same regardless of a tile's connections, shape, or facing:
+mesh, the same regardless of a tile's connections, shape, or facing. Since
+v0.7 item 67 all three are built exactly like a terrain tile (§8.5) -- a flat
+plate over a chamfered dark rim, so a road and the ground it crosses read as
+the same kind of object -- and the tiers are told apart by colour first:
 
-- **Dirt**: a tan base with a centered square worn-earth patch and four
-  small corner pebbles.
-- **Paved**: a grey base topped with four raised cobblestone pavers (the
-  original design -- this is what the other two levels were brought in
-  line with).
-- **Main**: a dark base with a pale painted cross (both axes, not a single
-  directional line).
+- **Dirt**: a plain sand plate, unmarked.
+- **Paved**: an orange decking plate, split into four panels by a darker
+  seam running across both axes.
+- **Main**: the Paved deck again, in dark umber.
+
+Main deliberately reuses Paved's shape rather than carrying a design of its
+own. The tiers are told apart by **value** -- pale sand, mid orange, dark
+umber -- and one deck getting darker reads as a single road becoming more
+built-up, where three unrelated surfaces read as three different materials.
+It also keeps the top tier rotation-agnostic for free, which the painted
+cross it replaces had to arrange for itself.
 
 Because each of these reads identically under any 90-degree rotation, one
 mesh per level covers every route tile everywhere on the map -- a straight
@@ -588,9 +642,32 @@ is a structure the player pays for and places deliberately: a **bridge**.
 A bridge is not drawn as part of a route drag. It is a **placed structure**,
 built with its own tool onto **one existing route tile**, the way a hub is
 (§4.4). It turns that tile into a road-over-road crossing: the road already
-there keeps running underneath, and a raised deck spans it at right angles. A
-later drag may then run **straight over the deck**, and the two routes share
-that cell without ever becoming one network.
+there keeps running underneath, and an **arched span** crosses it at right
+angles. A later drag may then run **straight over the deck**, and the two
+routes share that cell without ever becoming one network.
+
+**Why an arch** (v0.7 item 71). The span used to be a flat slab floating at
+one height, which reads as a block parked in mid-air; a deck that springs from
+the tile edge, rises over the middle and comes down the far side reads as
+something *crossing*. Its belly stays open, because the whole point of the
+structure is that the player can see two roads on that tile -- a filled arch
+would hide the one it exists to advertise.
+
+**What makes an arch read from directly above is not the arch.** The rise is
+deliberately modest, and two things about this camera are why. The span cannot
+spring from much lower than it does -- it sits on the road surface and a route
+plate is 0.22 thick, so a lower start is buried in the road it is meant to be
+crossing. And a *steeper* hump does not help: the deck is built from straight
+segments, so a tall rise puts the end ones at forty-odd degrees against flat
+ground and the span reads as **snapped rather than arched**. The profile is a
+raised cosine rather than the obvious parabola for the same reason -- a
+parabola arrives at the ground at its steepest slope of the whole span, which
+is precisely where a kink is most visible.
+
+What actually carries it is the **planking and the railings**: cross-planks
+say "walkable timber span" at any camera pitch where a smooth deck says
+nothing, and the railings stand proud of the deck along both edges, drawing
+the curve twice in silhouette against whatever is underneath.
 
 Making it a placed structure rather than an automatic side effect of a drag is
 the point. A crossing becomes a purchase the player decides on and can see on
@@ -1077,6 +1154,58 @@ Suggested rule:
 ```text
 Food starts at 100% freshness unless the source has a special modifier.
 ```
+
+### Expanding a source (DEV-03, extended to five steps in v0.7 item 70)
+
+The **Upgrade tool** works on a food source as well as a route: §300 adds one
+BASE unit of daily output, up to `GameBalance.SOURCE_UPGRADE_MAX` (5) times, so
+a source ramps 1x, 2x, 3x ... 6x its authored supply. The footprint never
+changes -- a source stands on its full 2x1 from day 1 -- so the only things an
+upgrade can fail for are money and the cap.
+
+**Linear, not compounding.** The first upgrade is still the doubling the tool
+has always promised, but five *doublings* would put a maxed Garden at 32x its
+authored 90/day against a region that demands 110. That is a number running
+away rather than a decision the player is making. Each §300 buying the same
+absolute amount is also the only version a player can price without doing
+algebra.
+
+**The cost does not escalate, and does not need to.** The treasury and the
+region's own demand do the limiting: a source already out-supplying every line
+it feeds earns nothing from its next upgrade, so the back half of the ramp is
+headroom for a bigger region rather than a purchase anyone makes today.
+
+**`produces` is the authored base and is never scaled in place.** Everything
+that asks what a source makes goes through `NodeData.supply_of()` /
+`daily_supply()`. Mutating the dictionary worked while there was exactly one
+upgrade and stops working at five, because the base becomes unrecoverable and
+every later step would have to be derived from an already-scaled number.
+
+### The yard, and why the pile IS the supply figure (added in v0.7 item 70)
+
+A source is drawn as a 2x1 **yard** -- the same rounded plaza a settlement
+stands on (§10.1) -- carrying **one produce model per base unit of output**:
+one to begin with, and one more for every upgrade bought. So a Garden showing
+four carrots is producing four times what the map authored, and a player can
+read a source's output off the map without opening anything.
+
+That reading only holds while the model count, the supply multiplier and the
+cap agree, and the three live in different files -- so the yard has exactly
+`SOURCE_UPGRADE_MAX + 1` slots and the dev check asserts all three at every
+level rather than at one.
+
+The produce models are **the chip glyphs in three dimensions**. `FoodGlyphs`'
+rule is that shape carries a food's identity and the same silhouette appears
+everywhere that food does, so the mark on a settlement's chip is the mark on
+the source that fills it: a lens-shaped ear of wheat, a domed loaf, a carrot
+tapering to a point, a necked bottle, a tailed fish. Colours follow the glyphs
+too -- which is why the carrot is **green** rather than orange, exactly as it
+is on every chip.
+
+They are also **stylised glyphs made physical, not props at life scale**: each
+is blown up to fill its slot, because a realistically-sized loaf on a 2x1 yard
+is a dot from the game camera. That is the same failure the flat glyphs hit at
+strip size, and it has the same fix.
 
 ### Source routing role (clarified in v0.3)
 
@@ -1582,6 +1711,17 @@ routes the player will actually draw.
 | Mountain | 3.0x | 1.5x | **0.6x** | 1.0x | Short and expensive vs. long and cheap |
 | Snow | 1.2x | 1.5x | **0.5x** | **0.6x** | Preserves well, moves badly |
 | Water | unbuildable except at a crossing (flat §40, `RIVER_BRIDGE_COST`) | — | 1.0x | 1.0x | Chokepoints |
+
+A paid water crossing draws a **stone viaduct** on two arched openings with a
+balustrade down each side (v0.7 item 71), not the flat coloured slab it used to
+be. It is the opposite design decision from the placed bridge above: that one
+arches because it is a structure crossing *over* a road, while this one IS the
+road for its tile, so its deck stays flat and cream and continuous with the
+tiles either side, and everything architectural about it is underneath. It is
+laid along the crossing's own axis, read off the tile's connections rather than
+assumed east-west -- the river is a column today, so a crossing almost always
+runs across it, but a route may perfectly well be drawn ALONG the column, and a
+viaduct laid broadside to its own road would read as a wall.
 | Blocked | unbuildable, no exception | — | — | — | Cliffs, walls, gated approaches |
 
 These plug into the multipliers §4.1 already writes down and has never used
@@ -1632,6 +1772,113 @@ and no bridge -- there is no version of the map where a route gets through it.
 Water says "pay §40 or go around"; blocked ground says "go around". It exists
 so a map can shape an approach rather than merely tax it, which is what makes
 Oldwall's gates (§12.1) a funnel instead of a toll.
+
+### Open sea (added in v0.7 item 72)
+
+`SEA` is unbuildable **water**: no route may be built on it at any price. It
+is the first terrain on the map that is genuinely a wall, and it exists next
+to a river that is genuinely not one -- so the pair have to be told apart
+before a player tries to draw into either.
+
+| | River | Sea |
+|---|---|---|
+| Route on it | yes, +§40 (`RIVER_BRIDGE_COST`) | never, at any price |
+| What it costs the player | money | distance -- you go around |
+| How it reads | pale channel with two banks | deep water, swell on the diagonal |
+
+**Depth is the tell.** Both are flat blue plates on the same board and both
+answer the same gesture, so the difference has to survive being seen small and
+in passing: a paler channel invites a crossing, deep water does not. The
+refusal message says which of the two it is for the same reason -- a bare
+"can't build here" reads as a treasury problem, and the player comes back with
+more money.
+
+**Region 1's coastline is its south-east corner** (`GameBalance.SEA_RECTS`),
+placed so the Harbor at (18, 9) stands ON the water rather than inland, which
+is where a harbor belongs and which starts the seafood run at the water's
+edge. Authored as rectangles rather than a cell list, because a coastline is a
+region and forty `Vector2i` in a `.tres` is neither readable nor editable by
+hand.
+
+The rectangles **step** rather than squaring the corner off: the shoreline runs
+diagonally out from under City E, so the land narrows toward the point instead
+of stopping at a wall. A square block of water reads as a chunk deleted from
+the board; a stepped one reads as a coast. This is a stop-gap shape for the same data §8.1's per-cell grid will
+hold; when that lands these become `SEA` entries in the terrain array.
+
+**`MapData.validate()` polices two things**, and the second is the one that
+would actually ship. A node standing on sea is obvious. A node whose every
+orthogonal neighbour is sea or off-map can never be connected to anything,
+while the order book goes on offering lines against it forever -- a run that
+cannot be finished, with no sign of why. Cheap to check, invisible until
+somebody plays it.
+
+### 8.5 Tile art: flat plates and ground vegetation (added in v0.7 item 67)
+
+Every terrain tile is a **flat square plate** -- a bar-of-chocolate board, not
+a field of cubes. A tile is three stacked pieces (see
+`tools/asset_gen/generate_blocks.py`):
+
+| Piece | What it is |
+|---|---|
+| Plate | The light, flat, coloured top face -- the chocolate square itself. Its top lands exactly on the tile surface every other system already assumes. |
+| Body | A chamfered block in the tile's **darker** shade, slightly wider than the plate and slightly shorter, so a dark rim shows all the way round it. |
+| Skirt | A plain, full-footprint block under the body. |
+
+**The rim is the grid line, and it has to be colour.** Two tiles put their
+rims together and the seam reads as a dark groove -- the same job the old
+baked-in border strip did. Deriving the groove from the chamfer's *shading*
+instead would work on desktop and fail everywhere else, because shadows are
+desktop-only (§3.6): with them off, a shading-only groove leaves the whole
+board one flat green sheet. The skirt is likewise structural rather than
+decorative -- the body is only its full width across a band at its middle, so
+without a full-footprint piece beneath it the groove between two tiles would
+be a hole the camera can see straight through.
+
+**A tile carries no modelled detail at all.** The chunky grass cap, the four
+corner tufts and the water's raised ripple ridges are gone; the plate is plain
+colour. What replaces them is **vegetation standing on the ground rather than
+built into it**: a tree or a bush on roughly a third of the free plains cells,
+scattered by `TerrainRenderer`. Four props -- a broad round-topped tree, a
+taller slim one, and two bushes -- each with a small random yaw, size and
+offset.
+
+**A bush is a rounded block sitting straight on the grass**, one square and
+one stretched into a rectangle, with a rosette of leaves sprouting out of the
+top. Nothing underneath: an earlier version stood one of them in a planter,
+which put a piece of furniture on ground the player builds roads over. The
+two shapes are the whole difference between them, so the rectangle's leaves
+gather over ONE end rather than its middle -- a long block with a centred
+rosette reads as a shrub that happens to be wide, while an off-centre cluster
+reads as a hedge with one bushy end, and that is what tells the two apart once
+both are scattered over the same field.
+
+Two things about the bush geometry are load-bearing rather than taste. Its
+corners are rounded by a fixed **fraction** of the block's smallest side, so a
+squat hedge and a tall shrub soften by the same amount visually -- and that
+fraction cannot go much past a sixth, because a chamfered box here is three
+overlapping boxes and at a third of a side the full-width band in the middle
+vanishes and the block degenerates into a plus sign. And the bush body is
+pitched **more saturated than `GRASS_TOP`, lighter than a tree canopy**: a
+green picked halfway between the two comes out almost exactly the tile's own
+colour and the bush disappears into the ground it stands on.
+
+Three rules keep the scatter from fighting the game:
+
+- **It is a pure function of the cell coordinates.** `_render_grid` rebuilds
+  the map on every hover, day and build, so anything re-rolled per render
+  would make the forest crawl. The same map always grows the same trees in the
+  same places.
+- **A node gets a one-cell clearing.** Nothing grows on a node's footprint or
+  in the eight cells around it. A node marker and its order chips are the most
+  important thing on the board, and a prop is tall enough to cut across one
+  from this camera's fixed angle.
+- **Anything built clears the ground, and bulldozing grows it back.** Props
+  stand on buildable cells, so `_render_grid` hides those on cells in
+  `GameState.grid` and shows the rest. Driving it off the whole grid, rather
+  than at each build site, makes every path that edits a cell -- a drag, a
+  sweep, an upgrade, a bulldoze -- correct without knowing about it.
+
 
 ### Terrain example
 
@@ -1770,6 +2017,113 @@ for the node the player is hovering or has tapped.
 - **Bubbles is a three-state control -- Glyphs / All / Off.** All restores
   always-on balloons for every node, for a player who wants every number on
   screen at once.
+
+#### Settlement models (added in v0.7 item 68)
+
+A settlement is drawn as a little PLACE built to the size of its own
+footprint, not as an abstract marker:
+
+| Size | Footprint | What stands on it |
+|---|---|---|
+| Village | 1x1 | One house and a tree |
+| Town | 2x1 | Three houses |
+| City | 2x2 | Three houses in front, three taller blocks behind |
+
+Each stands on a rounded stone **plaza spanning its whole footprint**. That is
+the load-bearing part, not the decoration: a settlement's cells are
+unbuildable, and covering them exactly is what tells the player so. It is the
+job item 41's one-marker-per-cell pole was doing, done properly -- that item
+put a duplicate marker on every cell precisely so a multi-tile place could not
+look like one building while quietly blocking four tiles, and named bespoke
+Town/City meshes as the follow-up. This is that follow-up, and it keeps the
+promise by making the model itself footprint-sized. A settlement now draws
+**one** marker whatever its size; sources still draw one crate per cell, since
+their art is a single crate and the footprint reads straight off it.
+
+**Everything the camera can see is on the +Z face.** The camera is pitched
+down 60 degrees looking along -Z, so +Z is the only wall of any building it
+ever sees: every house's door and the window beside it, and every City block's
+grid of windows, go there. A door on any other face is a door nobody will
+find, and the same goes for a window that is supposed to be seen lit. A
+house's door sits off-centre with its window beside it rather than the two
+being symmetric about the middle -- symmetry reads as two doors or two windows
+at map distance, where neither shape resolves, while an offset pair reads as a
+frontage. A block's window rows come
+out of its own height rather than being authored per building, so storeys stay
+the same size on every one of them -- which is what makes three blocks of
+different heights read as three buildings rather than as one block scaled
+three ways. The City's front row is the Town's own row of three houses, so a
+City reads as a Town that grew rather than as an unrelated place.
+
+**Roofs stay `MarkerColors.SETTLEMENT_COLOR`** -- the red every settlement has
+always been drawn in, and the colour the established-route overlay marks a
+delivery destination with (§4.1). It is what lets these models carry their own
+palette without the map losing the one colour that means "somewhere food
+goes". Carrying a palette at all needs an opt-out, because the shared marker
+tint flattens every mesh under a marker's `Visual` to a single colour: right
+for a hub or a storage, and it would turn a settlement's cream walls, red
+roofs, stone plaza and green tree all the same red. `NodeMarker.self_coloured`
+is that opt-out, set on the three settlement scenes.
+
+Two constraints the models are authored against. Nothing may exceed **1.7
+world units**, because a settlement's order chips are bottom-anchored 3.1
+above the tile surface and grow upward -- a taller building starts eating the
+column that says what the place wants. And the plaza is a neutral **grey**
+stone rather than a warm sand, which is very close to the Dirt route tile
+(§8.5): a settlement whose ground reads as road surface loses the distinction
+between the place and the route arriving at it. For the same reason the City's
+blocks are near-white rather than a light grey: pitched anywhere near the
+plaza's own stone they merge into the ground they stand on, and the City loses
+the skyline that is the whole point of having them.
+
+#### Source models (added in v0.7 item 70)
+
+A source is a 2x1 yard on the same rounded plaza a settlement uses, carrying
+one produce model per base unit of its daily output -- see §4.7 for what that
+count means and why the models are the chip glyphs in three dimensions.
+
+Like a settlement it draws **one** marker over its whole footprint rather than
+one per cell, and for the same reason: the yard is authored at that footprint's
+real extent and covers those cells itself. That retires the last of item 41's
+one-marker-per-cell stand-in, under which every source was drawn as two
+identical crates.
+
+A source's yard is deliberately the **same stone** as a settlement's plaza
+rather than a colour of its own. Both are places standing on ground the player
+cannot build over; what tells them apart is what stands on top -- produce
+against red roofs.
+
+#### Windows light up at night (added in v0.7 item 69)
+
+Every settlement's panes come on as the sun goes down and fade out over dawn,
+driven by `DayCycle`'s `window_glow` alongside the sun angle, light colour and
+sky tint (§3.6) -- so at night the settlements are the only warm lights on a
+dark board, and a player can see where the places are without reading a label.
+
+Three decisions hold this up.
+
+**`window_glow` is authored per keyframe, not derived from `energy`.** "Are
+the lights on" is a different question from "how bright is the sun": lamps come
+on at dusk while there is still plenty of light, and stay on into a dawn that
+is already brightening. Deriving one from the other would make the lights fade
+in exactly as the sun faded out, which is the one thing they do not do. It also
+keeps the value dev-checkable without a scene, like the rest of the cycle.
+
+**The panes are their own glTF geometry.** A settlement exports as two named
+meshes -- `body` and `windows` -- so Godot imports the panes as a
+MeshInstance3D of their own and `NodeMarker` can find them. Merged into the
+walls they would have no way to glow without the walls glowing too. Everything
+else in the asset pipeline exports as a single merged mesh; a settlement is the
+only thing that needs a part of itself addressable later.
+
+**The light is emission, not a light source.** Five settlements' worth of
+`OmniLight3D`s would be five more lights for what is the compatibility renderer
+on a phone browser, lighting nothing but themselves. These windows are meant to
+be seen, not to cast. The pane is a saturated amber at a modest multiplier
+rather than a pale cream at a big one, because emission is added to the lit
+colour and then clipped -- a near-white lamp pushed hard clips on all three
+channels and the window comes out white, which reads as a hole in the wall
+rather than a light on.
 
 ### 10.2 Route drawing UI
 

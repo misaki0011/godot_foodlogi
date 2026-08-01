@@ -40,7 +40,19 @@ const DEMAND_CAP := {
 ## Garden's 90 -- so the Garden upgrade is not a luxury, it is the only way
 ## that demand is ever fully served.
 const SOURCE_UPGRADE_COST := 300.0
-const SOURCE_UPGRADE_SUPPLY_MULT := 2.0
+
+## Each upgrade adds this many BASE units of daily output, so the ramp is
+## linear (1x, 2x, 3x ...) rather than compounding. The first upgrade is still
+## the doubling the tool has always promised; five compounding doublings would
+## be 32x, which is a number running away rather than a decision the player is
+## making. One step is also exactly one produce model on the source's yard, so
+## the pile in the map IS the supply figure.
+const SOURCE_UPGRADE_SUPPLY_STEP := 1.0
+
+## How many times one source may be expanded. The cost does not escalate: the
+## treasury and the region's own demand do the limiting, since a source already
+## out-supplying every line it feeds earns nothing from the next upgrade.
+const SOURCE_UPGRADE_MAX := 5
 
 ## ---------- bridges: road-over-road crossings (placed structure) ----------
 ## Built with the Bridge tool onto one existing route tile, turning it into a
@@ -64,6 +76,25 @@ const BRIDGE_CAP_PER_NETWORK := 2
 const BRIDGE_DECK_DECAY_MULT := 2.0
 const GRID_SIZE := Vector2i(21, 14)
 const RIVER_COL := 10
+
+## The coastline in the map's south-east corner (TERR-10). Open sea: no route
+## may be built on it at any price, so it is a shape the player routes AROUND
+## rather than a toll they pay.
+##
+## Placed so the Harbor at (18, 9) stands ON the coast rather than inland,
+## which is where a harbor belongs and which makes the seafood run start at the
+## water's edge. Deliberately clear of every node footprint and of City E at
+## (14, 9); MapData.validate() enforces both, and that nothing is walled in.
+## The rectangles STEP, rather than squaring off the corner: the shoreline runs
+## diagonally out from under City E, so the land narrows toward the point
+## instead of stopping at a wall. A square block of water reads as a chunk
+## deleted from the board; a stepped one reads as a coast.
+const SEA_RECTS: Array[Rect2i] = [
+	Rect2i(20, 9, 1, 1),   # the cell east of the Harbor, so it has water on two sides
+	Rect2i(18, 10, 3, 1),  # the row directly south of the Harbor
+	Rect2i(18, 11, 3, 1),  # x 18-20
+	Rect2i(17, 12, 4, 2),  # x 17-20 / y 12-13, the open corner
+]
 
 ## ---------- day clock (LOOP-07) ----------
 ## Real-time seconds one in-game day lasts while the auto-run clock is

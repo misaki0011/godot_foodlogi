@@ -9,4 +9,8 @@ enum NodeType { SOURCE, SETTLEMENT }
 enum SettlementType { VILLAGE, TOWN, CITY }
 enum StorageType { NORMAL, COOL }
 enum HubType { SMALL }
-enum TerrainType { PLAINS, RIVER }
+## PLAINS and RIVER keep their values so authored data does not shift. SEA is
+## the first terrain a route may never be built on at ANY price: a river is a
+## §40 crossing (TERR-05), the sea is a wall. TERR-06 replaces the column-based
+## lookup behind this with a per-cell grid and appends the rest.
+enum TerrainType { PLAINS, RIVER, SEA }

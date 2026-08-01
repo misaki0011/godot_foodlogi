@@ -9,6 +9,20 @@ extends Resource
 
 @export var grid_size: Vector2i
 @export var river_col: int = -1
+
+## Rectangles of OPEN SEA -- ground no route may ever be built on, at any
+## price (TERR-10). Distinct from the river, which is a wall you can pay §40 to
+## get through: the sea is one you go around.
+##
+## Authored as rectangles rather than a cell list because a coastline is a
+## region, and a list of forty Vector2i in a .tres is unreadable and unedita-
+## ble by hand. Rectangles also make the two rules a sea has to satisfy easy to
+## check: nothing may stand on it, and nothing may be walled in by it.
+##
+## This is a stop-gap shape for the same data TERR-06 will hold per cell. When
+## that lands, these become SEA entries in the terrain array and this field
+## goes away.
+@export var sea_rects: Array[Rect2i] = []
 @export var node_placements: Array[NodeData] = []
 
 ## The demand lines the map opens with (DEV-01), each {node_id, food_id}.
@@ -132,10 +146,58 @@ func validate() -> Array[String]:
 				problems.append("%s and %s both occupy %s" % [owner_of[cell], node.node_id, cell])
 			owner_of[cell] = node.node_id
 
+	problems.append_array(_sea_problems(owner_of))
 	return problems
 
-func get_terrain(x: int, _y: int) -> GameEnums.TerrainType:
+## The two ways a coastline can break a map (TERR-10).
+##
+## A node STANDING on sea is the obvious one. The other is the one that would
+## actually ship: a node whose every orthogonal neighbour is sea or off-map can
+## never be connected to anything, while the order book goes on offering lines
+## against it forever -- a run that cannot be finished and gives no sign why.
+## Cheap to check here, invisible until someone plays it.
+func _sea_problems(owner_of: Dictionary) -> Array[String]:
+	var problems: Array[String] = []
+	for rect in sea_rects:
+		if rect.size.x <= 0 or rect.size.y <= 0:
+			problems.append("sea_rects holds an empty rectangle %s" % rect)
+		if rect.position.x < 0 or rect.position.y < 0 or rect.end.x > grid_size.x or rect.end.y > grid_size.y:
+			problems.append("sea rectangle %s runs off the %s grid" % [rect, grid_size])
+	for cell in owner_of:
+		if is_sea(cell.x, cell.y):
+			problems.append("%s occupies %s, which is open sea" % [owner_of[cell], cell])
+	for node in node_placements:
+		var reachable := false
+		for cell in node.cells():
+			for step in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var side: Vector2i = cell + step
+				if side.x < 0 or side.y < 0 or side.x >= grid_size.x or side.y >= grid_size.y:
+					continue
+				if not owner_of.has(side) and is_buildable(side.x, side.y):
+					reachable = true
+		if not reachable:
+			problems.append("%s is walled in -- no buildable cell touches its footprint" % node.node_id)
+	return problems
+
+## Sea is tested BEFORE the river column, so a coastline drawn across the
+## river's mouth is sea rather than a crossable channel. Nothing on region 1
+## overlaps today; the order is what stops a future map from authoring a
+## crossing it never meant to offer.
+func get_terrain(x: int, y: int) -> GameEnums.TerrainType:
+	if is_sea(x, y):
+		return GameEnums.TerrainType.SEA
 	return GameEnums.TerrainType.RIVER if x == river_col else GameEnums.TerrainType.PLAINS
 
-func is_river(x: int, _y: int) -> bool:
-	return x == river_col
+func is_river(x: int, y: int) -> bool:
+	return x == river_col and not is_sea(x, y)
+
+func is_sea(x: int, y: int) -> bool:
+	for rect in sea_rects:
+		if rect.has_point(Vector2i(x, y)):
+			return true
+	return false
+
+## Whether a route tile may exist here at all. Plains and river both qualify --
+## the river simply costs more (TERR-05) -- and the sea never does.
+func is_buildable(x: int, y: int) -> bool:
+	return not is_sea(x, y)
