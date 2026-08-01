@@ -12,9 +12,21 @@ extends Node3D
 
 @export var node_data: NodeData
 
+## Whether this marker's art carries its OWN palette and must be left alone.
+##
+## The tint below flattens every mesh under "Visual" to a single colour, which
+## is exactly right for a marker whose whole job is to be one colour (a
+## storage, a hub, the old settlement pole) and destroys one built out of
+## several -- a settlement's cream walls, red roofs, stone plaza and green
+## tree would all come out the same red. Set on the settlement marker scenes;
+## they keep MarkerColors.SETTLEMENT_COLOR on their roofs themselves, so the
+## map does not lose the colour that means "somewhere food goes".
+@export var self_coloured := false
+
 func setup(data: NodeData, tint: Color) -> void:
 	node_data = data
-	_tint_recursive_root(tint)
+	if not self_coloured:
+		_tint_recursive_root(tint)
 
 func apply_tint(color: Color) -> void:
 	_tint_recursive_root(color)

@@ -221,6 +221,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **The breakable part is the bookkeeping, again.** `_render_grid` rebuilds the map on every hover, day and build, so the scatter is a pure function of the cell coordinates rather than a seeded RNG -- anything re-rolled per render makes the forest crawl. Props stand on buildable ground, so the same render hides those on cells in `GameState.grid` and shows the rest; driving it off the whole grid rather than at each build site makes a drag, a sweep, an upgrade and a bulldoze all correct without any of them knowing about it. Nothing grows on a node's footprint or the eight cells around it, since a prop is tall enough to cut across a node's order chips from this camera's fixed angle.
     **Nothing about placement moved.** A tile's top face still lands on the same surface height everything else is built around (`map_to_local(cell) + (0, 1, 0)`), so markers, road slabs, bridge decks, the established-route overlay and the click-to-cell plane are all untouched; only the *bottom* of a tile changed. See §8.5, §4.1.
 
+68. **A settlement looks like the place it is.** Every source and settlement was a coloured ball on a pole, and item 41 made a multi-tile place read as bigger by stamping that same pole on every cell it covered -- honest about the footprint, but it drew a City as four identical markers and named bespoke meshes as the follow-up. This is that follow-up.
+    **Three models, one per size** (§10.1): a Village is one house and a tree on 1x1, a Town three houses on 2x1, a City two houses in front of three taller blocks on 2x2. Each stands on a rounded stone plaza covering its whole footprint, which is what still tells the player those cells are unbuildable -- the model is now footprint-sized, so it can be a single marker rather than N copies. Sources keep one crate per cell, since a crate IS the unit their footprint is measured in.
+    **Roofs stay the settlement red**, so the map does not lose the colour that means "somewhere food goes". That needs an opt-out from the shared marker tint, which flattens everything under a marker's `Visual` to one colour -- correct for a hub, and it would turn walls, roofs, plaza and tree all the same red. `NodeMarker.self_coloured` is that opt-out.
+    **Two numbers the models are authored against.** Nothing exceeds 1.7 world units, because a settlement's chips are bottom-anchored 3.1 above the surface and grow upward, so a taller building eats the column that says what the place wants. And the plaza is a neutral grey rather than a warm sand, which would read as the Dirt route tile arriving at the door.
+    `verify_main._test_settlement_markers` asserts one model per settlement, centred on its footprint, self-coloured, across all three sizes -- centring being the one that would fail silently, since a City centred on its top-left corner would sit a tile and a half off its own ground. See §10.1, §0.41.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -1851,6 +1857,46 @@ for the node the player is hovering or has tapped.
 - **Bubbles is a three-state control -- Glyphs / All / Off.** All restores
   always-on balloons for every node, for a player who wants every number on
   screen at once.
+
+#### Settlement models (added in v0.7 item 68)
+
+A settlement is drawn as a little PLACE built to the size of its own
+footprint, not as an abstract marker:
+
+| Size | Footprint | What stands on it |
+|---|---|---|
+| Village | 1x1 | One house and a tree |
+| Town | 2x1 | Three houses |
+| City | 2x2 | Two houses in front, three taller blocks behind |
+
+Each stands on a rounded stone **plaza spanning its whole footprint**. That is
+the load-bearing part, not the decoration: a settlement's cells are
+unbuildable, and covering them exactly is what tells the player so. It is the
+job item 41's one-marker-per-cell pole was doing, done properly -- that item
+put a duplicate marker on every cell precisely so a multi-tile place could not
+look like one building while quietly blocking four tiles, and named bespoke
+Town/City meshes as the follow-up. This is that follow-up, and it keeps the
+promise by making the model itself footprint-sized. A settlement now draws
+**one** marker whatever its size; sources still draw one crate per cell, since
+their art is a single crate and the footprint reads straight off it.
+
+**Roofs stay `MarkerColors.SETTLEMENT_COLOR`** -- the red every settlement has
+always been drawn in, and the colour the established-route overlay marks a
+delivery destination with (§4.1). It is what lets these models carry their own
+palette without the map losing the one colour that means "somewhere food
+goes". Carrying a palette at all needs an opt-out, because the shared marker
+tint flattens every mesh under a marker's `Visual` to a single colour: right
+for a hub or a storage, and it would turn a settlement's cream walls, red
+roofs, stone plaza and green tree all the same red. `NodeMarker.self_coloured`
+is that opt-out, set on the three settlement scenes.
+
+Two constraints the models are authored against. Nothing may exceed **1.7
+world units**, because a settlement's order chips are bottom-anchored 3.1
+above the tile surface and grow upward -- a taller building starts eating the
+column that says what the place wants. And the plaza is a neutral **grey**
+stone rather than a warm sand, which is very close to the Dirt route tile
+(§8.5): a settlement whose ground reads as road surface loses the distinction
+between the place and the route arriving at it.
 
 ### 10.2 Route drawing UI
 

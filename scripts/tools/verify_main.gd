@@ -33,16 +33,18 @@ func _report() -> void:
 	var expected_cells: int = map_data.grid_size.x * map_data.grid_size.y
 	print("Terrain cells populated: %d (expected %d for %dx%d)" % [used_cells.size(), expected_cells, map_data.grid_size.x, map_data.grid_size.y])
 	assert(used_cells.size() == expected_cells)
-	# One marker per occupied CELL, not per node (DEV-02): a 2x1 Town and a
-	# 2x2 City each stand on several tiles, and the markers are what show the
-	# player which tiles those are.
+	# A SOURCE gets one marker per occupied cell (DEV-02) -- its art is a single
+	# crate, so a 2x1 source is two crates and the footprint reads off them. A
+	# SETTLEMENT gets exactly one, whatever its size: its model is authored at
+	# its footprint's real extent and covers those cells itself.
 	var expected_markers := 0
 	for node in map_data.node_placements:
-		expected_markers += node.cells().size()
+		expected_markers += 1 if node.node_type == GameEnums.NodeType.SETTLEMENT else node.cells().size()
 	print("Node markers spawned: %d (expected %d for %d nodes)" % [
 		markers.get_child_count(), expected_markers, map_data.node_placements.size(),
 	])
 	assert(markers.get_child_count() == expected_markers)
+	_test_settlement_markers(map_data, markers, terrain)
 	assert(_main.get_node_or_null("GridVisuals") != null)
 	var ui_root: Control = _main.get_node("UILayer/GameUI")
 	assert(ui_root.mouse_filter == Control.MOUSE_FILTER_IGNORE)
@@ -1138,6 +1140,38 @@ func _test_tile_placement_pops_once(_map_data: MapData) -> void:
 ## Grid children currently mid-flourish. Nothing else in GridVisuals is ever
 ## scaled (the route overlay and the bubble columns size themselves by mesh and
 ## viewport instead), so an unexpected one here is a pop that did not clear.
+## SETT-05: each settlement draws one bespoke model, sized to its own
+## footprint and centred on it.
+##
+## Two things worth pinning down. A settlement's model must be CENTRED on its
+## footprint, because that is what makes the plaza cover exactly the cells the
+## place blocks -- a City centred on its top-left corner would sit a tile and a
+## half off its own ground. And the marker must be left self-coloured: the
+## shared tint flattens every mesh under "Visual" to one colour, which is right
+## for a hub and would turn a settlement's walls, roofs, plaza and tree all the
+## same red.
+func _test_settlement_markers(map_data: MapData, markers: Node3D, terrain: GridMap) -> void:
+	var seen := {}
+	for marker in markers.get_children():
+		if marker is NodeMarker and marker.node_data != null and marker.node_data.node_type == GameEnums.NodeType.SETTLEMENT:
+			assert(not seen.has(marker.node_data.node_id), "%s drew more than one model" % marker.node_data.node_id)
+			seen[marker.node_data.node_id] = marker
+	var by_type := {}
+	for node in map_data.node_placements:
+		if node.node_type != GameEnums.NodeType.SETTLEMENT:
+			continue
+		var marker: NodeMarker = seen.get(node.node_id)
+		assert(marker != null, "%s drew no model at all" % node.node_id)
+		assert(marker.self_coloured, "%s must keep its own palette, not be tinted flat" % node.node_id)
+		var near: Vector3 = terrain.map_to_local(Vector3i(node.grid_position.x, 0, node.grid_position.y))
+		var far_cell := node.far_cell()
+		var far: Vector3 = terrain.map_to_local(Vector3i(far_cell.x, 0, far_cell.y))
+		var want: Vector3 = (near + far) * 0.5 + Vector3(0, 1.0, 0)
+		assert(marker.position.is_equal_approx(want), "%s is not centred on its footprint" % node.node_id)
+		by_type[node.settlement_type] = by_type.get(node.settlement_type, 0) + 1
+	assert(by_type.size() == 3, "the map should exercise all three settlement sizes")
+	print("Settlement models (SETT-05): %d places, one model each, centred on their footprints across %d sizes." % [seen.size(), by_type.size()])
+
 ## TERR-09: the scattered trees and bushes. Four properties, and the first two
 ## are the ones that would quietly rot: the scatter must be the SAME on every
 ## render (Main rebuilds the grid on each hover, so a re-rolled scatter makes

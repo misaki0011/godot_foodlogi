@@ -137,6 +137,51 @@ BUSH_LEAF_WIDTH = 0.18
 BUSH_LEAF_SPREAD = 0.75  # rosette radius as a share of a leaf's own reach; keeps leaves from merging
 BUSH_LEAF_TILT = 1.02  # radians from horizontal -- nearly upright, so leaves sprout rather than fan
 
+# ------------------------------------------------------------- settlements
+#
+# A settlement is a little PLACE standing on a rounded plaza that covers its
+# whole grid footprint (1x1 Village, 2x1 Town, 2x2 City -- see NodeData.size).
+# The plaza is not decoration: those cells are unbuildable, and covering them
+# exactly is what tells the player so, which is the job the old one-marker-
+# per-cell pole used to do.
+#
+# Roofs are MarkerColors.SETTLEMENT_COLOR, the same red every settlement has
+# always been drawn in and the colour the established-route overlay marks a
+# delivery destination with (Main.ESTABLISHED_END_COLOR). Keeping it on the
+# roofs is what lets these carry their own palette without the map losing the
+# one colour that means "somewhere food goes".
+#
+# The plaza is a neutral GREY stone, not a sand: a warm plaza is very close to
+# DIRT_ROAD_TOP, and a settlement whose ground reads as road surface loses the
+# distinction between the place and the route arriving at it.
+SETTLEMENT_ROOF = (196, 87, 58, 255)  # == MarkerColors.SETTLEMENT_COLOR
+SETTLEMENT_ROOF_DARK = (156, 66, 44, 255)
+HOUSE_WALL = (242, 233, 214, 255)
+HOUSE_WALL_ALT = (224, 210, 186, 255)
+TOWER_WALL = (212, 217, 224, 255)
+TOWER_WALL_ALT = (192, 200, 210, 255)
+TOWER_CAP = (152, 148, 158, 255)
+DOOR = (122, 96, 74, 255)
+PLAZA_TOP = (202, 198, 192, 255)
+PLAZA_SIDE = (148, 145, 140, 255)
+
+## Plaza geometry. INSET is per side, off the footprint's true edge, so the
+## tile groove still runs round the outside of a settlement and the place
+## reads as standing ON the grid rather than as replacing part of it.
+PLAZA_INSET = 0.15
+PLAZA_BODY_THICKNESS = 0.16
+PLAZA_CHAMFER = 0.07
+PLAZA_PLATE_INSET = 0.11
+PLAZA_LIP = 0.02
+PLAZA_PLATE_THICKNESS = 0.05
+PLAZA_TOP_Y = PLAZA_BODY_THICKNESS + PLAZA_LIP  # what the buildings stand on
+
+## Ceiling on how tall anything in a settlement may be. A settlement's order
+## chips are bottom-anchored 3.1 above the tile surface and grow upward
+## (Main._render_settlement_bubbles), so a building taller than this starts
+## eating the column that says what the place wants.
+SETTLEMENT_MAX_HEIGHT = 1.7
+
 
 def _box(extents, translation, color) -> trimesh.Trimesh:
     mesh = trimesh.creation.box(extents=extents)
@@ -457,6 +502,151 @@ def build_bush_rect() -> trimesh.Trimesh:
     )
 
 
+def _pyramid(width, depth, height, translation, color) -> trimesh.Trimesh:
+    """A pitched hip roof: a square pyramid, spun 45 degrees so its base edges
+    run along the axes rather than its corners, then stretched to the house it
+    caps. Base at the translation's y, apex `height` above it."""
+    mesh = trimesh.creation.cone(radius=1.0 / math.sqrt(2), height=height, sections=4)
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(math.pi / 4, (0, 0, 1)))
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(-math.pi / 2, (1, 0, 0)))
+    mesh.apply_scale([width, 1.0, depth])
+    mesh.apply_translation(translation)
+    mesh.visual.vertex_colors = np.tile(color, (len(mesh.vertices), 1))
+    return mesh
+
+
+def _plaza(width, depth) -> list[trimesh.Trimesh]:
+    """The rounded slab a settlement stands on, spanning its whole footprint
+    less PLAZA_INSET. Same plate-over-chamfered-body build as a terrain tile,
+    so it reads as part of the same board."""
+    body_top = PLAZA_TOP_Y - PLAZA_LIP
+    parts = _chamfered_box(
+        (width, PLAZA_BODY_THICKNESS, depth),
+        (0, body_top - PLAZA_BODY_THICKNESS / 2, 0),
+        PLAZA_SIDE,
+        PLAZA_CHAMFER,
+    )
+    parts.append(
+        _box(
+            (width - 2 * PLAZA_PLATE_INSET, PLAZA_PLATE_THICKNESS, depth - 2 * PLAZA_PLATE_INSET),
+            (0, PLAZA_TOP_Y - PLAZA_PLATE_THICKNESS / 2, 0),
+            PLAZA_TOP,
+        )
+    )
+    return parts
+
+
+def _house(x, z, width, depth, wall_height, roof_height, wall_color, roof_color, door_side=-1):
+    """A pitched-roof house standing on the plaza: rounded walls, a hip roof
+    overhanging them a little, and a door so the building has a front.
+
+    The overhang is what stops the roof from reading as a lid: at this camera
+    angle the roof is most of what is visible, and an eave line separating it
+    from the wall is the only thing that says the two are different parts."""
+    base = PLAZA_TOP_Y
+    parts = _chamfered_box(
+        (width, wall_height, depth), (x, base + wall_height / 2, z), wall_color, 0.05
+    )
+    parts.append(
+        _pyramid(
+            width + 0.16,
+            depth + 0.16,
+            roof_height,
+            (x, base + wall_height, z),
+            roof_color,
+        )
+    )
+    parts.append(
+        _box(
+            (width * 0.28, wall_height * 0.55, 0.05),
+            (x, base + wall_height * 0.275, z + door_side * (depth / 2)),
+            DOOR,
+        )
+    )
+    return parts
+
+
+def _tower(x, z, width, depth, height, wall_color):
+    """A flat-roofed block -- the taller, plainer buildings that separate a
+    City from a cluster of houses. Capped in slate rather than roof red, so a
+    City still reads as red-roofed but is not five identical red pyramids."""
+    base = PLAZA_TOP_Y
+    parts = _chamfered_box(
+        (width, height, depth), (x, base + height / 2, z), wall_color, 0.05
+    )
+    parts.append(
+        _box((width + 0.07, 0.05, depth + 0.07), (x, base + height + 0.01, z), TOWER_CAP)
+    )
+    return parts
+
+
+def _settlement_tree(x, z, scale=1.0):
+    """A small tree for a Village's garden. Deliberately the same trunk and
+    canopy language as the scattered Tree_Round, just smaller -- a settlement
+    growing its own kind of tree would read as a different plant."""
+    base = PLAZA_TOP_Y
+    trunk_height = 0.30 * scale
+    canopy = 0.56 * scale
+    canopy_center = base + trunk_height + canopy / 2 - 0.04
+    parts = [
+        _cylinder(0.07 * scale, trunk_height, (x, base + trunk_height / 2, z), TRUNK_WARM)
+    ]
+    parts += _chamfered_box((canopy, canopy, canopy), (x, canopy_center, z), LEAF_MID, canopy * 0.16)
+    parts += _sprigs(
+        3,
+        canopy * 0.5,
+        canopy_center + canopy * 0.28,
+        LEAF_LIGHT,
+        size=(0.22 * scale, 0.045, 0.10 * scale),
+        tilt=0.7,
+        phase=0.6,
+        center=(x, z),
+    )
+    return parts
+
+
+def build_settlement_village() -> trimesh.Trimesh:
+    """Village: one house and a tree on a 1x1 plaza. Origin at the centre of
+    the footprint, on the terrain surface."""
+    width = 2.0 - 2 * PLAZA_INSET
+    parts = _plaza(width, width)
+    parts += _house(-0.30, 0.08, 0.86, 0.72, 0.46, 0.40, HOUSE_WALL, SETTLEMENT_ROOF)
+    parts += _settlement_tree(0.52, -0.34)
+    return trimesh.util.concatenate(parts)
+
+
+def build_settlement_town() -> trimesh.Trimesh:
+    """Town: three houses on a 2x1 plaza. Origin at the centre of the
+    footprint, on the terrain surface.
+
+    The three are staggered in depth and differ in size and roof shade rather
+    than being a row of identical boxes -- at this camera angle a rank of three
+    matching silhouettes reads as one long building."""
+    parts = _plaza(4.0 - 2 * PLAZA_INSET, 2.0 - 2 * PLAZA_INSET)
+    parts += _house(-1.16, 0.16, 0.88, 0.74, 0.46, 0.40, HOUSE_WALL, SETTLEMENT_ROOF)
+    parts += _house(0.04, -0.24, 0.80, 0.68, 0.54, 0.44, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK, door_side=1)
+    parts += _house(1.16, 0.20, 0.92, 0.76, 0.42, 0.38, HOUSE_WALL, SETTLEMENT_ROOF)
+    return trimesh.util.concatenate(parts)
+
+
+def build_settlement_city() -> trimesh.Trimesh:
+    """City: two houses at the front and three taller blocks behind them, on a
+    2x2 plaza. Origin at the centre of the footprint, on the terrain surface.
+
+    Houses forward and blocks behind, rather than mixed: the camera looks down
+    the +Z axis, so anything at the back is partly hidden by whatever is in
+    front of it, and putting the tall things there is what gives the cluster a
+    skyline instead of a jumble. Nothing exceeds SETTLEMENT_MAX_HEIGHT."""
+    width = 4.0 - 2 * PLAZA_INSET
+    parts = _plaza(width, width)
+    parts += _tower(-1.02, -1.00, 0.78, 0.78, 1.16, TOWER_WALL)
+    parts += _tower(0.06, -1.14, 0.70, 0.70, 1.42, TOWER_WALL_ALT)
+    parts += _tower(1.10, -0.86, 0.74, 0.74, 0.94, TOWER_WALL)
+    parts += _house(-0.86, 0.86, 0.92, 0.78, 0.50, 0.42, HOUSE_WALL, SETTLEMENT_ROOF)
+    parts += _house(0.82, 1.02, 0.86, 0.74, 0.46, 0.40, HOUSE_WALL_ALT, SETTLEMENT_ROOF_DARK)
+    return trimesh.util.concatenate(parts)
+
+
 def export(mesh: trimesh.Trimesh, path: str) -> None:
     # An explicit matte, non-metallic material -- without one, Godot's glTF
     # import falls back to a shinier default that visibly reflects the
@@ -480,3 +670,6 @@ if __name__ == "__main__":
     export(build_tree_tall(), "assets/Environment/glTF/Tree_Tall.glb")
     export(build_bush_square(), "assets/Environment/glTF/Bush_Square.glb")
     export(build_bush_rect(), "assets/Environment/glTF/Bush_Rect.glb")
+    export(build_settlement_village(), "assets/Environment/glTF/Settlement_Village.glb")
+    export(build_settlement_town(), "assets/Environment/glTF/Settlement_Town.glb")
+    export(build_settlement_city(), "assets/Environment/glTF/Settlement_City.glb")
