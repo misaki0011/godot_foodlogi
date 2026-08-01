@@ -50,6 +50,7 @@ func _report() -> void:
 	_test_multi_tile_settlement_draws_one_stack(map_data)
 	_test_glyph_column_collapses_and_expands(map_data)
 	_test_flourishes_fire_once(map_data)
+	_test_tile_placement_pops_once(map_data)
 	_test_columns_never_overlap(map_data)
 
 	var camera: Camera3D = _main.get_node("Camera3D")
@@ -929,6 +930,102 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	state.last_settlement_status.erase(city.node_id)
 	_main.call("_render_grid")
 	print("Flourishes (items 57-61): pop/hop/nudge/shake fire once each, the payout label survives a re-render, and only unpaid settlements get the recurring nag.")
+
+## Item 64: a placed tile presses up out of the ground, and what a bulldoze
+## takes away squashes flat and goes.
+##
+## The interpolation is Godot's. Two things around it are not, and neither
+## shows up in a screenshot. The first is the bookkeeping the column pops
+## already get wrong once -- _render_grid rebuilds every tile on every hover,
+## day and build, so a pending pop left behind leaves the whole network flexing
+## whenever the pointer crosses a node. The second is a rule this effect adds:
+## only the part that actually ARRIVED pops. Building a hub puts a marker on a
+## road that was already there, so popping the road under it would announce a
+## tile the player never placed -- and the failure is invisible in a still.
+##
+## Runs before the drag suite and hands the grid back empty, which is what that
+## suite asserts it starts from.
+func _test_tile_placement_pops_once(_map_data: MapData) -> void:
+	var state: GameState = _main.get("_state")
+	var fx: Node3D = _main.get_node("Effects")
+	# Open ground well clear of every node and of the river column.
+	var run: Array[Vector2i] = [Vector2i(15, 2), Vector2i(15, 3), Vector2i(15, 4)]
+	for cell in run:
+		assert(not state.grid.has(cell), "the pop check needs empty ground at %s" % cell)
+
+	# One pop per new tile, on the ROAD, staggered in the order the player drew.
+	# Checked on the arming step rather than after _commit_drag, which renders
+	# before it returns and so consumes its own pops on the way out.
+	_main.call("_arm_placement_pops", run)
+	var armed: Dictionary = _main.get("_pending_tile_pops")
+	assert(armed.size() == 3, "a drag must arm one pop per new tile, got %d" % armed.size())
+	var previous := -1.0
+	for cell in run:
+		assert(armed[cell].part == 0, "a dragged tile must pop its ROAD, not a structure")
+		assert(armed[cell].delay > previous,
+			"pops must stagger along the drag order, got %.3f after %.3f" % [armed[cell].delay, previous])
+		previous = armed[cell].delay
+	assert(is_zero_approx(armed[run[0]].delay), "the first tile of a drag must not wait")
+	armed.clear()
+
+	# End to end: a committed drag builds its run and leaves every tile of it
+	# mid-pop, with nothing pending for the next render to re-fire.
+	var connections: Array[Array] = []
+	_main.set("_drag_valid", true)
+	_main.set("_drag_new_cells", run)
+	_main.set("_drag_new_connections", connections)
+	_main.call("_commit_drag")
+	assert(state.grid.size() == 3, "the drag must have built its run, got %d tiles" % state.grid.size())
+	assert(_squashed_tiles() == 3, "every dragged tile must start squashed, got %d" % _squashed_tiles())
+	assert((_main.get("_pending_tile_pops") as Dictionary).is_empty(),
+		"a render must consume every pending tile pop, or it re-fires on the next hover")
+	_main.call("_render_grid")
+	assert(_squashed_tiles() == 0, "a tile must not pop again on a later render")
+
+	# A hub pops its MARKER alone -- the road underneath it is not new.
+	var hub_cell: Vector2i = run[1]
+	_main.call("_do_build_hub", hub_cell)
+	var hub_armed: Dictionary = _main.get("_pending_tile_pops")
+	assert(hub_armed.has(hub_cell) and hub_armed[hub_cell].part == 1,
+		"building a hub must arm the STRUCTURE, not the road it stands on")
+	_main.call("_render_grid")
+	var squashed := _squashed_nodes()
+	assert(squashed.size() == 1, "a hub must pop exactly one thing, got %d" % squashed.size())
+	assert(squashed[0] is NodeMarker, "a hub must pop its marker, not the road under it")
+
+	# Bulldozing is the inverse, and its copy lives on Effects -- parented to
+	# GridVisuals it would be destroyed by the render that immediately follows.
+	_clear_children(fx)
+	_main.call("_do_bulldoze", hub_cell)
+	assert(fx.get_child_count() == 1, "a bulldoze must leave one removal ghost on Effects")
+	var ghost: Node3D = fx.get_child(0)
+	assert(ghost.get_child_count() == 1,
+		"a removed hub's ghost must be the marker alone -- the road it stood on stays")
+	assert(ghost.get_child(0) is NodeMarker, "a removed hub must squash its marker")
+	_main.call("_render_grid")
+	assert(fx.get_child_count() == 1, "a re-render must not destroy a removal ghost in flight")
+	assert(state.grid[hub_cell].kind == "route", "bulldozing a hub must hand its road back")
+	assert(_squashed_tiles() == 0, "a bulldoze must not pop the road it leaves behind")
+
+	_clear_children(fx)
+	for cell in run:
+		state.grid.erase(cell)
+		state.remove_connections(cell)
+	_main.call("_render_grid")
+	print("Tile pop (item 64): a drag pops each tile once and in order, a hub pops its marker and not its road, a bulldoze squashes on the Effects layer, and no render re-fires either.")
+
+## Grid children currently mid-flourish. Nothing else in GridVisuals is ever
+## scaled (the route overlay and the bubble columns size themselves by mesh and
+## viewport instead), so an unexpected one here is a pop that did not clear.
+func _squashed_nodes() -> Array[Node3D]:
+	var found: Array[Node3D] = []
+	for child in (_main.get_node("GridVisuals") as Node3D).get_children():
+		if child is Node3D and not is_equal_approx((child as Node3D).scale.y, 1.0):
+			found.append(child)
+	return found
+
+func _squashed_tiles() -> int:
+	return _squashed_nodes().size()
 
 func _clear_children(node: Node) -> void:
 	for child in node.get_children():
