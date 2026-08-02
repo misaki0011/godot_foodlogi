@@ -261,6 +261,9 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **Full width, outside the tool grid.** Everything in those two-column grids is a MODE the map then waits for; Undo is a thing that happens when pressed, and a ninth cell in that grid would have read as a tenth tool. Ctrl+Z does the same, for desktop, but the button is the interface -- the game is playable from a phone browser and nothing may depend on a keyboard (§10.7).
     `verify_main._test_undo` builds and takes back one of each shape -- a drag, a hub over a *paved* tile, a bulldoze, a source expansion -- asserting the grid, the connections and the treasury land back where they started, that a refused build records no step, and that a rollover empties the history. The paved tile is the case a per-tool inverse gets wrong; the treasury is the one it would get wrong expensively. See §10.9.
 
+74. **The settlement end of a route becomes an arrow too.** Item 16 gave the overlay's two ends distinct marks -- a green cone at the source, a red *bar* at the settlement -- and the bar was the weaker half: every tile-to-tile link along the road already draws a bar, so the one place a delivery actually lands looked like any other joint in the line, and it said nothing about which way the food was moving. It is the same cone now, pointing tile → settlement so the arrowhead lands on the doorstep, in the same settlement red (`ESTABLISHED_END_COLOR`) it already used.
+    **One object, two colours, read at both ends.** `_add_established_start_arrow` becomes `_add_established_arrow(pos, flow_dir, color)` -- the two ends are the same statement (this is which way the food is going) seen from its opposite ends, so drawing them with the same mesh is what makes the pair read as one sentence. Colour still separates supplier from customer, the fulfilled green and the settlement red used everywhere else, so nothing about telling start from finish depends on following the strand. Purely visual: no simulation, pathfinding or cost change. See §4.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -769,7 +772,7 @@ The established-route overlay (below) draws one **lane per source**, in the colo
 - **A tile is attributed to a source when that source can reach a settlement *through* it**, not merely when they share a road network. Attribution runs the established-route computation once per source, counting only that source as a starting anchor -- so a spur that only one source feeds unravels in every other source's pass, and never takes their colour.
 - **Shared roads carry several lanes at once.** Where two sources' deliveries run down the same road, both colours run down it side by side, evenly straddling the road's centre; a lone source runs down the middle. The lanes are laid out perpendicular to each link, so they stay parallel along the whole shared stretch, and a link between two tiles carries exactly the sources both tiles have.
 - **Route tiles themselves are not recoloured.** They keep their ordinary Dirt/Paved/Main appearance -- colouring the road surface as well was tried and dropped: it fought with the level colours, and the overlay is where "which supply is this" belongs.
-- **The endpoints stay distinct regardless of colour:** a green arrow at the source end (pointing the way delivery flows) and a red bar at the settlement end.
+- **The endpoints stay distinct regardless of colour:** an arrow at each node end, both pointing the way delivery flows -- green leaving the source, red arriving at the settlement (v0.7 item 74).
 - **The legend lists the mapping**, generated from the region's own sources rather than hardcoded, so it can't drift from what is actually drawn.
 
 Colour comes from the *food* rather than the source marker because every source marker shares one colour (§16), so the food is the only thing that visually distinguishes one source from another -- and it matches the colours already used by the source/settlement speech bubbles (§10.1).
@@ -798,10 +801,11 @@ connected to -- see "Explicit connections" above and §16):
   supplier to customer.
 
 **The two ends are visually distinguished, not just gold like the rest of
-the strand:** the source end shows a green arrow pointing in the direction
-delivery actually flows (source → first tile), and the settlement end shows
-a red bar instead of gold, so the player can tell start from finish at a
-glance without having to trace the whole line.
+the strand:** each shows an arrow pointing the way delivery actually flows
+-- green out of the source (source → first tile) and red into the
+settlement (last tile → settlement, added in v0.7 item 74) -- so the player
+can tell start from finish, and read the direction of travel, at a glance
+without having to trace the whole line.
 
 The overlay is rebuilt on every render, so it stays live as the player
 edits the network or runs a day.

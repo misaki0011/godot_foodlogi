@@ -370,8 +370,9 @@ var _sweep_cost := 0.0
 
 ## Overlay marking established (source->settlement) routes -- a bright, mostly
 ## opaque gold line floating just above the road surface (see
-## _render_established_routes), with a green arrow at the source end (pointing
-## the way delivery actually flows) and a red bar at the settlement end.
+## _render_established_routes), with an arrow at each node end, both pointing
+## the way delivery actually flows: green leaving the source, red arriving at
+## the settlement.
 const ESTABLISHED_ROUTE_COLOR := Color(1.0, 0.83, 0.29, 0.9)
 const ESTABLISHED_START_COLOR := Color("5C8A5C") # matches the "done/fulfilled" green used elsewhere (e.g. settlement tips)
 const ESTABLISHED_END_COLOR := Color("C4573A") # matches MarkerColors.SETTLEMENT_COLOR
@@ -862,8 +863,7 @@ func _add_established_marker(pos: Vector3, color: Color = ESTABLISHED_ROUTE_COLO
 
 ## A thin bar joining two adjacent established points (tile-tile or
 ## tile-node); `a` and `b` are one grid step apart, so it's axis-aligned.
-## Gold by default; the settlement end of a route uses ESTABLISHED_END_COLOR
-## instead (see _render_established_routes).
+## Gold by default (see _render_established_routes).
 func _add_established_segment(a: Vector3, b: Vector3, color: Color = ESTABLISHED_ROUTE_COLOR) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
@@ -874,12 +874,21 @@ func _add_established_segment(a: Vector3, b: Vector3, color: Color = ESTABLISHED
 	mesh_instance.material_override = _drag_preview_material(color)
 	_grid_visuals.add_child(mesh_instance)
 
-## A green cone arrow marking where an established route begins at a source,
-## pointing in the direction delivery actually flows (source -> first tile).
-## Positioned at the midpoint of the source<->tile link, same spot a plain
+## A cone arrow marking where an established route meets a node, pointing the
+## way delivery actually flows -- green out of a source, red into a settlement.
+## Positioned at the midpoint of the node<->tile link, same spot a plain
 ## established_segment bar would sit, so it reads as replacing that bar with
 ## a directional marker rather than adding a separate decoration.
-func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
+##
+## Both ends are the same object because they are the same statement read at
+## its two ends: this is which way the food is going. The settlement end was a
+## plain bar, which said only that the route arrived there -- and a bar is what
+## every tile-to-tile link on the road already draws, so the one place the
+## delivery lands looked like any other joint in the line. Colour still
+## separates the two (ESTABLISHED_START_COLOR / ESTABLISHED_END_COLOR, the
+## fulfilled green and the settlement red used everywhere else), so a glance
+## tells source from destination without following the line.
+func _add_established_arrow(pos: Vector3, flow_dir: Vector2i, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = 0.0
@@ -888,7 +897,7 @@ func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos
 	mesh_instance.rotation_degrees = ARROW_ROTATION_BY_DIR.get(flow_dir, Vector3.ZERO)
-	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_START_COLOR)
+	mesh_instance.material_override = _drag_preview_material(color)
 	_grid_visuals.add_child(mesh_instance)
 
 ## Rebuilds the cell -> node lookup. Run at load; footprints are fixed, so
@@ -1828,9 +1837,9 @@ func _render_established_routes() -> void:
 	# deliveries run through it, and each link to an established neighbour
 	# carries a bar per source SHARED with that neighbour -- so a colour joins
 	# the road where its source does and peels off exactly where their paths
-	# part. The node ends stay distinguished regardless of colour: a green
-	# arrow at the source (pointing the way delivery flows) and a red bar at
-	# the settlement.
+	# part. The node ends stay distinguished regardless of colour: an arrow at
+	# each, both pointing the way delivery flows -- green leaving the source,
+	# red arriving at the settlement.
 	#
 	# Iterated per GRAPH VERTEX rather than per tile (SimulationEngine's lane
 	# rules), so at a bridge the deck and the road beneath it each get their own
@@ -1875,9 +1884,11 @@ func _render_established_routes() -> void:
 				if node.node_type == GameEnums.NodeType.SOURCE:
 					# `d` points from the tile to the source; delivery flows
 					# the opposite way, from the source into the tile.
-					_add_established_start_arrow((here + there) * 0.5, -d)
+					_add_established_arrow((here + there) * 0.5, -d, ESTABLISHED_START_COLOR)
 				else:
-					_add_established_segment(here, there, ESTABLISHED_END_COLOR)
+					# At a settlement `d` already points the way the food goes,
+					# tile into node -- so the arrowhead lands on the doorstep.
+					_add_established_arrow((here + there) * 0.5, d, ESTABLISHED_END_COLOR)
 
 ## Where the overlay draws for a graph vertex: the tile's centre, lifted to the
 ## deck's height when the vertex is a bridge deck so the crossing line visibly
