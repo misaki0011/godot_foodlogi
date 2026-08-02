@@ -264,6 +264,11 @@ The Godot port needed to be testable from a phone browser, which has no hover an
 74. **The settlement end of a route becomes an arrow too.** Item 16 gave the overlay's two ends distinct marks -- a green cone at the source, a red *bar* at the settlement -- and the bar was the weaker half: every tile-to-tile link along the road already draws a bar, so the one place a delivery actually lands looked like any other joint in the line, and it said nothing about which way the food was moving. It is the same cone now, pointing tile → settlement so the arrowhead lands on the doorstep, in the same settlement red (`ESTABLISHED_END_COLOR`) it already used.
     **One object, two colours, read at both ends.** `_add_established_start_arrow` becomes `_add_established_arrow(pos, flow_dir, color)` -- the two ends are the same statement (this is which way the food is going) seen from its opposite ends, so drawing them with the same mesh is what makes the pair read as one sentence. Colour still separates supplier from customer, the fulfilled green and the settlement red used everywhere else, so nothing about telling start from finish depends on following the strand. Purely visual: no simulation, pathfinding or cost change. See §4.1.
 
+75. **A drag may leave the source it started on, and a refusal says where it is refused.** A source stands on 2x1 and a City on 2x2 (§0.41), but the interior rule (item 20) counted CELLS: pressing the near cell of a source and dragging out across its far one tripped that rule **on the anchor itself**, so the player was refused for crossing the very source they were leaving -- decided by which of two identical-looking cells they happened to press first, and reported as "a new route can't cross or reuse an existing tile or node", which reads as *source-to-settlement is not allowed*. "Between the two ends" is measured in **nodes** now: the leading run of cells belonging to the start node and the trailing run belonging to the end node are those ends. Re-entering either node later is still a crossing, and a step between two cells of one node records **no connection** -- an edge in the road graph between a node and itself.
+    **Nothing else was relaxed.** Running THROUGH a settlement is still refused (a delivery never transits a node, and the simulation does not either), and so is crossing a road that already exists -- that one is what the Bridge is for (§4.1), and relaxing it would let a drag silently merge two networks the player built apart.
+    **The refusal now says where, and while the path is still being drawn.** A path turns red end to end when any one cell breaks a rule, which says "no" without saying WHERE -- and on a long drag across a busy map the offending tile is rarely the one under the finger. The refused cell now carries a solid red block standing above the flat preview plates (height being what reads at a 60-degree pitch), and the bottom hint bar carries the reason live, in red. It also **names what it ran into** rather than restating the rule: "a route can't run THROUGH Village B", or "build a Bridge on that tile and carry straight over it". Previously the reason existed only as a toast on RELEASE -- readable only after the player had given up on the path it was explaining.
+    `verify_main._test_drag_leaves_its_own_node` drags out of the Bakery's near cell to Village B and asserts it commits, that no connection links the Bakery's two cells, and that the two rules NOT relaxed still refuse -- each naming what it hit and marking the one cell it is refused for. See §4.1.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -616,7 +621,16 @@ creation is drag-only:
    becomes a new tile to build, and each consecutive pair (including the two
    ends) becomes a connection to record. The running cost only counts these
    genuinely new tiles, and must fit the current treasury (the hub cap never
-   blocks a placement -- see §4.4).
+   blocks a placement -- see §4.4). **"Between" is measured in nodes, not
+   cells** (v0.7 item 75): a source stands on 2x1 and a City on 2x2 (§0.41),
+   so the leading run of cells belonging to the *start* node and the trailing
+   run belonging to the *end* node are part of those ends, not interior. A
+   drag out of the near cell of its own source used to be refused for
+   crossing that source -- decided by which of two identical-looking cells
+   the player happened to press. Re-entering either node later in the path is
+   still a crossing, and a step between two cells of the same node records no
+   connection: that would put an edge in the road graph between a node and
+   itself.
 4. **The path's LAST cell must be a hub tile, a settlement node, or likewise
    an unestablished route tile** (v0.5 items 19, 22) -- a drag that releases
    on an already-established route tile, or on empty ground, is invalid, no
@@ -626,8 +640,14 @@ creation is drag-only:
    silently stops one tile short of the node it looked like it was reaching,
    and never one that piggybacks mid-network onto a route that's already
    live. The preview line renders green only once the affordability,
-   interior, and end-point checks all pass, red otherwise, explaining why in
-   a toast if the player releases while it's red.
+   interior, and end-point checks all pass, red otherwise. **A refused path
+   says where and why while it is still being drawn** (v0.7 item 75): the
+   offending cell carries a solid red block standing above the path, and the
+   bottom hint bar carries the reason in red -- naming the settlement or
+   source the path ran through, or pointing at the Bridge for a road it tried
+   to cross. Previously the whole path turned a uniform red and the reason
+   arrived only as a toast on release, so a player watching a red line had
+   nothing to read until they had already given up on it.
 5. **Only a fully valid path is committed, and only on release** -- an
    invalid path places and connects nothing at all. On a valid release,
    every queued tile and connection is written at once. A press that

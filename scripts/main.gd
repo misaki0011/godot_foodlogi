@@ -334,10 +334,21 @@ var _drag_new_cells: Array[Vector2i] = []
 var _drag_new_connections: Array[Array] = [] # [[Vector2i, Vector2i], ...]
 var _drag_valid := true
 var _drag_invalid_reason := ""
+## The cells the path is actually refused for. A path turns red end to end when
+## any one cell breaks a rule, which says "no" without saying WHERE -- and on a
+## long drag over a busy map the offending tile is rarely the one the player is
+## looking at. These are drawn as solid blocks standing above the preview, so
+## the eye lands on the tile that is the problem (v0.7 item 75).
+var _drag_blocked_cells: Array[Vector2i] = []
 var _drag_preview_visuals: Node3D
 
 const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
 const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
+const DRAG_PREVIEW_BLOCKED_COLOR := Color(0.95, 0.16, 0.16, 0.95)
+## Taller than a path marker as well as opaque: at a 60-degree pitch height is
+## what reads from across the map, where a colour change alone can be lost
+## against a red path it sits inside.
+const DRAG_BLOCKER_SIZE := Vector3(0.62, 0.62, 0.62)
 
 ## ---------- sweep drags (bulldoze / upgrade) ----------
 ## Bulldoze and Upgrade also work as a drag: sweeping across a run of tiles
@@ -592,22 +603,39 @@ func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 ## never a tile in the middle, so there's no way for a new drag to silently
 ## piggyback on infrastructure that already exists. An established (live,
 ## delivering) route tile is never a valid end, only its own hub/settlement
-## is (v0.5 item 22). Runs against a scratch grid copy -- _state.grid/
-## .connections are never touched here.
+## is (v0.5 item 22).
+##
+## "Between the two ends" is measured in NODES, not cells (v0.7 item 75). A
+## source stands on 2x1 and a City on 2x2 (DEV-02), so a drag that presses the
+## near cell of its own anchor and leaves across the far one used to trip the
+## interior rule on the anchor itself -- the player was refused for crossing the
+## very source they were dragging out of, which on a 2x1 is whichever cell they
+## happened to press first. The leading run of cells belonging to the start node
+## and the trailing run belonging to the end node are therefore part of those
+## ends rather than interior; re-entering either node later is still a crossing.
+## Runs against a scratch grid copy -- _state.grid/.connections are never
+## touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
 	_drag_new_cells.clear()
 	_drag_new_connections.clear()
+	_drag_blocked_cells.clear()
 	var newly_built: Dictionary = {} # cells this same drag has already queued
 	var total_cost := 0.0
 	var last_index := _drag_path.size() - 1
+	var head_span := _node_run_length(0, 1)
+	var tail_span := _node_run_length(last_index, -1)
 	for i in range(1, _drag_path.size()):
 		var prev: Vector2i = _drag_path[i - 1]
 		var cell: Vector2i = _drag_path[i]
 		if prev == cell:
 			continue
-		_drag_new_connections.append([prev, cell])
+		# A step from one cell of a node to another cell of the SAME node is
+		# movement inside one place, not a link between two: recording it would
+		# put an edge in the road graph between a node and itself.
+		if _node_at(prev) == null or _node_at(prev) != _node_at(cell):
+			_drag_new_connections.append([prev, cell])
 		if newly_built.has(cell):
 			continue
 		# Open sea is the one terrain with no price at all (TERR-10). The river
@@ -615,18 +643,20 @@ func _recompute_drag_validity() -> void:
 		# two this is -- otherwise a refusal reads as a treasury problem and the
 		# player comes back with more money.
 		if not _map_data.is_buildable(cell.x, cell.y):
+			_drag_valid = false
+			_drag_blocked_cells.append(cell)
 			if _drag_invalid_reason == "":
-				_drag_valid = false
 				_drag_invalid_reason = "A route can't be built on open sea -- unlike the river, there's no crossing at any price. Go around."
 			continue
 		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell)
 		if pre_existing:
-			if i == last_index or _crosses_bridge_at(i):
+			if i == last_index or i < head_span or i >= _drag_path.size() - tail_span or _crosses_bridge_at(i):
 				continue
+			_drag_valid = false
+			_drag_blocked_cells.append(cell)
 			if _drag_invalid_reason == "":
-				_drag_valid = false
 				_drag_invalid_reason = ("A bridge can only be crossed straight over, along the deck." if SimulationEngine.is_bridge(_state, cell)
-					else "A new route can't cross or reuse an existing tile or node -- it can only run over empty ground between its two ends, or straight over a bridge.")
+					else _crossing_reason(cell))
 			continue
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
 		newly_built[cell] = true
@@ -658,6 +688,38 @@ func _recompute_drag_validity() -> void:
 		_drag_invalid_reason = ("A route can't stop on a bridge -- carry straight over and land on the far side."
 			if ends_at_bridge
 			else "A route must end at a hub, a settlement, or an unfinished route tile.")
+
+## How many cells from `from_index` (walking by `step`) belong to the same node
+## as the cell at `from_index`. 0 when that cell isn't a node at all, so an
+## ordinary drag between route tiles keeps exactly the old behaviour.
+##
+## This is what makes a multi-tile node one place rather than several: the run
+## it returns is the part of the path still standing on the anchor it started
+## from (or already standing on the node it ends at), which is an end of the
+## route, not something the route crosses.
+func _node_run_length(from_index: int, step: int) -> int:
+	if from_index < 0 or from_index >= _drag_path.size():
+		return 0
+	var node := _node_at(_drag_path[from_index])
+	if node == null:
+		return 0
+	var run := 0
+	var i := from_index
+	while i >= 0 and i < _drag_path.size() and _node_at(_drag_path[i]) == node:
+		run += 1
+		i += step
+	return run
+
+## Names what the path ran into, rather than restating the rule. "An existing
+## tile or node" is equally true of a road, a source and a settlement, so the
+## old wording left the player to work out which of the three they had touched
+## -- and, having started at a source and finished at a settlement, to conclude
+## that source-to-settlement was itself refused.
+func _crossing_reason(cell: Vector2i) -> String:
+	var node := _node_at(cell)
+	if node != null:
+		return "A route can't run THROUGH %s -- a delivery never passes through a source or a settlement. End the drag there, or go around it." % node.display_name
+	return "A route can't cross or reuse the road already on this tile. Run over empty ground instead, or build a Bridge on that tile and carry straight over it."
 
 ## Whether _drag_path[i] is a bridge tile the drag is legitimately crossing:
 ## the one and only case where a route may run over a cell that already exists.
@@ -716,6 +778,9 @@ func _recompute_sweep() -> void:
 	_sweep_cost = 0.0
 	_drag_valid = true
 	_drag_invalid_reason = ""
+	# A sweep is blocked by its total cost rather than by any one tile, so it
+	# never marks a blocker -- but it must not inherit one from a route drag.
+	_drag_blocked_cells.clear()
 	var seen: Dictionary = {}
 	for cell in _drag_path:
 		if seen.has(cell):
@@ -801,8 +866,10 @@ func _clear_drag_preview() -> void:
 	_drag_path.clear()
 	_drag_new_cells.clear()
 	_drag_new_connections.clear()
+	_drag_blocked_cells.clear()
 	_sweep_cells.clear()
 	_sweep_cost = 0.0
+	_update_hint()
 
 ## Translucent green (valid) or red (invalid) boxes on every crossed cell,
 ## connected by thin bars between orthogonal neighbors, so the path reads
@@ -810,6 +877,7 @@ func _clear_drag_preview() -> void:
 ## _state.grid isn't touched until _commit_drag().
 func _update_drag_preview() -> void:
 	_clear_children(_drag_preview_visuals)
+	_update_hint()
 	if _drag_kind == "sweep":
 		_update_sweep_preview()
 		return
@@ -821,6 +889,9 @@ func _update_drag_preview() -> void:
 		_add_drag_marker(world_positions[i], color)
 		if i > 0:
 			_add_drag_segment(world_positions[i - 1], world_positions[i], color)
+	# Last, so a blocker is never buried under the path markers it explains.
+	for cell in _drag_blocked_cells:
+		_add_drag_blocker(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.45, 0))
 
 func _add_drag_marker(pos: Vector3, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
@@ -829,6 +900,18 @@ func _add_drag_marker(pos: Vector3, color: Color) -> void:
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos
 	mesh_instance.material_override = _drag_preview_material(color)
+	_drag_preview_visuals.add_child(mesh_instance)
+
+## A solid block standing on the one cell a refused path is refused FOR. Opaque
+## and cube-shaped against the flat translucent plates of the path itself, so it
+## reads as an obstruction rather than as another step of the drag.
+func _add_drag_blocker(pos: Vector3) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = DRAG_BLOCKER_SIZE
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.material_override = _drag_preview_material(DRAG_PREVIEW_BLOCKED_COLOR)
 	_drag_preview_visuals.add_child(mesh_instance)
 
 ## `a` and `b` are always orthogonal neighbors (one grid step apart), so the
@@ -2462,7 +2545,24 @@ func _set_tool(tool: String) -> void:
 	for key in _tool_buttons:
 		for button in _tool_buttons[key]:
 			button.button_pressed = key == tool
-	_hint_label.text = TOOL_HINTS.get(tool, "")
+	_update_hint()
+
+## The bottom bar carries the selected tool's instructions at rest, and the live
+## reason a drag is currently refused while one is being drawn -- the refusal
+## used to arrive only as a toast on RELEASE, so a player watching a red path
+## had nothing to read until they had already given up on it. In red, since it
+## is a refusal rather than advice.
+const HINT_REFUSED_COLOR := Color("E8A0A0")
+
+func _update_hint() -> void:
+	if _hint_label == null:
+		return
+	if _drag_active and not _drag_valid and _drag_invalid_reason != "":
+		_hint_label.text = _drag_invalid_reason
+		_hint_label.add_theme_color_override("font_color", HINT_REFUSED_COLOR)
+		return
+	_hint_label.text = TOOL_HINTS.get(_tool, "")
+	_hint_label.remove_theme_color_override("font_color")
 
 ## Three states rather than a checkbox, so the compact default and the old
 ## dense view are both reachable without a second control.

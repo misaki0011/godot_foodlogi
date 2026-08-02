@@ -249,6 +249,7 @@ func _report() -> void:
 
 	_check_day_clock(state)
 	_check_day_cycle(state)
+	_test_drag_leaves_its_own_node(state)
 	# After the clock checks, because proving the day clears the undo history
 	# means running a day, and those assert the calendar is still on day 1.
 	_test_undo(state)
@@ -265,6 +266,72 @@ func _report() -> void:
 	# Garden: everything above still expects the map it started with.
 	_test_source_upgrade()
 	print("verify_main checks passed.")
+
+## ROUTE-18: a drag leaves the node it started from across that node's OWN
+## cells. A source stands on 2x1 (DEV-03), so pressing the near cell and
+## dragging out over the far one used to trip the interior rule on the anchor
+## itself -- the player was refused for crossing the very source they were
+## leaving, decided by which of two identical-looking cells they happened to
+## press. The rules it must NOT have relaxed are checked alongside it: running
+## through a settlement, and crossing a road that already exists, are both still
+## refused, and each now names what it ran into and marks the cell.
+##
+## Runs on the Bakery -> Village B corner, which nothing earlier has built in.
+func _test_drag_leaves_its_own_node(state: GameState) -> void:
+	var map_data: MapData = _main.get("_map_data")
+	var bakery: NodeData = _node_by_id(map_data, "bakery")
+	var village_b: NodeData = _node_by_id(map_data, "villageB")
+	assert(bakery.cells().size() == 2, "This check needs a 2-cell source to press the near cell of")
+	var near_cell: Vector2i = bakery.grid_position
+	var far_cell: Vector2i = bakery.far_cell()
+	var fresh: Array[Vector2i] = [Vector2i(4, 11), Vector2i(5, 11), Vector2i(6, 11)]
+	for cell in fresh:
+		assert(not state.grid.has(cell), "This check needs %s empty to run over" % cell)
+	var saved_balance: float = state.balance
+	state.balance = 5000.0
+	_main.call("_set_tool", "route")
+
+	# Pressing the near cell is a valid anchor, and the far cell of the same
+	# source is part of that anchor rather than something the route crosses.
+	var out_of_source: Array[Vector2i] = [near_cell, far_cell, fresh[0], fresh[1], fresh[2], village_b.grid_position]
+	_main.set("_drag_path", out_of_source)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag out of the near cell of a 2-cell source must be valid: %s" % _main.get("_drag_invalid_reason"))
+	# The step from one cell of a node to another is movement inside one place;
+	# recording it would put an edge in the road graph between a node and itself.
+	for pair in _main.get("_drag_new_connections"):
+		assert(not (pair[0] == near_cell and pair[1] == far_cell), "A drag must not record a connection between two cells of the same node")
+	_main.call("_commit_drag")
+	for cell in fresh:
+		assert(state.grid.has(cell), "The drag must build every empty cell it crossed (%s)" % cell)
+	assert(state.has_connection(fresh[2], village_b.grid_position), "The drag must connect to the settlement it reached")
+	assert(not state.has_connection(near_cell, far_cell), "Committing must not link a node to itself")
+
+	# Still refused: a delivery never passes THROUGH a node, so a drag that
+	# reaches a settlement and carries on out the far side is not a route.
+	var through: Array[Vector2i] = [far_cell, Vector2i(4, 10), Vector2i(5, 10), village_b.grid_position, Vector2i(7, 10)]
+	_main.set("_drag_path", through)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag running through a settlement must still be refused")
+	assert(_main.get("_drag_invalid_reason").contains(village_b.display_name), "The refusal must name the settlement it ran into, not just 'an existing tile or node'")
+	assert(_main.get("_drag_blocked_cells") == [village_b.grid_position], "The refused cell must be marked, so the player can see WHERE the path is refused")
+
+	# Still refused: crossing a road that already exists (the tiles this check
+	# just built are exactly that), which is what the Bridge tool is for.
+	var across: Array[Vector2i] = [far_cell, Vector2i(4, 10), Vector2i(5, 10), Vector2i(5, 11), Vector2i(5, 12), Vector2i(6, 12)]
+	_main.set("_drag_path", across)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag crossing an existing road must still be refused")
+	assert(_main.get("_drag_blocked_cells") == [Vector2i(5, 11)], "The crossed road tile must be the marked one")
+	assert(_main.get("_drag_invalid_reason").contains("Bridge"), "The refusal must point at the Bridge, which is the way across")
+
+	for cell in fresh:
+		state.grid.erase(cell)
+		state.remove_connections(cell)
+	state.balance = saved_balance
+	_main.call("_clear_drag_preview")
+	_main.call("_after_action")
+	print("Drag out of a multi-cell node (ROUTE-18) checks passed.")
 
 ## BUILD-01: Undo puts the last build action back whole -- tiles, connections,
 ## treasury and a source's expansion level alike -- and the day rollover clears
