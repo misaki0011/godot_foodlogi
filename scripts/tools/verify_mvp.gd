@@ -88,7 +88,13 @@ func _test_hub_cap_per_network() -> void:
 	# network cap, checked live via SimulationEngine.network_at_hub_cap
 	# rather than a precomputed per-cell flag.
 	var state := GameState.new()
-	var spine: Array[Vector2i] = [Vector2i(2, 10), Vector2i(3, 10), Vector2i(4, 10), Vector2i(5, 10), Vector2i(6, 10), Vector2i(7, 10)]
+	# Sized from the cap rather than written out, so raising the cap re-runs
+	# this check at the new value instead of indexing off the end of a spine
+	# that was long enough for the old one. Four tiles of slack, so there are
+	# always some non-hub tiles left over to prove the refusal on.
+	var spine: Array[Vector2i] = []
+	for x in range(2, 2 + GameBalance.HUB_CAP_PER_NETWORK + 4):
+		spine.append(Vector2i(x, 10))
 	for cell in spine:
 		state.grid[cell] = {"kind": "route", "level": "dirt"}
 	_connect_chain(state, spine)
@@ -235,9 +241,12 @@ func _test_bridge_cap_per_network() -> void:
 	# counts against the network of the road it sits on, so the cap bites once
 	# BRIDGE_CAP_PER_NETWORK of them exist -- even though nothing has been
 	# drawn across any of them yet.
+	# Sized from the cap: bridges go on every other tile (no two may sit side by
+	# side), so the run needs two tiles per bridge plus a couple to spare for
+	# the tiles that must refuse one at the end.
 	var state := GameState.new()
 	var spine: Array[Vector2i] = []
-	for x in range(1, 10):
+	for x in range(1, 1 + GameBalance.BRIDGE_CAP_PER_NETWORK * 2 + 2):
 		var cell := Vector2i(x, 5)
 		spine.append(cell)
 		state.grid[cell] = {"kind": "route", "level": "dirt"}

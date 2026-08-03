@@ -10,7 +10,15 @@ const ROUTE_BASE_UPKEEP := 2.0
 ## free-standing river crossing, nothing to do with the placed BRIDGE_* deck
 ## below (which crosses a ROAD, not water).
 const RIVER_BRIDGE_COST := 40.0
-const HUB_CAP_PER_NETWORK := 2
+## Built hubs allowed on one connected road network (v0.7 item 76: 2 -> 10).
+##
+## The cap is a backstop, not the brake. A hub costs §150 up front and §25/day
+## forever, against a discount of 15% on the upkeep of the road tiles directly
+## connected to it -- at most four of them, so at most §1.20/day back on dirt
+## and §3/day on Main. A hub has never paid for itself out of the discount, and
+## a tenth one costs exactly what the first did: the treasury is what stops hub
+## spam, and it stops it well before ten.
+const HUB_CAP_PER_NETWORK := 10
 
 ## How many foods a settlement may ever demand, by type (DEV-04). A budget
 ## the map is authored against rather than anything computed at runtime: the
@@ -61,14 +69,20 @@ const SOURCE_UPGRADE_MAX := 5
 ## joining networks (see SimulationEngine's lane rules).
 ##
 ## A bridge is the single, deliberate, paid exception to "a new route can never
-## cross an existing tile", so it is priced and capped to stay one: at §60 plus
-## its own upkeep it loses to a detour of up to ~7 tiles, the deck costs an
-## extra tile's worth of freshness to climb, and a connected road network only
-## ever supports BRIDGE_CAP_PER_NETWORK of them. Together those keep crossings
-## rare and deliberate instead of letting the map fill with interchanges.
+## cross an existing tile", and what keeps it one is the price rather than the
+## cap (v0.7 item 76: 2 -> 10): at §60 plus §6/day it loses to a detour of up to
+## ~7 tiles, and the deck costs an extra tile's worth of freshness to climb, so
+## going around stays the right answer most of the time whatever the cap says.
+## The cap is now a backstop against a map of interchanges, not the everyday
+## brake -- and the geometry is its own limit, since no two bridges may sit side
+## by side and each needs a straight run with room to land on both sides.
+##
+## An existing bridge counts against BOTH networks it serves (see
+## SimulationEngine.network_at_bridge_cap), so ten is ten crossings *touching*
+## a network, not ten built from it.
 const BRIDGE_BUILD_COST := 60.0
 const BRIDGE_UPKEEP := 6.0
-const BRIDGE_CAP_PER_NETWORK := 2
+const BRIDGE_CAP_PER_NETWORK := 10
 ## Freshness decay multiplier for the tile a delivery spends ON the deck --
 ## ramping up and back down costs roughly one extra tile of decay, so an
 ## overpass is a genuine trade-off against going around rather than a strictly
