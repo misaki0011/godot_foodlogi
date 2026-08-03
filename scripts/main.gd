@@ -2840,8 +2840,6 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
 	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
 	_add_legend_row(_legend_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build on any route tile)")
-	_add_legend_row(_legend_box, Color("4FA8A0"), "Fork available -- Hub tool")
-	_add_legend_row(_legend_box, Color("8B6B9C"), "Junction over the hub cap")
 	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
 	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
 	_add_legend_row(_legend_box, RIVER_BRIDGE_COLOR, "River / river crossing")
