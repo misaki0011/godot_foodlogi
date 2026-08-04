@@ -138,8 +138,14 @@ const STORAGE_TYPES := {
 	GameEnums.StorageType.COOL: {"name": "Cool Storage", "build": 180.0, "upkeep": 35.0, "capacity": 100.0, "protection": 8, "mult": 0.35, "color": Color("5B8FA8")},
 }
 
+## `flow_capacity` is gone for the Small Hub (v0.7 item 77): a junction carries
+## the road it stands on (SimulationEngine.tile_capacity reads the level
+## underneath) rather than a figure of its own. The flat 250 made a §150 hub a
+## cheaper capacity upgrade than paving on dirt, and a silent capacity CUT on a
+## Main trunk. A future tier that genuinely carries more than its road brings
+## the field back.
 const HUB_TYPES := {
-	GameEnums.HubType.SMALL: {"name": "Small Hub", "build": 150.0, "upkeep": 25.0, "discount": 0.15, "flow_capacity": 250.0, "color": Color("D98E4A")},
+	GameEnums.HubType.SMALL: {"name": "Small Hub", "build": 150.0, "upkeep": 25.0, "discount": 0.15, "color": Color("D98E4A")},
 }
 
 static func food_types() -> Dictionary:

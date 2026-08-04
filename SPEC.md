@@ -274,6 +274,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **Two things get easier that were meant to be hard, and one trap gets easier to fall into.** A hub tile's flow capacity is **250, below a Main route's 400** (§4.4) -- so converting a Main trunk tile to a hub *narrows* it, and at ten per network there is more room to do that by accident. And three planned regions were designed against the old number: The Terraces rationed passes with "three passes and two hubs" (§12.1), The Delta's hook is that merging two island networks halves their hub allowance, and Oldwall's three gates were meant to compete for two hubs. Their text is updated to say cost rather than cap, but if any of them wants the old pressure back it needs a **per-region cap override** -- `MapData` has no cap field today, and both caps are global constants.
     The dev checks that reached the cap are sized from the constants now rather than written out for 2, so raising it again re-runs them at the new value instead of indexing off the end of a scratch road (`verify_mvp._test_hub_cap_per_network`, `_test_bridge_cap_per_network`). `verify_main`'s bridge check no longer reaches the cap through the tool -- ten bridgeable tiles' worth of clear map is more than that corner has -- and proves instead that a second crossing is accepted and charged; the cap itself is proved exactly, at whatever the constant holds, in `verify_mvp`. That is where the hub cap has always been proved.
 
+77. **A route drag buys the structure its gesture implies.** Two gestures were refused outright, and both had one obvious meaning. Starting a drag from the middle of a road that is already delivering was refused (item 22) because a live route could only be tapped at its own hub -- so the player had to notice that, find the Hub tool, switch to it, click the tile, switch back, and only then drag. Drawing a route straight over an existing road was refused (item 20) because crossing without joining needs a deck -- same five steps with the Bridge tool. **The drag now buys the structure itself**: a **junction hub** (§150) where it taps a live road, at either end, and a **deck** (§60) where it carries straight over one. Same structures, same prices, same rules -- what goes away is the trip to the toolbar.
+    **What was NOT relaxed is the point.** A crossing still builds a deck rather than merging the two roads, because a silent merge is the bug item 15 exists to prevent -- and where a deck cannot go (no straight run to span, a landing off the map or on a node, the network at its bridge cap) the path is refused exactly as before, marking the tile that stopped it. A delivery still never transits a source or a settlement, a drag still cannot stop on empty ground or park on a deck, and both caps still bite. The invariant is unchanged and easier to say than it was: **every shared cell is a paid structure** -- the drag either buys the junction that joins two roads or the deck that keeps them apart.
+    **The bill is the risk, so the bill is on screen.** A gesture that cost §8 a tile can now cost §368, and a player who discovers that in the toast afterwards has been robbed by their own tool. The hint bar carries the itemised total while the drag is still held ("Release to build: 3 tiles + 1 junction hub §150 -- §174"), the structure stands on its tile in the preview in its own colour -- hub orange, deck cream -- and the whole thing is one Undo away (§0.73). Affordability is checked against the **total**, structures included, so a drag that outruns the treasury goes red before release rather than half-building.
+    **A junction stops having a throughput of its own** (§4.4), which is what makes it safe to hand one out by gesture. A hub tile reported a flat 250 food/day, so a §150 hub was a cheaper capacity upgrade than paving (60 -> 250 on dirt) and, worse, a silent capacity CUT where it mattered (400 -> 250 on a Main trunk). `tile_capacity` reads the road underneath now: a junction changes what a tile does, never what it carries.
+    **Known asymmetry, stated:** only a road that is already DELIVERING costs a junction. Branching off one that isn't live yet has always been free and stays free -- nothing that was free before this becomes paid -- so the same finished network costs §150 or §0 depending on whether the road was carrying deliveries at the moment you branched. `verify_main._test_drag_buys_its_junction_and_crossing` covers both gestures end to end: the queued structure, the itemised bill, the charge, the junction's inherited capacity, Undo taking it back, the two networks still separate after a crossing, and a crossing with no straight run still refused and marked. See §4.1, §4.4.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -610,13 +616,13 @@ that a drag is needed** (v0.5 item 21 retires the old tap-to-cycle-shape
 feature) -- it never places, connects, or reshapes a tile. All route
 creation is drag-only:
 
-1. Press and hold on a valid anchor -- a source node, a built hub tile, or a
-   route tile that ISN'T part of an established route yet -- for a short
-   moment (roughly a third of a second) without releasing to switch into
-   drag mode. A press on a settlement, empty ground, or an already-
-   established route tile is not drag-eligible: every route must trace back
-   to a supply point, or continue unfinished infrastructure that isn't
-   serving any delivery yet (v0.5 items 18, 22).
+1. Press and hold on a valid anchor -- a source node, a built hub tile, or
+   any plain route tile -- for a short moment (roughly a third of a second)
+   without releasing to switch into drag mode. A press on a settlement, on
+   empty ground, on a storage building or on a bridge deck is not
+   drag-eligible. A tile carrying a LIVE delivery was excluded too until
+   v0.7 item 77; the drag now **buys the junction** there rather than
+   refusing the gesture (see rule 6).
 2. Dragging the pointer traces a candidate path across further cells, drawn
    live as a translucent line so the player can see it before committing to
    anything.
@@ -636,10 +642,10 @@ creation is drag-only:
    still a crossing, and a step between two cells of the same node records no
    connection: that would put an edge in the road graph between a node and
    itself.
-4. **The path's LAST cell must be a hub tile, a settlement node, or likewise
-   an unestablished route tile** (v0.5 items 19, 22) -- a drag that releases
-   on an already-established route tile, or on empty ground, is invalid, no
-   matter how far it traveled or how affordable it was. This is what
+4. **The path's LAST cell must be a hub tile, a settlement node, or another
+   route tile** (v0.5 items 19, 22; widened to any route tile in v0.7 item
+   77) -- a drag that releases on empty ground is invalid, no matter how far
+   it traveled or how affordable it was. This is what
    guarantees every committed drag either reaches a genuine delivery
    destination or joins onto unfinished infrastructure -- never a route that
    silently stops one tile short of the node it looked like it was reaching,
@@ -655,19 +661,28 @@ creation is drag-only:
    nothing to read until they had already given up on it.
 5. **Only a fully valid path is committed, and only on release** -- an
    invalid path places and connects nothing at all. On a valid release,
-   every queued tile and connection is written at once. A press that
-   releases before the hold threshold, or one that never actually drags to
-   a second cell, is an ordinary tap on the anchor (info tip for a node,
+   every queued tile, structure and connection is written at once. A press
+   that releases before the hold threshold, or one that never actually drags
+   to a second cell, is an ordinary tap on the anchor (info tip for a node,
    just a hint for a route tile) -- never a build.
+6. **The drag buys the structure its gesture implies** (v0.7 item 77).
+   Tapping a road that is already delivering -- starting a drag from one, or
+   releasing onto one -- builds a **junction hub** on that tile for §150.
+   Carrying straight over one builds the **deck** that lets the two cross
+   without joining, for §60. Both are the same structures the Hub and Bridge
+   tools place, at the same price and under the same rules: the gesture
+   removes the trip to the toolbar, not the cost. Where the structure cannot
+   be built -- no straight run to span, a landing off the map or on a node,
+   a network at its cap, a treasury short of the total -- the path is refused
+   exactly as before, and says which tile stopped it. The whole bill is shown
+   in the hint bar while the drag is still being held, and Undo (§10.9) takes
+   the lot back.
 
-Because the interior must be empty ground, the only pre-existing cells a
-drag ever touches are its very first and very last -- there's no way for a
-new route to physically overlap an unrelated existing one. Two separately-
-built roads, or a road and a node, only ever get linked by a drag that ends
-exactly ON that shared hub, settlement, or unestablished route tile --
-never by crossing through the middle of one another. The one exception is a
-**bridge**, a structure the player places and pays for first, which a drag
-may then run straight over without the two routes joining (see below).
+The rule this preserves is that **every shared cell is a paid structure**. A
+drag never silently overlaps an unrelated road: it either buys the junction
+that joins them or the deck that keeps them apart. Two roads still never
+merge merely by touching (§4.1's explicit connections), and a delivery still
+never transits a source or a settlement.
 
 ### Bridges: crossing a route without joining it (added in v0.5 item 32)
 
@@ -1033,7 +1048,9 @@ This preserves the topology decision: keep networks physically separate to recei
 | Regional Hub | 350 | 60 | 8 links | 25% | 600 food/day |
 | Central Hub | 800 | 140 | 14 links | 35% | 1,400 food/day |
 
-**Only the Small Hub exists in the build.** Every hub is a Small Hub, built manually on any route tile. The Regional Hub upgrade was retired in v0.4 item 28 -- its tool, its 200 upgrade cost, and the REGIONAL enum value are all removed -- and Central Hub was never in MVP scope. The rows above are kept for the numbers, should either tier be revived.
+**A hub carries the road it stands on, not a figure of its own** (v0.7 item 77). The Flow capacity column above is retired for the Small Hub: `SimulationEngine.tile_capacity` reads the level of the road underneath (60 / 160 / 400), so a junction changes what a tile *does* without changing what it *carries*. The flat 250 it used to report made a §150 hub a cheaper capacity upgrade than paving (60 → 250 on dirt) and a silent capacity CUT on a Main trunk (400 → 250) -- a junction that narrows the road it sits on is the opposite of what one is for. A future Regional/Central tier that genuinely carries more than its road would reinstate the field.
+
+**Only the Small Hub exists in the build.** Every hub is a Small Hub, built manually on any route tile, or bought by the drag that taps a live road (§4.1). The Regional Hub upgrade was retired in v0.4 item 28 -- its tool, its 200 upgrade cost, and the REGIONAL enum value are all removed -- and Central Hub was never in MVP scope. The rows above are kept for the numbers, should either tier be revived.
 
 ### Hub last-delivery hover view (added in v0.3)
 
@@ -2924,7 +2941,8 @@ compatible_food_categories: list
 hub_id: string
 hub_type: small | regional | central
 link_capacity: number
-flow_capacity: number
+flow_capacity: number   # unused by the Small Hub since v0.7 item 77 -- a
+                        # junction carries the road it stands on
 route_discount: number
 daily_upkeep: number
 ```

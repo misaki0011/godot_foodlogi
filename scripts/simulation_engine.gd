@@ -206,6 +206,12 @@ static func _counts_as_route_end(node: NodeData, only_source_id: String) -> bool
 ## completed-route-fork requirement); this cap is the only remaining
 ## constraint, and it's checked live rather than cached on the cell.
 static func network_at_hub_cap(state: GameState, pos: Vector2i) -> bool:
+	return hubs_on_network(state, pos) >= GameBalance.HUB_CAP_PER_NETWORK
+
+## The count behind network_at_hub_cap. Separate because a route drag can now
+## queue a junction of its own (Main._recompute_drag_validity, v0.7 item 77) and
+## has to know how much of the budget is left, not merely whether any is.
+static func hubs_on_network(state: GameState, pos: Vector2i) -> int:
 	var comp_of := road_components(state)
 	# Hubs are never built on a bridge tile (Main._do_build_hub refuses), so
 	# ground lanes are the only ones that can carry or host one.
@@ -214,7 +220,7 @@ static func network_at_hub_cap(state: GameState, pos: Vector2i) -> bool:
 	for p in state.grid.keys():
 		if state.grid[p].kind == "hub" and comp_of.get(vertex(p, LANE_GROUND), -2) == comp:
 			count += 1
-	return count >= GameBalance.HUB_CAP_PER_NETWORK
+	return count
 
 ## True when the road network `pos` sits on already carries
 ## GameBalance.BRIDGE_CAP_PER_NETWORK bridges, so Main._do_build_bridge must
@@ -227,6 +233,12 @@ static func network_at_hub_cap(state: GameState, pos: Vector2i) -> bool:
 ## and counting it once would let a player keep the budget clear by always
 ## approaching from the other side.
 static func network_at_bridge_cap(state: GameState, pos: Vector2i) -> bool:
+	return bridges_on_network(state, pos) >= GameBalance.BRIDGE_CAP_PER_NETWORK
+
+## The count behind network_at_bridge_cap, for the same reason hubs_on_network
+## exists: one drag may now queue several crossings and must not queue past the
+## budget just because none of them is in the grid yet.
+static func bridges_on_network(state: GameState, pos: Vector2i) -> int:
 	var comp_of := road_components(state)
 	var comp = comp_of.get(vertex(pos, LANE_GROUND), -1)
 	var count := 0
@@ -235,7 +247,7 @@ static func network_at_bridge_cap(state: GameState, pos: Vector2i) -> bool:
 			continue
 		if comp_of.get(vertex(p, LANE_GROUND), -2) == comp or comp_of.get(vertex(p, LANE_DECK), -3) == comp:
 			count += 1
-	return count >= GameBalance.BRIDGE_CAP_PER_NETWORK
+	return count
 
 ## Dijkstra minimizing cumulative freshness-decay weight; ties broken
 ## naturally by whichever path accumulates less decay first. A delivery path
@@ -360,7 +372,16 @@ static func tile_capacity(state: GameState, pos: Vector2i) -> float:
 	if cell.kind == "route":
 		return GameBalance.ROUTE_LEVELS[cell.level].cap
 	if cell.kind == "hub":
-		return GameBalance.HUB_TYPES[cell.htype].flow_capacity
+		# A hub is a junction, not a throughput of its own (v0.7 item 77): the
+		# road it stands on carries what that road level carries, exactly as it
+		# did before the hub was built. Its own figure used to be a flat 250,
+		# which made a hub a cheap capacity UPGRADE on dirt (60 -> 250) and a
+		# silent capacity CUT on a Main trunk (400 -> 250) -- a junction that
+		# narrows the road it sits on is the opposite of what one is for, and
+		# a §150 building that outperforms a §100 road upgrade is not a choice
+		# anyone weighs twice. `level` is the road underneath, recorded when the
+		# hub was built and handed back when it is cleared.
+		return GameBalance.ROUTE_LEVELS[cell.get("level", "dirt")].cap
 	if cell.kind == "storage":
 		return GameBalance.STORAGE_TYPES[cell.stype].capacity
 	return INF

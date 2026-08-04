@@ -340,6 +340,16 @@ var _drag_invalid_reason := ""
 ## looking at. These are drawn as solid blocks standing above the preview, so
 ## the eye lands on the tile that is the problem (v0.7 item 75).
 var _drag_blocked_cells: Array[Vector2i] = []
+## Structures this drag will buy on its way (v0.7 item 77), queued during
+## validity and written by _commit_drag: a junction where it taps a live road,
+## a deck where it carries straight over one. Both are the same structures the
+## Hub and Bridge tools place, at the same price -- what the gesture removes is
+## the tool trip, not the cost.
+var _drag_new_hubs: Array[Vector2i] = []
+var _drag_new_bridges: Array[Array] = [] # [[Vector2i cell, Vector2i deck_axis], ...]
+## What the drag will charge, spelled out, for the hint bar -- a §8-a-tile
+## gesture that quietly became §368 is the one way this feature could hurt.
+var _drag_cost_summary := ""
 var _drag_preview_visuals: Node3D
 
 const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
@@ -498,22 +508,22 @@ func _start_press(screen_position: Vector2) -> void:
 	_press_cell = cell
 	_press_start_msec = Time.get_ticks_msec()
 	_drag_active = false
-	# A route drag can start FROM a source node, a built hub tile, or a plain
-	# route tile that ISN'T part of an established route (v0.5 item 22) --
-	# never from empty ground, a settlement, or a route tile that's already
-	# live (established_route_cells) -- so an already-delivering route can
-	# only ever be extended through its own hub/settlement, while unfinished
-	# infrastructure that isn't serving any delivery yet can be picked up and
-	# continued from any of its own tiles. The drag can still cross and link
-	# to any existing tile/node along the way; only the starting anchor is
-	# restricted. Other tools behave exactly as a normal click on release.
+	# A route drag can start FROM a source node, a built hub tile, or any plain
+	# route tile -- never from empty ground, a settlement, a storage building or
+	# a bridge deck (a crossing is passed over, never anchored to).
+	#
+	# A tile carrying a LIVE delivery used to be excluded too (v0.5 item 22), so
+	# a delivering road could only be tapped at its own hub or settlement. The
+	# drag buys that junction itself now (v0.7 item 77) rather than refusing the
+	# gesture and leaving the player to find the Hub tool, switch to it, click
+	# the tile, and switch back.
 	var node := _node_at(cell)
 	var cell_data = _state.grid.get(cell)
 	_drag_kind = ""
 	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (
 		(node != null and node.node_type == GameEnums.NodeType.SOURCE) or
 		(cell_data != null and cell_data.kind == "hub") or
-		(cell_data != null and cell_data.kind == "route" and not SimulationEngine.is_bridge(_state, cell) and not _established_route_cells().has(cell))
+		(cell_data != null and cell_data.kind == "route" and not SimulationEngine.is_bridge(_state, cell))
 	)
 	if _press_eligible:
 		_drag_kind = "route"
@@ -621,6 +631,9 @@ func _recompute_drag_validity() -> void:
 	_drag_new_cells.clear()
 	_drag_new_connections.clear()
 	_drag_blocked_cells.clear()
+	_drag_new_hubs.clear()
+	_drag_new_bridges.clear()
+	_drag_cost_summary = ""
 	var newly_built: Dictionary = {} # cells this same drag has already queued
 	var total_cost := 0.0
 	var last_index := _drag_path.size() - 1
@@ -652,6 +665,17 @@ func _recompute_drag_validity() -> void:
 		if pre_existing:
 			if i == last_index or i < head_span or i >= _drag_path.size() - tail_span or _crosses_bridge_at(i):
 				continue
+			# Carrying straight over a road builds the deck that lets the two
+			# cross without joining -- the same structure the Bridge tool
+			# places, at the same §60, decided by the gesture instead of by a
+			# trip to the toolbar (v0.7 item 77). Where a deck cannot go, the
+			# path is refused exactly as before rather than quietly merging the
+			# two roads: a silent merge is the bug ROUTE-09 exists to prevent.
+			var deck_axis := _auto_bridge_axis_at(i)
+			if deck_axis != Vector2i.ZERO and not _bridge_budget_spent(cell):
+				_drag_new_bridges.append([cell, deck_axis])
+				total_cost += GameBalance.BRIDGE_BUILD_COST
+				continue
 			_drag_valid = false
 			_drag_blocked_cells.append(cell)
 			if _drag_invalid_reason == "":
@@ -663,31 +687,119 @@ func _recompute_drag_validity() -> void:
 		_drag_new_cells.append(cell)
 	if not _drag_valid:
 		return
-	if total_cost > _state.balance:
-		_drag_valid = false
-		_drag_invalid_reason = "Not enough treasury for the whole path (§%d needed)." % roundi(total_cost)
-		return
-	# A drag must end at a hub, a settlement, or a plain route tile that ISN'T
-	# part of an established route yet (v0.5 items 19/22) -- this guarantees a
-	# completed drag either reaches a genuine delivery destination, or joins
-	# onto unfinished infrastructure that isn't serving any delivery yet.
-	# An already-established route tile can only ever be reached through its
-	# own hub or settlement, never picked up again mid-network.
+	# A drag must end at a hub, a settlement, or a plain route tile (v0.5 items
+	# 19/22, relaxed in v0.7 item 77) -- this guarantees a completed drag
+	# either reaches a genuine delivery destination or joins onto another road.
+	# Tapping a road that is already DELIVERING buys a junction there, at both
+	# ends alike: leaving one is a branch out, arriving at one is a branch in,
+	# and they are the same act seen from either side.
 	var end_cell: Vector2i = _drag_path[-1]
 	var end_node := _node_at(end_cell)
 	var end_cell_data = _state.grid.get(end_cell)
 	var ends_at_hub: bool = end_cell_data != null and end_cell_data.kind == "hub"
 	var ends_at_settlement: bool = end_node != null and end_node.node_type == GameEnums.NodeType.SETTLEMENT
 	var ends_at_bridge: bool = SimulationEngine.is_bridge(_state, end_cell)
-	var ends_at_unestablished_route: bool = end_cell_data != null and end_cell_data.kind == "route" and not ends_at_bridge and not _established_route_cells().has(end_cell)
-	if not (ends_at_hub or ends_at_settlement or ends_at_unestablished_route):
+	var ends_at_route: bool = end_cell_data != null and end_cell_data.kind == "route" and not ends_at_bridge
+	if not (ends_at_hub or ends_at_settlement or ends_at_route):
 		_drag_valid = false
 		# Stopping ON a deck would leave a route hanging in mid-air over
 		# somebody else's road, which is exactly the mess bridges are meant to
 		# avoid -- a crossing is something you pass over, not somewhere you park.
 		_drag_invalid_reason = ("A route can't stop on a bridge -- carry straight over and land on the far side."
 			if ends_at_bridge
-			else "A route must end at a hub, a settlement, or an unfinished route tile.")
+			else "A route must end at a hub, a settlement, or another route tile.")
+		return
+	# The junctions, last, because both ends have to have survived their own
+	# rules before it is worth asking what tapping them costs.
+	for anchor in [_drag_path[0], end_cell]:
+		if not _needs_junction_at(anchor) or _drag_new_hubs.has(anchor):
+			continue
+		if _hub_budget_spent(anchor):
+			_drag_valid = false
+			_drag_blocked_cells.append(anchor)
+			_drag_invalid_reason = "That road already carries %d junction hubs -- the cap is reached, so this branch has nowhere to tap in." % GameBalance.HUB_CAP_PER_NETWORK
+			return
+		_drag_new_hubs.append(anchor)
+		total_cost += GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+	if total_cost > _state.balance:
+		_drag_valid = false
+		_drag_invalid_reason = "Not enough treasury for the whole path -- %s, §%d needed." % [_bill_text(), roundi(total_cost)]
+		_drag_new_hubs.clear()
+		_drag_new_bridges.clear()
+		return
+	_drag_cost_summary = "%s -- §%d" % [_bill_text(), roundi(total_cost)]
+
+## What this drag is about to charge for, itemised. Only ever shown for a valid
+## path, so it is a price rather than a diagnosis.
+func _bill_text() -> String:
+	var parts: Array[String] = []
+	if not _drag_new_cells.is_empty():
+		parts.append("%d tile%s" % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	if not _drag_new_hubs.is_empty():
+		parts.append("%d junction hub%s §%d" % [_drag_new_hubs.size(), "" if _drag_new_hubs.size() == 1 else "s", roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)])
+	if not _drag_new_bridges.is_empty():
+		parts.append("%d bridge%s §%d" % [_drag_new_bridges.size(), "" if _drag_new_bridges.size() == 1 else "s", roundi(GameBalance.BRIDGE_BUILD_COST)])
+	return " + ".join(parts) if not parts.is_empty() else "nothing new"
+
+## Whether tapping `cell` as one end of a drag has to buy a junction there.
+##
+## Only a road that is already DELIVERING costs one. A road that isn't live yet
+## has always been free to pick up and extend (v0.5 item 22) and stays free --
+## nothing that was free before this becomes paid -- and a tile that is already
+## a hub needs nothing bought. The asymmetry is real and worth knowing: the same
+## finished network costs §150 or §0 depending on whether the road was carrying
+## deliveries at the moment you branched off it.
+func _needs_junction_at(cell: Vector2i) -> bool:
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route" or SimulationEngine.is_bridge(_state, cell):
+		return false
+	return _established_route_cells().has(cell)
+
+## Cap checks that also count what THIS drag has already queued -- the queued
+## structures are not in the grid yet, so asking the engine alone would let one
+## gesture buy its way past a cap the tools refuse one click at a time.
+## Deliberately conservative where a single drag touches two different networks:
+## queued structures are counted against each, which can refuse a legal path but
+## never permits an illegal one.
+func _hub_budget_spent(cell: Vector2i) -> bool:
+	return SimulationEngine.hubs_on_network(_state, cell) + _drag_new_hubs.size() >= GameBalance.HUB_CAP_PER_NETWORK
+
+func _bridge_budget_spent(cell: Vector2i) -> bool:
+	return SimulationEngine.bridges_on_network(_state, cell) + _drag_new_bridges.size() >= GameBalance.BRIDGE_CAP_PER_NETWORK
+
+## The axis a deck would run along to carry the drag straight over the road at
+## _drag_path[i], or Vector2i.ZERO when no deck can go there. Every condition is
+## the Bridge tool's own (_do_build_bridge): the gesture buys exactly what the
+## tool would have built, so a crossing the tool refuses is refused here too.
+func _auto_bridge_axis_at(i: int) -> Vector2i:
+	if i <= 0 or i >= _drag_path.size() - 1:
+		return Vector2i.ZERO
+	var cell: Vector2i = _drag_path[i]
+	var incoming: Vector2i = cell - _drag_path[i - 1]
+	var outgoing: Vector2i = _drag_path[i + 1] - cell
+	# A crossing goes straight through. A corner on someone else's road is a
+	# knot, not an overpass.
+	if incoming != outgoing:
+		return Vector2i.ZERO
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route" or SimulationEngine.is_bridge(_state, cell):
+		return Vector2i.ZERO
+	# A river tile is already a crossing; a second deck can't be stacked on it.
+	if _map_data.is_river(cell.x, cell.y):
+		return Vector2i.ZERO
+	var axis := _deck_axis_for(cell)
+	# The road below must run ACROSS the way the drag is going -- otherwise the
+	# drag is running along the road, not over it.
+	if axis == Vector2i.ZERO or (axis.x != 0) != (incoming.x != 0):
+		return Vector2i.ZERO
+	for step in [axis, -axis]:
+		var landing: Vector2i = cell + step
+		if not _cell_in_bounds(landing) or _node_at(landing) != null or SimulationEngine.is_bridge(_state, landing):
+			return Vector2i.ZERO
+		for queued in _drag_new_bridges:
+			if queued[0] == landing:
+				return Vector2i.ZERO
+	return axis
 
 ## How many cells from `from_index` (walking by `step`) belong to the same node
 ## as the cell at `from_index`. 0 when that cell isn't a node at all, so an
@@ -755,11 +867,29 @@ func _commit_drag() -> void:
 		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
 		_state.grid[cell] = {"kind": "route", "level": "dirt"}
 	_arm_placement_pops(_drag_new_cells)
+	# The structures the gesture bought (v0.7 item 77). Both go onto tiles that
+	# already exist, so neither is in _drag_new_cells and neither pops with the
+	# road: only the structure lands, exactly as when its own tool places it.
+	for cell in _drag_new_hubs:
+		_state.balance -= GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+		# `level` is the road underneath, carried so a bulldoze can hand it back
+		# and so the junction keeps carrying what that road carried.
+		_state.grid[cell] = {"kind": "hub", "htype": GameEnums.HubType.SMALL, "level": _state.grid[cell].level}
+		_pending_tile_pops[cell] = {"part": TilePart.STRUCTURE, "delay": 0.0}
+	for entry in _drag_new_bridges:
+		var cell: Vector2i = entry[0]
+		_state.balance -= GameBalance.BRIDGE_BUILD_COST
+		_state.grid[cell]["bridge_axis"] = entry[1]
+		_pending_tile_pops[cell] = {"part": TilePart.STRUCTURE, "delay": 0.0}
 	for pair in _drag_new_connections:
 		_state.add_connection(pair[0], pair[1])
 	var parts: Array[String] = []
 	if not _drag_new_cells.is_empty():
 		parts.append("%d new tile%s" % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	if not _drag_new_hubs.is_empty():
+		parts.append("%d junction hub%s" % [_drag_new_hubs.size(), "" if _drag_new_hubs.size() == 1 else "s"])
+	if not _drag_new_bridges.is_empty():
+		parts.append("%d bridge%s" % [_drag_new_bridges.size(), "" if _drag_new_bridges.size() == 1 else "s"])
 	if not _drag_new_connections.is_empty():
 		parts.append("%d connection%s" % [_drag_new_connections.size(), "" if _drag_new_connections.size() == 1 else "s"])
 	_show_toast("Built %s." % " and ".join(parts))
@@ -867,6 +997,9 @@ func _clear_drag_preview() -> void:
 	_drag_new_cells.clear()
 	_drag_new_connections.clear()
 	_drag_blocked_cells.clear()
+	_drag_new_hubs.clear()
+	_drag_new_bridges.clear()
+	_drag_cost_summary = ""
 	_sweep_cells.clear()
 	_sweep_cost = 0.0
 	_update_hint()
@@ -889,7 +1022,16 @@ func _update_drag_preview() -> void:
 		_add_drag_marker(world_positions[i], color)
 		if i > 0:
 			_add_drag_segment(world_positions[i - 1], world_positions[i], color)
-	# Last, so a blocker is never buried under the path markers it explains.
+	# Structures and blockers last, so neither is buried under the path markers
+	# it explains. A structure the drag will BUY stands on the tile in its own
+	# colour -- the hub orange and the deck cream the finished thing will be --
+	# so the §150 or §60 is visible on the map, not only in the hint bar.
+	for cell in _drag_new_hubs:
+		_add_drag_structure(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.45, 0),
+			GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color)
+	for entry in _drag_new_bridges:
+		var bridge_cell: Vector2i = entry[0]
+		_add_drag_structure(_terrain.map_to_local(Vector3i(bridge_cell.x, 0, bridge_cell.y)) + Vector3(0, 1.45, 0), BRIDGE_DECK_COLOR)
 	for cell in _drag_blocked_cells:
 		_add_drag_blocker(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.45, 0))
 
@@ -906,12 +1048,18 @@ func _add_drag_marker(pos: Vector3, color: Color) -> void:
 ## and cube-shaped against the flat translucent plates of the path itself, so it
 ## reads as an obstruction rather than as another step of the drag.
 func _add_drag_blocker(pos: Vector3) -> void:
+	_add_drag_structure(pos, DRAG_PREVIEW_BLOCKED_COLOR)
+
+## Same block, whatever it means: a refusal in hot red, a structure the drag
+## will buy in that structure's own colour. One shape for "this tile is not
+## just road" keeps the preview readable at a glance.
+func _add_drag_structure(pos: Vector3, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = DRAG_BLOCKER_SIZE
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos
-	mesh_instance.material_override = _drag_preview_material(DRAG_PREVIEW_BLOCKED_COLOR)
+	mesh_instance.material_override = _drag_preview_material(color)
 	_drag_preview_visuals.add_child(mesh_instance)
 
 ## `a` and `b` are always orthogonal neighbors (one grid step apart), so the
@@ -2553,6 +2701,7 @@ func _set_tool(tool: String) -> void:
 ## had nothing to read until they had already given up on it. In red, since it
 ## is a refusal rather than advice.
 const HINT_REFUSED_COLOR := Color("E8A0A0")
+const HINT_BILL_COLOR := Color("A8D8B0")
 
 func _update_hint() -> void:
 	if _hint_label == null:
@@ -2560,6 +2709,14 @@ func _update_hint() -> void:
 	if _drag_active and not _drag_valid and _drag_invalid_reason != "":
 		_hint_label.text = _drag_invalid_reason
 		_hint_label.add_theme_color_override("font_color", HINT_REFUSED_COLOR)
+		return
+	# A valid drag carries its bill, because a drag can now buy structures as
+	# well as road (v0.7 item 77) -- a §8-a-tile gesture that quietly turns into
+	# §368 is the one way that could hurt, and the answer is to say so before
+	# the player lets go rather than in the toast afterwards.
+	if _drag_active and _drag_valid and _drag_cost_summary != "":
+		_hint_label.text = "Release to build: %s" % _drag_cost_summary
+		_hint_label.add_theme_color_override("font_color", HINT_BILL_COLOR)
 		return
 	_hint_label.text = TOOL_HINTS.get(_tool, "")
 	_hint_label.remove_theme_color_override("font_color")
