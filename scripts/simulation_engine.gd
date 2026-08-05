@@ -409,8 +409,8 @@ static func hub_split_summary(state: GameState, pos: Vector2i) -> Dictionary:
 ## Runs one full day: demand generation, demand-pull source
 ## assignment (best predicted freshness first, upkeep as an implicit
 ## tie-break via Dijkstra), capacity limits, freshness, storage
-## preservation, hub discounts/upkeep, income/spoilage, satisfaction, and
-## the efficiency grade/score chase. See SPEC.md §17.
+## preservation, hub discounts/upkeep, income, satisfaction, and the
+## efficiency grade/score chase. See SPEC.md §17.
 static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	var report := DayReportData.new()
 	report.day = state.day
@@ -436,11 +436,9 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 
 	var flows: Array[Dictionary] = []
 	var income := 0.0
-	## Reported separately so the player can see what the delivery rule is
-	## paying and what it is costing them, rather than only a net figure.
+	## Reported separately so the player can see what chasing freshness is
+	## actually worth, rather than only a net figure.
 	var bonus_income := 0.0
-	var withheld_income := 0.0
-	var spoilage_cost := 0.0
 	var delivered_total := 0.0
 	var requested_total := 0.0
 	var fresh_weighted_sum := 0.0
@@ -452,8 +450,8 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	for settlement in settlements:
 		# Only the demand lines whose orders have opened are simulated
 		# (DEV-01). A settlement whose first order is still days out stands
-		# on the map wanting nothing: it is not short-delivered, it costs no
-		# withheld income, and -- critically -- it is not scored, since
+		# on the map wanting nothing: it is not short-delivered, it earns
+		# nothing, and -- critically -- it is not scored, since
 		# averaging a settlement the player is not yet allowed to serve into
 		# happiness would make the grade a measure of the calendar rather
 		# than of the network. See OrderBook.
@@ -466,7 +464,6 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		var requested := 0.0
 		var fresh_sum := 0.0
 		var fresh_count := 0.0
-		var rejected := 0.0
 		var food_status := {}
 		settlement_food_status[settlement.node_id] = food_status
 		for food_id in demand:
@@ -482,15 +479,10 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			var need: float = maxf(1.0, roundf(demand[food_id]))
 			requested += need
 			requested_total += need
-			# rejected_fresh_sum is amount-weighted like fresh_sum, but over the
-			# cargo min_freshness turned away -- without it a short line cannot
-			# say WHY it fell short, since fresh_sum only ever sees what was
-			# accepted (see UI-04's rejected row).
-			# `earned` is what this line actually paid and `withheld` what it
-			# would have paid had the whole order arrived. Recorded here rather
-			# than re-derived in the UI, so the number a row prints can never
-			# drift from the number the treasury was credited (see UI-04).
-			food_status[food_id] = {"requested": need, "delivered": 0.0, "rejected": 0.0, "fresh_sum": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 0.0}
+			# `earned` is what this line paid, recorded here rather than
+			# re-derived in the UI, so the number a row prints can never drift
+			# from the number the treasury was credited (see UI-04).
+			food_status[food_id] = {"requested": need, "delivered": 0.0, "fresh_sum": 0.0, "earned": 0.0}
 			var food: FoodData = foods[food_id]
 
 			var candidates: Array[Dictionary] = []
@@ -503,8 +495,10 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 				candidates.append({"src": src, "path": path, "predicted": simulate_freshness(state, path, food)})
 			candidates.sort_custom(func(a, b): return a.predicted > b.predicted)
 
-			# Held back rather than banked as each cart lands: this line only
-			# pays out if the settlement's whole order is met (see below).
+			# Banked as each cart lands (v0.8). It used to be held back until the
+			# settlement's whole order was met and forfeited otherwise; now
+			# delivering IS being paid, and completion decides progress rather
+			# than pay (OrderBook). See GameBalance.FRESHNESS_BONUS_RATE.
 			var line_income := 0.0
 
 			for c in candidates:
@@ -524,54 +518,57 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 				if amt <= 0.0:
 					continue
 				var fresh: float = simulate_freshness(state, c.path, food)
-				var mult: float = GameBalance.freshness_multiplier(fresh)
-				var rejected_by_strictness: bool = fresh < settlement.min_freshness
 				for pos in c.path:
 					tile_usage[pos] = float(tile_usage.get(pos, 0.0)) + amt
 				supply_left[sup_key] = avail - amt
 				need -= amt
 
-				if rejected_by_strictness or mult == 0.0:
-					rejected += amt
-					food_status[food_id].rejected += amt
-					food_status[food_id].rejected_fresh_sum += fresh * amt
-					spoilage_cost += amt * food.base_value * 0.5
-					flows.append({"food": food_id, "path": c.path, "delivered": 0.0, "rejected": amt, "settlement": settlement.node_id, "source": c.src.node_id})
-				else:
-					fulfilled += amt
-					delivered_total += amt
-					food_status[food_id].delivered += amt
-					food_status[food_id].fresh_sum += fresh * amt
-					line_income += amt * food.base_value * mult
-					fresh_sum += fresh * amt
-					fresh_count += amt
-					fresh_weighted_sum += fresh * amt
-					fresh_weight_total += amt
-					flows.append({"food": food_id, "path": c.path, "delivered": amt, "fresh": fresh, "settlement": settlement.node_id, "source": c.src.node_id})
+				# Every cart that arrives is delivered and paid for. There is no
+				# freshness a settlement turns away any more (v0.8): cargo that
+				# crawls in at 20% is worth a fifth of its value, not a fine and a
+				# binned load. Freshness enters the price HERE, per cart at that
+				# cart's own freshness, rather than through a tier table -- the
+				# bonus below is the only step left in the whole payment.
+				fulfilled += amt
+				delivered_total += amt
+				food_status[food_id].delivered += amt
+				food_status[food_id].fresh_sum += fresh * amt
+				line_income += amt * food.base_value * (fresh / 100.0)
+				fresh_sum += fresh * amt
+				fresh_count += amt
+				fresh_weighted_sum += fresh * amt
+				fresh_weight_total += amt
+				flows.append({"food": food_id, "path": c.path, "delivered": amt, "fresh": fresh, "settlement": settlement.node_id, "source": c.src.node_id})
 
 			# Payout, matching the three states of this line's speech bubble
-			# (Main._render_settlement_bubbles): red pays nothing, amber pays
-			# the line, green pays the line plus FRESHNESS_BONUS_RATE again.
-			# A short order is not a partial sale -- the settlement went
-			# without, so the run earns nothing however fresh what did arrive
-			# happened to be.
+			# (Main._render_settlement_bubbles): red is nothing arrived and so
+			# nothing earned, amber is delivered and paid, green is delivered at
+			# the settlement's own bonus_freshness or better and paid
+			# FRESHNESS_BONUS_RATE again on top.
+			#
+			# The bonus is tested on the line's AMOUNT-WEIGHTED average rather
+			# than per cart, so a line fed by two sources is judged as the one
+			# delivery the settlement actually received -- which is also what the
+			# bubble's freshness figure shows.
+			#
 			# `line` aliases the food_status entry (Dictionaries are references),
-			# so writing earned/withheld here records them on the line itself.
+			# so writing earned here records it on the line itself.
 			var line: Dictionary = food_status[food_id]
-			if line.delivered >= line.requested - 0.01 and line.delivered > 0.0:
-				income += line_income
-				line.earned = line_income
-				if line.fresh_sum / line.delivered >= settlement.bonus_freshness:
-					var bonus: float = line_income * GameBalance.FRESHNESS_BONUS_RATE
-					income += bonus
-					bonus_income += bonus
-					line.earned += bonus
-			else:
-				withheld_income += line_income
-				line.withheld = line_income
+			income += line_income
+			line.earned = line_income
+			if line.delivered > 0.0 and line.fresh_sum / line.delivered >= settlement.bonus_freshness:
+				var bonus: float = line_income * GameBalance.FRESHNESS_BONUS_RATE
+				income += bonus
+				bonus_income += bonus
+				line.earned += bonus
 		var avg_fresh: float = fresh_sum / fresh_count if fresh_count > 0.0 else 0.0
 		var fulfill_rate: float = fulfilled / requested if requested > 0.0 else 1.0
-		var waste_rate: float = rejected / requested if requested > 0.0 else 0.0
+		# Waste is what the settlement asked for and did not get. The term used
+		# to be cargo REJECTED for arriving under min_freshness, which no longer
+		# happens at all (v0.8) -- but a shortfall is still the thing a
+		# settlement is unhappy about, and without this the score would read a
+		# half-served town as merely 60% fulfilled rather than short.
+		var waste_rate: float = (requested - fulfilled) / requested if requested > 0.0 else 0.0
 		var sat: float = fulfill_rate * 60.0 + minf(1.0, avg_fresh / settlement.bonus_freshness) * 40.0 - waste_rate * 30.0
 		sat = clampf(sat, 0.0, 100.0)
 		settlement_scores.append({"settlement": settlement, "fulfill_rate": fulfill_rate, "avg_fresh": avg_fresh, "waste_rate": waste_rate, "sat": sat})
@@ -602,8 +599,12 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 		elif cell.kind == "storage":
 			storage_upkeep += GameBalance.STORAGE_TYPES[cell.stype].upkeep
 
+	# Upkeep is the only thing a day costs now (v0.8): the spoilage charge that
+	# used to sit beside it billed the player 0.5x the value of cargo the
+	# settlement had refused, which meant a route too long to serve well took
+	# money OFF the treasury for having run at all.
 	var total_upkeep := route_upkeep + storage_upkeep + hub_upkeep
-	var profit := income - total_upkeep - spoilage_cost
+	var profit := income - total_upkeep
 	state.balance += profit
 
 	var avg_freshness_overall: float = fresh_weighted_sum / fresh_weight_total if fresh_weight_total > 0.0 else 0.0
@@ -653,12 +654,10 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 
 	report.income = income
 	report.bonus_income = bonus_income
-	report.withheld_income = withheld_income
 	report.route_upkeep = route_upkeep
 	report.storage_upkeep = storage_upkeep
 	report.hub_upkeep = hub_upkeep
 	report.total_upkeep = total_upkeep
-	report.spoilage_cost = spoilage_cost
 	report.profit = profit
 	report.avg_freshness_overall = avg_freshness_overall
 	report.waste_pct = waste_pct

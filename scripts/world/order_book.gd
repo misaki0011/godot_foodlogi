@@ -36,15 +36,18 @@ class_name OrderBook
 ## WHAT COUNTS AS FILLED
 ## ---------------------
 ## A line is filled when the whole requested amount arrives, at any freshness
-## the settlement will accept -- exactly the amber speech bubble, and exactly
-## the point at which the line starts paying (SimulationEngine.run_day: red
-## pays nothing, amber pays the line, green pays it plus a bonus). Freshness
-## above that does one job only: it decides how well the player is paid, never
-## whether they advance.
+## at all. Freshness has one job -- it decides how well the player is paid --
+## and it never decides whether they advance.
 ##
-## `min_freshness` still bites, but implicitly and correctly: run_day rejects
-## anything under it before it counts as delivered at all, so a line can never
-## be filled on cargo that arrived too spoiled to accept.
+## Since v0.8 this is the ONLY thing completing an order does. Delivering is
+## what pays now, per unit as it lands, so a half-filled line is a half sale
+## rather than nothing (see GameBalance.FRESHNESS_BONUS_RATE). That leaves
+## "the whole order arrived" as the region's progress gate and nothing else,
+## which is the right job for it: growth should wait on a settlement being
+## properly served, while the player's income tracks what they actually moved
+## today. It also keeps the pacing this book was built around -- a line that
+## is nearly filled every day opens nothing, so the region does not run away
+## from a network that cannot yet keep up with it.
 ##
 ## Filled is latched. Once the player has proven they can serve a line, that
 ## is proven for good -- a later bad day must not un-open an order.

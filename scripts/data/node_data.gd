@@ -63,7 +63,17 @@ extends Resource
 ## This is the settlement's EVENTUAL appetite -- only the lines whose orders
 ## have opened are actually demanded (see OrderBook).
 @export var demand: Dictionary = {}
-## Settlement-only: reject deliveries below this freshness.
+## Settlement-only, and RETIRED as a rule in v0.8: this used to be the
+## freshness below which a settlement refused a delivery outright -- the cargo
+## binned, the day's demand and the source's supply spent anyway, and a
+## spoilage charge on top. Nothing reads it now; every delivery arrives and is
+## paid what its freshness is worth (GameBalance.FRESHNESS_BONUS_RATE).
+##
+## The field stays because the authored maps still carry values for it and
+## dropping it would rewrite every .tres for no gain, and because a later
+## region may well want a "this place will not touch anything under X" rule
+## again -- as a settlement's character rather than as the whole game's
+## failure mode.
 @export var min_freshness: float = 0.0
 ## Settlement-only: freshness at/above which delivery earns the bonus tier.
 @export var bonus_freshness: float = 0.0

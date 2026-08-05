@@ -158,24 +158,48 @@ static func food_types() -> Dictionary:
 		"seafood": _food("seafood", "Seafood", 10.0, 6.0, Color("5B8FA8")),
 	}
 
-## A food line pays nothing at all unless the settlement's whole requested
-## amount arrived (see SimulationEngine.run_day): a half-filled order is
-## not a half sale, it is a settlement that went without. On top of that,
-## a line that arrived at the settlement's own bonus_freshness or better
-## pays this much again as a bonus -- the difference between the amber and
-## green speech bubbles on the map.
+## ---------- what a delivery pays (v0.8) ----------
+## Two rules, and they are the whole economy:
+##
+##     paid  = amount delivered x base_value x (freshness / 100)
+##     bonus = paid x FRESHNESS_BONUS_RATE, if the line's average freshness
+##             reached the settlement's own bonus_freshness
+##
+## So a connected source and settlement always earn -- delivering IS being
+## paid -- and freshness decides how well. That is the game stated in two
+## sentences, which is what the old rules could not manage:
+##
+## GONE: the all-or-nothing gate. A line used to pay nothing whatsoever
+## unless the settlement's whole requested amount arrived, so a player's
+## first road could run perfectly and bank §0. It was not even reachable
+## late: region 1's own totals out-run its sources on three foods (grain
+## 85 vs the Farm's 80, bread 95 vs 80, vegetables 110 vs the Garden's 90),
+## so once every line is open some of them cannot be filled at all until a
+## source is upgraded. Paying per unit means the player earns the whole way
+## up that ramp instead of only at the top of it. Filling the WHOLE order is
+## still what opens the next one (OrderBook), so completion keeps a job --
+## it decides progress rather than pay.
+##
+## GONE: the 1.25/1.0/0.6/0.25 tier table this replaced. The map shows three
+## speech-bubble states and the tiers paid out six ways, so two lines both
+## reading green could pay 1.25x and 1.5625x with nothing on screen saying
+## why. A straight proportion has no cliffs -- 71% pays exactly 1% more than
+## 70% -- and the number that pays is the number already printed on the
+## bubble.
+##
+## GONE: settlement.min_freshness as a refusal, and the spoilage charge that
+## came with it. Cargo under the floor was binned, still consumed the day's
+## demand AND its source's supply, and then cost 0.5x its value -- one
+## mistake punished four ways, with the goods destroyed. Under-fresh cargo
+## now simply arrives and pays what it is worth.
+##
+## The rate stays at 0.25 rather than rising, because the proportion above
+## already does the retired tiers' work: a green line at 85% pays
+## 0.85 x 1.25 = 1.06x base against an amber line at 68% paying 0.68x, a
+## 1.56x gap -- the same gap the tier table plus the bonus used to produce
+## (1.25 x 1.25 = 1.5625). Same incentive to chase green, one mechanism
+## instead of two.
 const FRESHNESS_BONUS_RATE := 0.25
-
-static func freshness_multiplier(freshness: float) -> float:
-	if freshness >= 90.0:
-		return 1.25
-	if freshness >= 60.0:
-		return 1.0
-	if freshness >= 40.0:
-		return 0.6
-	if freshness > 0.0:
-		return 0.25
-	return 0.0
 
 static func _food(id: String, name: String, value: float, decay: float, color: Color) -> FoodData:
 	var food := FoodData.new()

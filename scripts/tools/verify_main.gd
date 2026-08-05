@@ -1171,8 +1171,7 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 		{"fresh": 0.0, "delivered": 0.0, "want": FoodBubbleMarker.Flourish.SHAKE, "label": "red must shake"},
 	]:
 		state.last_settlement_status[city.node_id] = {
-			"seafood": {"requested": 10.0, "delivered": probe.delivered, "fresh_sum": probe.fresh,
-				"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 0.0},
+			"seafood": {"requested": 10.0, "delivered": probe.delivered, "fresh_sum": probe.fresh, "earned": 0.0},
 		}
 		_main.set("_day_just_ran", true)
 		_main.call("_render_grid")
@@ -1187,8 +1186,7 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	# a settlement that actually earned: "+§0" would say nothing the shake has
 	# not already said.
 	state.last_settlement_status[city.node_id] = {
-		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
-			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
+		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0, "earned": 125.0},
 	}
 	var fx: Node3D = _main.get_node("Effects")
 	_clear_children(fx)
@@ -1201,8 +1199,7 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 
 	_clear_children(fx)
 	state.last_settlement_status[city.node_id] = {
-		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0,
-			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 100.0},
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0, "earned": 0.0},
 	}
 	_main.set("_day_just_ran", true)
 	_main.call("_render_grid")
@@ -1213,8 +1210,7 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 	# recorded for it, and it shakes their markers directly rather than
 	# re-rendering the whole map to move a few of them.
 	state.last_settlement_status[city.node_id] = {
-		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0,
-			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 0.0, "withheld": 100.0},
+		"seafood": {"requested": 10.0, "delivered": 0.0, "fresh_sum": 0.0, "earned": 0.0},
 	}
 	_main.call("_render_grid")
 	var nagging: Array = _main.get("_nagging_nodes")
@@ -1231,8 +1227,7 @@ func _test_flourishes_fire_once(map_data: MapData) -> void:
 
 	# A paying settlement is never nagged.
 	state.last_settlement_status[city.node_id] = {
-		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0,
-			"rejected": 0.0, "rejected_fresh_sum": 0.0, "earned": 125.0, "withheld": 0.0},
+		"seafood": {"requested": 10.0, "delivered": 10.0, "fresh_sum": 1000.0, "earned": 125.0},
 	}
 	_main.call("_render_grid")
 	assert(not (_main.get("_nagging_nodes") as Array).has(city.node_id),

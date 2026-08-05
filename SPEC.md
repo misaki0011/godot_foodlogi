@@ -284,6 +284,12 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **Cheap to reverse because nothing was written against the number.** Both are still single constants, the dev checks that reach a cap size their scratch roads from those constants (item 76), and the region designs in §12.1 that ration passes and gates against "two per network" never had to change in the first place. What did come back is `verify_main`'s tool-level refusal check: at 2 the bridge corner reaches its cap again, so the Bridge tool is once more proved to refuse over the cap and charge nothing for it -- guarded on the cap actually being reached, so a future change leaves it unproved there rather than failing.
     **What is NOT reverted is item 77's other half:** a junction still carries the road it stands on rather than a flat 250 of its own (§4.4). That was never an argument about how many hubs a network may have.
 
+79. **Delivering is being paid, and freshness is the price.** The game asked a beginner to satisfy four rules before a single §1 arrived: reach the settlement, bring the *whole* order, clear the settlement's `min_freshness` floor, and land in a paying band of a four-step multiplier table. Miss the third and the cargo was destroyed, the day's demand and the source's supply were spent anyway, and half its value was charged back as spoilage. Miss the second — by one unit — and the line paid nothing at all, however fresh what did arrive happened to be. **The rules are now two, and they are the two the game is about:** connect a source to a settlement and every unit that arrives is paid for at `amount x base_value x freshness`; reach the settlement's `bonus_freshness` and the line pays 25% more (§4.2, §9).
+    **The all-or-nothing gate was not only an early-game problem.** Region 1's demand out-runs its own sources on three of five foods once every line is open — grain 85 against the Farm's 80, bread 95 against the Bakery's 80, vegetables 110 against the Garden's 90 — so at full expansion some lines *cannot* be filled until a source is upgraded (§4.7, DEV-03), and under the old rule each of those paid exactly zero while the road ran. Per-unit pay earns the player money the whole way up that ramp rather than only at the top of it.
+    **The multiplier table was invisible.** The map draws three speech-bubble states and the table paid six ways: two lines both reading green could pay 1.25x and 1.5625x with nothing on screen explaining it, while 60% and 89% were paid identically. A straight proportion has no steps, and the figure that pays is the figure the bubble already prints. The bonus rate stays at 25% because the proportion does the retired tiers' work: green at 85% pays 1.06x base against amber at 68% paying 0.68x, the same 1.56x gap the table and bonus used to produce together.
+    **What completion still does.** A whole order is what opens the next line (§6, DEV-01) and nothing else — so completion decides *progress* and delivery decides *pay*. The red bubble accordingly changes meaning: it is "nothing arrived", not "not enough arrived". A short line reads amber, prints its "5/20" and its earnings, and visibly does not grow the region.
+    **`min_freshness` survives as data, not as a rule.** `NodeData.min_freshness` is still authored on every settlement and read by nothing; a later region may want "this place will not touch anything under X" back as one settlement's character rather than as the whole game's failure mode.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -430,7 +436,7 @@ Daily Report
 
 Food delivered: 320
 Average freshness: 84%
-Spoiled food: 7%
+Unmet demand: 7%
 Route upkeep: 1,200
 Storage upkeep: 450
 Hub savings: 600
@@ -864,19 +870,34 @@ Every food item or food batch has a freshness value.
 100% = perfect
 70-99% = good
 40-69% = poor but sellable
-1-39% = low value or rejected by strict settlements
-0% = spoiled
+1-39% = low value
+0% = worthless
 ```
 
-### Freshness affects reward
+### Freshness affects reward (rewritten in v0.8 item 79)
+
+**Freshness is the price.** A delivery is worth its amount times its food's
+base value times its freshness, and a delivery that reaches the settlement's
+own `bonus_freshness` earns 25% more on top of that.
 
 | Delivered freshness | Result |
 |---|---|
-| 90-100% | Bonus payment and happiness |
-| 60-89% | Normal payment |
-| 40-59% | Reduced payment |
-| 1-39% | Possible rejection by picky settlements |
-| 0% | Spoiled and wasted |
+| At or above the settlement's `bonus_freshness` | Paid in full for its freshness, plus a 25% bonus — the green bubble |
+| Anything else that arrives | Paid in full for its freshness — the amber bubble |
+| Nothing arrives | Nothing earned — the red bubble |
+
+The four-step multiplier table this replaced (1.25 / 1.0 / 0.6 / 0.25) and the
+`min_freshness` refusal below it are both retired. Two reasons:
+
+1. **The map showed three states and the rules paid six ways.** Two lines both
+   reading green could pay 1.25x and 1.5625x with nothing on screen explaining
+   the difference, while two lines 30 points apart in freshness (60% and 89%)
+   were paid identically. A straight proportion has no steps: 71% pays exactly
+   1% more than 70%, and the number that pays is the number the bubble prints.
+2. **Refusal destroyed the goods.** Cargo under `min_freshness` was binned, had
+   already spent the day's demand and its source's supply, and was charged a
+   spoilage penalty of half its value — one mistake punished four ways, on the
+   long routes a new player is most likely to draw first.
 
 ### Freshness should be predictable
 
@@ -1078,7 +1099,7 @@ Rules:
 - Outgoing branches use readable directions when unambiguous: North, South, East, or West.
 - When a direction is insufficient, show the next settlement or route label, such as `East → Town D`.
 - Percentages use the source-food total routed through that hub as the denominator and should sum to 100%, allowing for display rounding.
-- Rejected deliveries that consumed capacity may be shown with a warning marker or a separate rejected amount.
+- Deliveries blocked by route capacity may be shown with a warning marker or a separate blocked amount. (There is no *rejected* amount any more — see §4.2, v0.8 item 79.)
 - Before the first simulation, show `No deliveries routed through this hub yet.`
 
 ### Hub placement decision
@@ -1316,7 +1337,7 @@ name
 type
 requested_foods
 demand_per_day
-minimum_freshness
+minimum_freshness   # authored, but no longer a rule -- see v0.8 item 79
 bonus_freshness
 underdelivery_penalty
 overdelivery_tolerance
@@ -1379,10 +1400,15 @@ Suggested formula:
 ```text
 satisfaction = demand_fulfillment_score
              + freshness_score
-             - spoilage_penalty
              - underdelivery_penalty
              - overdelivery_penalty
 ```
+
+As built (`SimulationEngine.run_day`): `fulfill_rate * 60 + min(1,
+avg_fresh / bonus_freshness) * 40 - shortfall_rate * 30`, clamped to 0-100.
+The spoilage term went with the refusal rule it measured (v0.8 item 79); the
+shortfall a settlement went without is still counted, since that is the thing
+it is actually unhappy about.
 
 ---
 
@@ -1456,15 +1482,17 @@ too, just conditionally. Now: idle for a hundred days and nothing opens; fill
 an order and the next is there immediately. `GameState.day` still drives the
 day clock, the sun cycle and the report, and drives no progression at all.
 
-**What counts as filled.** The whole requested amount arriving -- exactly the
-**amber** speech bubble, and exactly the point at which a line starts paying
-(§9: red pays nothing, amber pays the line, green pays it plus the bonus).
-Freshness above that does one job only: deciding how well the player is paid.
-`min_freshness` still bites implicitly and correctly, because `run_day`
-rejects anything under it before it counts as delivered, so a line can never
-fill on cargo too spoiled to accept. 99% delivered is a red bubble, earns
-nothing, and does not advance the player -- a short order is not a partial
-sale.
+**What counts as filled.** The whole requested amount arriving, at any
+freshness at all. Freshness does one job only: deciding how well the player is
+paid (§9).
+
+**Revised in v0.8 item 79.** This used to be the point at which a line started
+paying as well, so completion decided pay and progress together. Delivering is
+what pays now -- per unit, as it lands -- which leaves completion as the
+region's progress gate and nothing else. That is the right job for it: growth
+should wait on a settlement being properly served, while the player's income
+tracks what they actually moved today. 99% delivered is now an amber bubble
+that pays 99% of the money and still opens nothing.
 
 Filled is **latched**: proving a line once proves it for good, so a later bad
 day can never un-open an order, and refilling one already proved opens
@@ -1960,23 +1988,37 @@ won on every axis and the choice was decorative.
 
 The economy should be simple and readable.
 
-### Income
+### Income (rewritten in v0.8 item 79)
 
-Income comes from delivered food.
+Income comes from delivered food, and it is two rules:
 
 ```text
-income = delivered_amount * food_base_value * freshness_multiplier * settlement_price_modifier
+paid  = delivered_amount * food_base_value * (freshness / 100)
+bonus = paid * 0.25, if the line's average freshness reached the
+        settlement's own bonus_freshness
 ```
 
-### Freshness multiplier
+**Connect a source to a settlement and you get paid; meet the freshness
+request and you get a bonus.** That is the whole economy, and it is meant to
+be sayable in one sentence.
 
-| Freshness | Multiplier |
-|---|---:|
-| 90-100% | 1.25x |
-| 60-89% | 1.00x |
-| 40-59% | 0.60x |
-| 1-39% | 0.25x or rejected |
-| 0% | 0x |
+Two rules were removed to get there. The **all-or-nothing gate** — a line paid
+nothing at all unless the settlement's whole requested amount arrived — meant
+a first road could run perfectly and bank §0, and it was not merely an early
+problem: region 1's own demand out-runs its sources on three foods once every
+line is open (grain 85 against the Farm's 80, bread 95 against the Bakery's
+80, vegetables 110 against the Garden's 90), so some lines cannot be filled at
+all until a source is upgraded. Paying per unit earns the player money the
+whole way up that ramp instead of only at the top. The **freshness multiplier
+table** went for the reasons in §4.2.
+
+Filling the whole order still matters — it is what opens the next line (§6,
+DEV-01) — so completion decides *progress* and delivery decides *pay*.
+
+The bonus rate stays at 25% rather than rising to cover the retired tiers: a
+green line at 85% pays 0.85 x 1.25 = 1.06x base against an amber line at 68%
+paying 0.68x, a 1.56x gap — the same gap the old table and bonus produced
+together (1.25 x 1.25 = 1.5625).
 
 ### Expenses
 
@@ -1985,13 +2027,17 @@ Expenses include:
 - Route upkeep
 - Storage upkeep
 - Hub upkeep
-- Spoiled food penalty
 - Optional construction debt or maintenance events
+
+The **spoiled food penalty is retired** (v0.8 item 79). It charged half the
+value of cargo a settlement had refused, so a route too long to serve a place
+well took money *off* the treasury for having run at all. Nothing is refused
+now, so there is nothing to charge for.
 
 ### Profit
 
 ```text
-profit = food_income - route_upkeep - storage_upkeep - hub_upkeep - spoilage_cost
+profit = food_income - route_upkeep - storage_upkeep - hub_upkeep
 ```
 
 Profit should not be the only score. Settlement happiness and network efficiency matter too.
@@ -2734,7 +2780,7 @@ which is exactly the confusion a tutorial exists to prevent.
 | 2 | The day clock | "Deliveries happen when a day ends. Run the day." | Clock panel, Run Day Now | `days_simulated(1)` |
 | 3 | Reading a bubble | "Village A got its whole order, fresh. Tap it to see the detail." | — | `node_inspected(villageA)` |
 | 4 | Distance costs freshness | "The Dairy is further out. Run milk to Village B." | — (opens `villageB/milk`) | `line_filled(villageB, milk)` |
-| 5 | Cool Storage | "That milk arrived at 68% -- amber pays the order, green pays 25% more. Put Cool Storage early on the run." | Normal, Cool | `line_green(villageB, milk)` |
+| 5 | Cool Storage | "That milk arrived at 68%, so it paid 68% of its value. Green pays 25% more on top. Put Cool Storage early on the run." | Normal, Cool | `line_green(villageB, milk)` |
 | 6 | Hubs | "Village C wants grain too, and the road out of the Farm is already there. Build a hub where they share it." | Hub | `structure_built(hub)` **and** `line_filled(villageC, grain)` |
 | 7 | Route capacity | "That trunk is carrying 65 a day down a 60 road. Upgrade it." | Upgrade | `no_tile_over_capacity` |
 | 8 | Crossing the river | "Town D is across the water. A route tile on the river costs §40 extra -- or go the long way round." | — (opens `townD/grain`) | `line_filled(townD, grain)` |
@@ -2957,7 +3003,7 @@ outgoing_splits:
     amount: number
     percentage: number
     destination_ids: list
-rejected_amount: number
+capacity_blocked_amount: number
 ```
 
 ### SettlementDeliveryResult
@@ -2968,11 +3014,15 @@ day: number
 food_id: string
 requested: number
 delivered: number
-rejected: number
 average_freshness: number
+earned: number
 source_ids: list
 status: complete | partial | missing
 ```
+
+`rejected` is gone and `earned` takes its place (v0.8 item 79): nothing is
+turned away any more, and what a line paid is the figure the expanded bubble
+row prints.
 
 ### SettlementDemand
 
@@ -2980,7 +3030,7 @@ status: complete | partial | missing
 settlement_id: string
 food_id: string
 amount_required: number
-minimum_freshness: number
+minimum_freshness: number   # authored, but no longer a rule -- see v0.8 item 79
 bonus_freshness: number
 overdelivery_tolerance: number
 ```
@@ -2999,7 +3049,7 @@ Each day simulates in this order:
 6. Apply route, storage, and hub capacity limits.
 7. Apply freshness loss along each path.
 8. Apply storage preservation effects when food passes storage.
-9. Record accepted and rejected deliveries.
+9. Record every delivery. (Nothing is rejected: a settlement accepts whatever reaches it and pays for it by freshness — see §4.2, revised in v0.8 item 79.)
 10. Aggregate each hub's incoming source-food totals and outgoing branch splits.
 11. Apply hub discounts and calculate route, storage, and hub upkeep.
 12. Calculate income, waste, profit, settlement satisfaction, and efficiency score.

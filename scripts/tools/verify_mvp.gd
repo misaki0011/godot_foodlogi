@@ -30,6 +30,8 @@ func _initialize() -> void:
 	_test_dormant_settlements_are_not_scored()
 	_test_demand_and_freshness_are_stable()
 	_test_line_earnings_reconcile()
+	_test_a_short_line_still_pays()
+	_test_freshness_scales_the_price()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -388,7 +390,7 @@ func _test_growth_alternates() -> void:
 				continue
 			var lines := {}
 			for food_id in OrderBook.active_demand(state, node):
-				lines[food_id] = {"requested": 10.0, "delivered": 10.0, "rejected": 0.0, "fresh_sum": 500.0}
+				lines[food_id] = {"requested": 10.0, "delivered": 10.0, "fresh_sum": 500.0}
 			if not lines.is_empty():
 				status[node.node_id] = lines
 		state.last_settlement_status = status
@@ -655,11 +657,11 @@ func _state_with_villageA_grain_filled(map: MapData, seed_value := 4242) -> Game
 	var state := GameState.new()
 	state.run_seed = seed_value
 	OrderBook.initialize(state, map)
-	# Amber is the bar: the full amount arrived, freshness is irrelevant
-	# beyond the settlement's own minimum (which run_day already enforces by
-	# rejecting anything under it before it counts as delivered).
+	# The whole amount arrived, at a freshness (40%) deliberately well below
+	# anything that would pay a bonus: progress has never cared how fresh a
+	# delivery was, and since v0.8 there is no floor it could fail either.
 	state.last_settlement_status = {
-		"villageA": {"grain": {"requested": 20.0, "delivered": 20.0, "rejected": 0.0, "fresh_sum": 20.0 * 40.0}},
+		"villageA": {"grain": {"requested": 20.0, "delivered": 20.0, "fresh_sum": 20.0 * 40.0}},
 	}
 	var opened := OrderBook.record_day(state, map, map.node_placements)
 	assert(opened.size() == 1, "The fixture must open exactly one new line, got %d" % opened.size())
@@ -721,8 +723,9 @@ func _test_demand_and_freshness_are_stable() -> void:
 		first.requested, first.delivered, first.fresh,
 	])
 
-## Every line's recorded `earned` must add up to the day's income, and a
-## line's `withheld` must be non-zero exactly when it earned nothing.
+## Every line's recorded `earned` must add up to the day's income, and a line
+## that delivered anything at all must have earned something (v0.8: delivering
+## IS being paid, so the only unpaid line is one nothing reached).
 ##
 ## A row now PRINTS its earnings (UI-04), and the whole point of that number
 ## is that it explains the row's colour by naming the money the treasury
@@ -744,24 +747,126 @@ func _test_line_earnings_reconcile() -> void:
 	var report := SimulationEngine.run_day(state, map.node_placements)
 
 	var earned_total := 0.0
-	var withheld_total := 0.0
+	var delivering_lines := 0
 	for settlement_id in state.last_settlement_status:
 		for food_id in state.last_settlement_status[settlement_id]:
 			var line: Dictionary = state.last_settlement_status[settlement_id][food_id]
 			earned_total += line.earned
-			withheld_total += line.withheld
-			# A line either paid or it did not; it can never do both.
-			assert(line.earned == 0.0 or line.withheld == 0.0,
-				"%s/%s recorded both earnings (%.2f) and withheld income (%.2f)" % [settlement_id, food_id, line.earned, line.withheld])
-			var short: bool = line.delivered < line.requested - 0.01
-			assert(short == (line.earned == 0.0),
-				"%s/%s: a short line must earn nothing and a full one must earn something" % [settlement_id, food_id])
+			# The v0.8 rule, both ways round: anything that arrived was paid
+			# for, and nothing arriving is the only way to earn nothing.
+			assert((line.delivered > 0.0) == (line.earned > 0.0),
+				"%s/%s delivered %.2f and earned §%.2f -- a delivery must pay and a non-delivery must not" % [
+					settlement_id, food_id, line.delivered, line.earned,
+				])
+			if line.delivered > 0.0:
+				delivering_lines += 1
 
+	assert(delivering_lines > 0, "The test network delivers nothing, so it proves nothing about payment")
 	assert(is_equal_approx(earned_total, report.income),
 		"Per-line earnings must sum to the day's income: %.2f vs %.2f" % [earned_total, report.income])
-	assert(is_equal_approx(withheld_total, report.withheld_income),
-		"Per-line withheld must sum to the report's: %.2f vs %.2f" % [withheld_total, report.withheld_income])
-	print("Line earnings (UI-04): §%.0f earned and §%.0f withheld reconcile with the day report." % [earned_total, withheld_total])
+	print("Line earnings (UI-04): §%.0f across %d delivering lines reconciles with the day report." % [earned_total, delivering_lines])
+
+## The v0.8 rule that the whole change exists for: a settlement that gets part
+## of its order is paid for that part. This used to earn exactly nothing --
+## the line's income was withheld unless the whole requested amount arrived --
+## so a player's road could run all day and bank §0.
+##
+## Made short by SUPPLY rather than by capacity or a missing road, because
+## that is the case the shipped map forces on its own: region 1 demands 85
+## grain against the Farm's 80 once every line is open, so the last line to
+## fill is one that CANNOT be filled until the source is upgraded (DEV-03).
+## Here the Farm is cut to a tenth of Village A's order to reach that state in
+## one day rather than twenty.
+func _test_a_short_line_still_pays() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	var state := GameState.new()
+	var farm := _node(map, "farm")
+	var village_a := _node(map, "villageA")
+	var short_supply: float = village_a.demand.grain * 0.1
+	farm.produces = {"grain": short_supply}
+
+	var route_path: Array[Vector2i] = [Vector2i(4, 4), Vector2i(4, 3), Vector2i(5, 3)]
+	for cell in route_path:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.add_connection(farm.grid_position, route_path[0])
+	_connect_chain(state, route_path)
+	state.add_connection(route_path[-1], village_a.grid_position)
+	OrderBook.initialize(state, map)
+	var report := SimulationEngine.run_day(state, map.node_placements)
+
+	var line: Dictionary = state.last_settlement_status[village_a.node_id].grain
+	assert(is_equal_approx(line.delivered, short_supply),
+		"The Farm can only send %.1f grain, so that is what must arrive, got %.1f" % [short_supply, line.delivered])
+	assert(line.delivered < line.requested - 0.01, "This fixture is pointless unless the line comes up short")
+	assert(line.earned > 0.0, "A short line must still be paid for what arrived -- it earned §%.2f" % line.earned)
+
+	# And paid the right amount: amount x value x freshness, plus the bonus,
+	# since this route is short enough to land well above Village A's bonus
+	# line. Checked against the rule rather than a baked figure so a change to
+	# grain's value or the map's geometry re-derives it.
+	var fresh: float = line.fresh_sum / line.delivered
+	assert(fresh >= village_a.bonus_freshness, "The fixture route must land green for the bonus half of this check")
+	var expected: float = line.delivered * GameBalance.food_types().grain.base_value * (fresh / 100.0)
+	expected *= 1.0 + GameBalance.FRESHNESS_BONUS_RATE
+	assert(is_equal_approx(line.earned, expected),
+		"A short line must pay amount x value x freshness (+bonus): §%.2f expected, §%.2f paid" % [expected, line.earned])
+
+	# Nothing is confiscated any more, so the day's whole income is this line.
+	assert(is_equal_approx(report.income, line.earned),
+		"The day's income must be exactly what the lines earned: §%.2f vs §%.2f" % [report.income, line.earned])
+	print("Short line (ECON-01): %.0f of %.0f grain arrived and paid §%.0f rather than nothing." % [
+		line.delivered, line.requested, line.earned,
+	])
+
+## Freshness is the price, not a tier: the same cargo over a longer road is
+## worth proportionally less, with no step in between. The old table paid a
+## flat 1.0x anywhere from 60% to 89% and 1.25x above 90, so two deliveries
+## the map drew differently could be paid identically -- and two the map drew
+## almost identically could be paid 25% apart.
+func _test_freshness_scales_the_price() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	var village_a := _node(map, "villageA")
+	var farm := _node(map, "farm")
+	# Well under the bonus line at both lengths, so this measures the price
+	# itself rather than the bonus stepping in at one length and not the other.
+	village_a.bonus_freshness = 200.0
+	var earnings: Array[float] = []
+	var freshnesses: Array[float] = []
+	for road_length in [3, 15]:
+		var state := GameState.new()
+		# A plain chain of that many tiles between the same two endpoints. Like
+		# every other fixture here it is laid out by CONNECTION rather than by
+		# geometry (state.connections is what the engine traverses), so length
+		# is the only thing changing between the two runs. Row 1 because it is
+		# the one row of the map no node stands on: a chain laid along Village
+		# A's own row would put a route tile on the settlement, and the search
+		# would stop there instead of walking the length under test.
+		var route_path: Array[Vector2i] = []
+		for i in road_length:
+			route_path.append(Vector2i(4 + i, 1))
+		for cell in route_path:
+			state.grid[cell] = {"kind": "route", "level": "dirt"}
+		state.add_connection(farm.grid_position, route_path[0])
+		_connect_chain(state, route_path)
+		state.add_connection(route_path[-1], village_a.grid_position)
+		OrderBook.initialize(state, map)
+		SimulationEngine.run_day(state, map.node_placements)
+		var line: Dictionary = state.last_settlement_status[village_a.node_id].grain
+		assert(line.delivered > 0.0, "Both fixture routes must deliver")
+		earnings.append(line.earned)
+		freshnesses.append(line.fresh_sum / line.delivered)
+
+	assert(freshnesses[1] < freshnesses[0], "The longer road must arrive less fresh")
+	assert(earnings[1] < earnings[0], "Less fresh must be worth less: §%.2f vs §%.2f" % [earnings[1], earnings[0]])
+	# Proportional, since the amount is identical: the ratio of the money must
+	# be the ratio of the freshness.
+	assert(is_equal_approx(earnings[1] / earnings[0], freshnesses[1] / freshnesses[0]),
+		"Pay must track freshness proportionally: %.4f of the money for %.4f of the freshness" % [
+			earnings[1] / earnings[0], freshnesses[1] / freshnesses[0],
+		])
+	print("Freshness is the price (FRESH-02): %.1f%% pays §%.0f, %.1f%% pays §%.0f, no step between." % [
+		freshnesses[0], earnings[0], freshnesses[1], earnings[1],
+	])
 
 func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:
 	for i in range(1, cells.size()):

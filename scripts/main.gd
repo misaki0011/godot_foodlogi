@@ -1788,19 +1788,18 @@ func _show_report(r: DayReportData) -> void:
 	_report_continue.text = "Continue to next day" if _report_advances_day else "Close"
 	var text := ""
 	text += "Income: §%d\n" % roundi(r.income)
-	# Both lines only appear when they have something to say, so a clean
-	# day's report stays as short as it was before the delivery rule.
+	# Only appears when it has something to say, so a day with no green
+	# settlement on the board reports as short as it ever did.
 	if r.bonus_income > 0.0:
 		text += "[color=#3FA34D]  ...including freshness bonus: +§%d[/color]\n" % roundi(r.bonus_income)
-	if r.withheld_income > 0.0:
-		text += "[color=#D64545]  Lost to incomplete orders: §%d[/color]\n" % roundi(r.withheld_income)
 	text += "Route upkeep: −§%d\n" % roundi(r.route_upkeep)
 	text += "Storage upkeep: −§%d\n" % roundi(r.storage_upkeep)
 	text += "Hub upkeep: −§%d\n" % roundi(r.hub_upkeep)
-	text += "Spoilage cost: −§%d\n" % roundi(r.spoilage_cost)
 	text += "[b]Profit: %s§%d[/b]\n\n" % ["+" if r.profit >= 0 else "", roundi(r.profit)]
 	text += "Average freshness delivered: %d%%\n" % roundi(r.avg_freshness_overall)
-	text += "Waste (unmet + rejected demand): %d%%\n" % roundi(r.waste_pct)
+	# Demand that never arrived. It used to count cargo REFUSED for arriving
+	# under min_freshness as well, which is not a thing that happens now.
+	text += "Unmet demand: %d%%\n" % roundi(r.waste_pct)
 	if r.capacity_blocked > 0.0:
 		text += "[color=#C4573A]⚠ Blocked by route capacity: %d food[/color]\n" % roundi(r.capacity_blocked)
 	# The denominator is printed because it moves: happiness averages only
@@ -2265,14 +2264,23 @@ func _render_source_bubbles(n: NodeData, foods: Dictionary) -> void:
 ## in a single tall column risked visually crowding the neighbor's own
 ## bubbles. A 2-column grid caps the stack at 2 rows regardless of how
 ## many foods are demanded.
-## Status reads as one question asked twice: did it all get here, and was
-## it fresh enough? GREEN is the full requested amount at this
-## settlement's own bonus_freshness or above; AMBER is the full amount
-## below that threshold; RED is anything short, down to nothing arriving.
-## min_freshness is deliberately absent: SimulationEngine.run_day rejects
-## anything under it before it ever counts as delivered, so a bubble can
-## never see an average below that line and a rule testing for one would
-## be dead.
+## Status is the PAYMENT the line took (v0.8), which is now a single
+## question with three answers: RED is nothing arrived -- no route reaches
+## this settlement, or the one that does had no food to bring -- and so
+## nothing was earned; AMBER is food arrived and was paid for; GREEN is food
+## arrived at this settlement's own bonus_freshness or above and was paid
+## the freshness bonus on top.
+##
+## RED no longer means "short of the full order". A partial delivery is a
+## real sale now (GameBalance.FRESHNESS_BONUS_RATE), so colouring it as a
+## failure would contradict the money the player just watched land. What is
+## short still shows: the row prints "5/20", and OrderBook still opens the
+## next line only on a whole order, so an unfinished one visibly stops the
+## region growing.
+##
+## min_freshness is deliberately absent -- it stopped being a rule in v0.8,
+## and no freshness a delivery can arrive at changes the colour except by
+## crossing bonus_freshness.
 ## Every open order keeps its own bubble whatever its status. A settled
 ## settlement used to collapse its whole stack into one "All fresh" summary,
 ## which hid the very numbers the player had just worked to earn -- and with
@@ -2304,33 +2312,20 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 		var requested: float = demand[food_id]
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
-		var rejected: float = 0.0
-		var rejected_fresh: float = 0.0
 		var earned: float = 0.0
-		var withheld: float = 0.0
 		var s = status.get(food_id)
 		if s != null:
 			requested = s.requested
 			delivered = s.delivered
 			if delivered > 0.0:
 				avg_fresh = s.fresh_sum / delivered
-			# Cargo min_freshness turned away. It still consumed the day's
-			# demand (SimulationEngine drops `need` before deciding whether to
-			# accept), so this is very often the whole reason a line came up
-			# short -- and the delivered freshness above cannot show it,
-			# averaging only what was let in.
-			rejected = s.get("rejected", 0.0)
-			if rejected > 0.0:
-				rejected_fresh = s.get("rejected_fresh_sum", 0.0) / rejected
-			# What the line paid, and what a short one gave up. The row's
-			# colour has always encoded the payment tier (§9) and never said
-			# so -- which is why a red row beside "90% fresh" read as a
-			# freshness verdict rather than an earnings one.
+			# What the line paid. The row's colour IS the payment (§9) and
+			# never used to say so -- which is why a red row beside "90% fresh"
+			# read as a freshness verdict rather than an earnings one.
 			earned = s.get("earned", 0.0)
-			withheld = s.get("withheld", 0.0)
 
 		var bubble_status: FoodBubbleMarker.Status
-		if delivered < requested - 0.01:
+		if delivered <= 0.0:
 			bubble_status = FoodBubbleMarker.Status.RED
 		elif avg_fresh >= n.bonus_freshness:
 			bubble_status = FoodBubbleMarker.Status.GREEN
@@ -2343,10 +2338,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"requested": requested,
 			"status": bubble_status,
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
-			"rejected": rejected,
-			"rejected_freshness_pct": roundi(rejected_fresh) if rejected > 0.0 else -1,
 			"earned": earned,
-			"withheld": withheld,
 		})
 
 	# Worst first, so the leftmost glyph on the strip -- and the first
@@ -2370,10 +2362,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"delivered": e.delivered,
 			"requested": e.requested,
 			"freshness_pct": e.freshness_pct,
-			"rejected": e.rejected,
-			"rejected_freshness_pct": e.rejected_freshness_pct,
 			"earned": e.earned,
-			"withheld": e.withheld,
 		})
 
 	# One flourish per column, chosen by the same rule that decides which chip
@@ -2410,7 +2399,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 	var column: FoodBubbleMarker = FOOD_BUBBLE_SCENE.instantiate()
 	_grid_visuals.add_child(column)
 	column.position = base_pos
-	column.setup_settlement_column(glyphs, n.bonus_freshness, n.min_freshness)
+	column.setup_settlement_column(glyphs, n.bonus_freshness)
 	column.play(flourish)
 	_columns_by_node[n.node_id] = column
 

@@ -97,11 +97,9 @@ const STATUS_GLYPH_RATIO := 0.19
 const STATUS_GLYPH_MARGIN := 13.0
 
 ## Freshness bar along the bottom of a settlement row, marked at BOTH of
-## that settlement's own thresholds -- the floor cargo must clear to be
-## accepted at all, and the line it has to cross to turn the row green.
-## Without them "78%" means nothing until you remember whether this
-## particular town refuses under 35 and pays a bonus over 80, or refuses
-## under 55 and pays over 90.
+## that settlement's own bonus threshold -- the line freshness has to cross
+## to turn the row green. Without it "78%" means nothing until you remember
+## whether this particular town pays a bonus over 80 or over 90.
 ## Sized for a 192px row. These were 9px tall in the old 310x150 balloon and
 ## were never rescaled when rows went 4x and pixel_size dropped 0.01 -> 0.0072
 ## -- which left the bar physically SMALLER on screen than before the
@@ -117,40 +115,12 @@ const BAR_TRACK_COLOR := Color(0.0, 0.0, 0.0, 0.30)
 const BAR_TICK_COLOR := Color(1.0, 1.0, 1.0, 0.70)
 const BAR_TICK_WIDTH := 5.0
 
-## The settlement's min_freshness -- the floor cargo must clear to be accepted
-## at all (SimulationEngine turns away anything under it, and the day's demand
-## is spent either way). The bar used to mark only bonus_freshness, so it
-## showed where the BONUS starts while saying nothing about where REFUSAL
-## starts, which is the line spoiled cargo actually failed.
-##
-## Two marks of the same kind would be ambiguous, so the floor is drawn as a
-## zone rather than only a line: a translucent red band over everything from
-## the bar's left edge up to the threshold, closed by a crisp red edge. The
-## band is what tells the two apart at a glance -- the mark with shading to
-## its left is the floor, the bare pale tick is the bonus target. It is
-## painted over the fill rather than under it, so it stays visible however
-## full the bar is.
-const BAR_MIN_ZONE_COLOR := Color(0.84, 0.27, 0.27, 0.30)
-const BAR_MIN_TICK_COLOR := Color(1.0, 0.44, 0.44, 0.95)
-
-## The bar only takes the status colour once the full requested amount has
-## arrived. Short of that the delivery earns nothing whatever its
-## freshness was, so colouring a long bar red -- or worse, green -- would
-## dress up a line that is not paying. Grey says "measured, but it does
-## not count yet".
-const BAR_INERT_COLOR := Color(1.0, 1.0, 1.0, 0.58)
-
-## Cargo turned away for arriving under min_freshness reads in the red accent
-## whatever the row's own status is: it is the one number on the row that is
-## unambiguously bad news, and on a row that IS red it is usually the whole
-## explanation for why.
-const REJECTED_TEXT_COLOR := Color("f08a8a")
-
-## What the line paid. The row's colour has always BEEN the payment tier
-## (§9: short pays nothing, full pays the line, full-and-fresh pays 25% more)
-## and the row never said so -- which is why a red row next to "90% fresh"
-## read as a verdict on freshness rather than on earnings. Printing the money
-## answers "why this colour?" at the moment the question is asked.
+## What the line paid. The row's colour IS the payment (§9: nothing arrived
+## pays nothing, a delivery pays freshness x value x amount, and a delivery at
+## bonus_freshness pays 25% more) and the row never used to say so -- which is
+## why a red row next to "90% fresh" read as a verdict on freshness rather
+## than on earnings. Printing the money answers "why this colour?" at the
+## moment the question is asked.
 const EARNED_TEXT_COLOR := Color("9fd8a8")
 const UNPAID_TEXT_COLOR := Color("f0a0a0")
 
@@ -285,9 +255,11 @@ static func row_size() -> float:
 
 ## An expanded row is the same height, just wider -- room for the amount, the
 ## freshness percentage and the bar, to the right of the glyph cell.
-## Widened from 420 to fit a rejected row's third line ("5 spoiled at 32%")
-## at a readable size. The row has vertical room to spare and none
-## horizontally, and this only affects the hovered node.
+## Widened from 420 for a third line this row no longer has (v0.8), and kept
+## there for the line that remains: "94% fresh · +§300" is the widest thing
+## the row draws, it must not shrink-to-fit down to unreadable, and the row
+## has vertical room to spare and none horizontally. This only affects the
+## hovered node.
 const BALLOON_ROW_WIDTH := 560.0
 const ROW_TEXT_GAP := 10.0
 const ROW_RIGHT_PAD := 18.0
@@ -474,48 +446,30 @@ func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent:
 	var row_cy := rect.position.y + (rect.size.y - BAR_BOTTOM_MARGIN - BAR_HEIGHT) * 0.5
 	var fresh: int = entry.get("freshness_pct", -1)
 
-	var rejected: float = entry.get("rejected", 0.0)
-	var rejected_fresh: int = entry.get("rejected_freshness_pct", -1)
 	var earned: float = entry.get("earned", 0.0)
-	var withheld: float = entry.get("withheld", 0.0)
 	var sub := int(rect.size.y * 0.17)
 	var paid := earned > 0.0
 
-	# The third line is whichever piece of bad news this row has, in one
-	# tone: what spoiled, or -- failing that -- what a short order gave up.
-	# A row with neither has nothing to say there.
-	var note := ""
-	if rejected > 0.0:
-		note = _rejected_text(rejected, rejected_fresh)
-	elif withheld > 0.0:
-		note = "§%d withheld" % roundi(withheld)
-
-	# Three layouts, by how much there is to say. The rejected line matters
-	# most on a RED row, where it is usually the entire reason the line came
-	# up short: cargo under min_freshness is binned AND still consumes the
-	# day's demand, and the delivered freshness above cannot show it because
-	# it averages only what was accepted.
 	# Freshness and money share a line: they are the two facts that between
 	# them explain the row's colour, and pairing them is what stops the
 	# freshness reading as the reason on its own.
+	#
+	# The third line this layout used to carry is gone with the rules that fed
+	# it (v0.8) -- "5 spoiled at 32%" and "§100 withheld" were both consequences
+	# of cargo being refused and short orders paying nothing, and neither can
+	# happen now. What a line delivered against what was asked is still right
+	# above, in amount_text.
 	var money := "+§%d" % roundi(earned) if paid else "§0"
 	var status_line := "%d%% fresh · %s" % [fresh, money] if fresh >= 0 else money
 
-	if note != "":
-		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 30.0, int(rect.size.y * 0.30), TEXT_COLOR)
-		_draw_pair(status_line, money, text_x, text_w, row_cy + 14.0, sub, paid)
-		_draw_fitted(note, text_x, text_w, row_cy + 48.0, sub, REJECTED_TEXT_COLOR)
-	else:
-		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
-		_draw_pair(status_line, money, text_x, text_w, row_cy + 30.0, sub, paid)
+	_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
+	_draw_pair(status_line, money, text_x, text_w, row_cy + 30.0, sub, paid)
 
 	_draw_freshness_bar(
 		Rect2(Vector2(text_x, bar_y), Vector2(text_w, BAR_HEIGHT)),
 		accent,
 		fresh,
 		entry.get("threshold", 0.0),
-		entry.get("min_threshold", 0.0),
-		entry.status,
 	)
 
 ## Draws "94% fresh · +§300", tinting only the money half -- green when the
@@ -541,14 +495,6 @@ func _draw_pair(full: String, money: String, x: float, max_width: float, center_
 		used,
 		money_ink,
 	)
-
-## "5 spoiled at 32%" -- the amount turned away and how fresh it actually
-## was, which is what says whether the route is marginally too long or wildly
-## so. Falls back to the amount alone if the freshness is somehow unknown.
-static func _rejected_text(rejected: float, rejected_fresh: int) -> String:
-	if rejected_fresh < 0:
-		return "%d spoiled" % roundi(rejected)
-	return "%d spoiled at %d%%" % [roundi(rejected), rejected_fresh]
 
 func _draw_column_tail(bottom: float, accent: Color) -> void:
 	var cx := glyph_centre_x()
@@ -586,7 +532,7 @@ func _draw_halo(rect: Rect2, radius: int, accent: Color) -> void:
 	halo.set_corner_radius_all(radius + int(HALO_GROW))
 	draw_style_box(halo, rect.grow(HALO_GROW))
 
-func _draw_freshness_bar(track: Rect2, accent: Color, freshness_pct: int, threshold: float, min_threshold: float, status: FoodBubbleMarker.Status) -> void:
+func _draw_freshness_bar(track: Rect2, accent: Color, freshness_pct: int, threshold: float) -> void:
 	var radius := int(track.size.y * 0.5)
 
 	var track_box := StyleBoxFlat.new()
@@ -598,23 +544,21 @@ func _draw_freshness_bar(track: Rect2, accent: Color, freshness_pct: int, thresh
 	if filled > 0.0:
 		# Never draw a fill narrower than it is tall -- a rounded box
 		# thinner than its own corner radius renders as a smear.
+		#
+		# Always the row's own accent now (v0.8). The fill used to go inert grey
+		# on a red row, because a short line earned nothing and a coloured bar
+		# would have dressed up a delivery that did not count. Every arrival is
+		# paid for today, and a red row is one where nothing arrived at all --
+		# which draws no fill in the first place.
 		var fill_box := StyleBoxFlat.new()
-		fill_box.bg_color = BAR_INERT_COLOR if status == FoodBubbleMarker.Status.RED else accent
+		fill_box.bg_color = accent
 		fill_box.set_corner_radius_all(radius)
 		draw_style_box(fill_box, Rect2(track.position, Vector2(maxf(track.size.x * filled, track.size.y), track.size.y)))
 
-	# The refusal floor, over the fill so it reads however full the bar is.
-	var floor_mark := clampf(min_threshold, 0.0, 1.0)
-	if floor_mark > 0.0:
-		var zone_box := StyleBoxFlat.new()
-		zone_box.bg_color = BAR_MIN_ZONE_COLOR
-		zone_box.set_corner_radius_all(radius)
-		draw_style_box(zone_box, Rect2(track.position, Vector2(track.size.x * floor_mark, track.size.y)))
-		var fx := track.position.x + track.size.x * floor_mark
-		draw_line(Vector2(fx, track.position.y - 2.0), Vector2(fx, track.end.y + 2.0), BAR_MIN_TICK_COLOR, BAR_TICK_WIDTH)
-
-	# The bonus target. Drawn last so it stays readable whichever side of the
-	# threshold the bar has reached.
+	# The bonus target -- the one mark left on the bar. The refusal floor that
+	# used to shade everything left of min_freshness went with the rule it drew
+	# (v0.8): there is no freshness a settlement turns away any more, so a red
+	# zone would be marking a line nothing can fail.
 	var mark := clampf(threshold, 0.0, 1.0)
 	if mark > 0.0 and mark < 1.0:
 		var x := track.position.x + track.size.x * mark
