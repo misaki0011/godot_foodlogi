@@ -648,16 +648,25 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	assert(not _main.get("_drag_valid"), "A drag must not stop on a bridge deck")
 
 	# A second crossing on the same network is fine and is charged for it: the
-	# per-network cap (BRIDGE_CAP_PER_NETWORK, 10 since v0.7 item 76) does not
-	# bite below its limit. The cap itself is checked exactly, and at whatever
-	# value the constant holds, in verify_mvp._test_bridge_cap_per_network --
-	# reaching it through the tool would need ten bridgeable tiles' worth of
-	# clear map, and this is the same place the hub cap has always been proved.
+	# cap does not bite below its limit.
 	_main.call("_set_tool", "bridgeBuild")
 	var balance_before_second: float = state.balance
 	_main.call("_handle_click", road[1])
 	assert(SimulationEngine.is_bridge(state, road[1]), "A road network under its bridge cap must accept another bridge")
 	assert(is_equal_approx(state.balance, balance_before_second - GameBalance.BRIDGE_BUILD_COST), "The second bridge must be charged like the first")
+
+	# And the tool refuses the one over the cap, charging nothing for the
+	# refusal. Guarded on the cap actually being reached: this corner of the map
+	# holds two bridgeable tiles, so a larger BRIDGE_CAP_PER_NETWORK simply
+	# leaves this unproved here rather than failing -- the cap itself is checked
+	# exactly, at whatever the constant holds, in
+	# verify_mvp._test_bridge_cap_per_network. road[3] must stay a plain route
+	# tile either way, since the hub checks below build on it.
+	if SimulationEngine.network_at_bridge_cap(state, road[3]):
+		var balance_at_cap: float = state.balance
+		_main.call("_handle_click", road[3])
+		assert(not SimulationEngine.is_bridge(state, road[3]), "A road network at BRIDGE_CAP_PER_NETWORK (%d) must refuse another bridge" % GameBalance.BRIDGE_CAP_PER_NETWORK)
+		assert(is_equal_approx(state.balance, balance_at_cap), "A bridge refused by the cap must not charge the player")
 
 	# Bulldozing a bridge takes the STRUCTURE away, not the road it was built
 	# on: the tile survives as a route tile AT ITS OWN LEVEL, still carrying the

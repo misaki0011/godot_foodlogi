@@ -280,6 +280,10 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **A junction stops having a throughput of its own** (§4.4), which is what makes it safe to hand one out by gesture. A hub tile reported a flat 250 food/day, so a §150 hub was a cheaper capacity upgrade than paving (60 -> 250 on dirt) and, worse, a silent capacity CUT where it mattered (400 -> 250 on a Main trunk). `tile_capacity` reads the road underneath now: a junction changes what a tile does, never what it carries.
     **Known asymmetry, stated:** only a road that is already DELIVERING costs a junction. Branching off one that isn't live yet has always been free and stays free -- nothing that was free before this becomes paid -- so the same finished network costs §150 or §0 depending on whether the road was carrying deliveries at the moment you branched. `verify_main._test_drag_buys_its_junction_and_crossing` covers both gestures end to end: the queued structure, the itemised bill, the charge, the junction's inherited capacity, Undo taking it back, the two networks still separate after a crossing, and a crossing with no straight run still refused and marked. See §4.1, §4.4.
 
+78. **Both caps go back to 2.** Item 76 raised the hub and bridge caps per network from 2 to 10 on the reasoning that the cap was doing no work -- the treasury refuses ten hubs long before the cap does. That reasoning still holds for a player *buying* hubs one click at a time, and it stopped holding the moment item 77 let a route drag buy a junction by gesture: a cap of 10 is ten junctions a network can accumulate without anyone deciding to build one. At 2 the cap is the brake it was written to be, and the topology decision §4.4 exists to pose -- keep roads physically separate for separate budgets, or merge them and live with two -- is a decision again.
+    **Cheap to reverse because nothing was written against the number.** Both are still single constants, the dev checks that reach a cap size their scratch roads from those constants (item 76), and the region designs in §12.1 that ration passes and gates against "two per network" never had to change in the first place. What did come back is `verify_main`'s tool-level refusal check: at 2 the bridge corner reaches its cap again, so the Bridge tool is once more proved to refuse over the cap and charge nothing for it -- guarded on the cap actually being reached, so a future change leaves it unproved there rather than failing.
+    **What is NOT reverted is item 77's other half:** a junction still carries the road it stands on rather than a flat 250 of its own (§4.4). That was never an argument about how many hubs a network may have.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -736,7 +740,7 @@ and the result stays legible:
   never land on one.
 - **No two bridges may land on each other**, which stops decks butting
   end-to-end into a continuous elevated road.
-- A connected road network supports at most **10 bridges** (`BRIDGE_CAP_PER_NETWORK`, raised from 2 in v0.7 item 76). An existing bridge
+- A connected road network supports at most **2 bridges** (`BRIDGE_CAP_PER_NETWORK`). An existing bridge
   counts against both networks it serves — the road beneath it and the route
   across it — so approaching from the other side does not reset the budget.
 - Nothing else can be built on a bridge tile afterwards, and a route drag may
@@ -1031,14 +1035,14 @@ net_savings = route_discount_savings - hub_daily_upkeep
 
 ### Hub cap per connected network
 
-Each connected road network can support at most **10 built hubs** (`HUB_CAP_PER_NETWORK`, raised from 2 in v0.7 item 76). A network is a maximal set of orthogonally-connected built tiles (route, storage, and hub). Source and settlement nodes are terminal endpoints for flow, not transit tiles, so they never join two road groups into one network: **two road groups that touch only a shared source/settlement are separate networks with separate hub budgets** (revised in v0.4). A delivery can't cross a node, so the cap can't leak across one -- building a junction on a small road hanging off a source is never blocked just because some other road on that same source is already at the cap.
+Each connected road network can support at most **2 built hubs** (`HUB_CAP_PER_NETWORK`). A network is a maximal set of orthogonally-connected built tiles (route, storage, and hub). Source and settlement nodes are terminal endpoints for flow, not transit tiles, so they never join two road groups into one network: **two road groups that touch only a shared source/settlement are separate networks with separate hub budgets** (revised in v0.4). A delivery can't cross a node, so the cap can't leak across one -- building a junction on a small road hanging off a source is never blocked just because some other road on that same source is already at the cap.
 
 - Any route tile in a network already at the cap stays a plain, capacity-limited route tile -- the Build Hub tool refuses it there, and no cost is charged for the attempt.
 - The player receives a clear explanation that the network has reached its hub cap.
 - Route placement is never blocked by the cap; the player can reroute, keep networks separate, or remove an existing hub-bearing branch to free budget.
 - Existing networks created by older versions or imported data should be validated separately; the MVP does not need migration logic.
 
-This preserves the topology decision: keep networks physically separate to receive independent hub budgets, or merge them and accept one shared budget. At 10 the cap is a backstop rather than the everyday brake -- a hub costs §150 and §25/day against a discount that never repays it, so the treasury bites long before the cap does (v0.7 item 76).
+This preserves the topology decision: keep networks physically separate to receive independent hub budgets, or merge them and accept a maximum of 2 hubs. The cap is felt rather than notional at this value, and it is also what stops a network accumulating junctions by gesture now that a route drag buys one where it taps a live road (§4.1).
 
 ### Suggested hub levels
 
@@ -1099,7 +1103,7 @@ Farm -> Hub -> Village A
             -> Town D
 ```
 
-The hub network should have lower upkeep when the hub is well positioned. Unlimited branching inside one connected network is held back by the per-network cap and, far more, by what a hub costs to keep: §25/day against at most §1.20-§3/day of discount (atomic formation is retired -- see §0.14).
+The hub network should have lower upkeep when the hub is well positioned. Unlimited branching inside one connected network is held back by the 2-hub cap and by what a hub costs to keep: §25/day against at most §1.20-§3/day of discount (atomic formation is retired -- see §0.14).
 
 ---
 
@@ -2249,7 +2253,7 @@ MVP map indicators:
 |---|---|
 | Orange `!` circle | Tile ran at 90–99% of capacity on the last simulated day |
 | Red `!` circle | Tile reached capacity and capped deliveries on the last simulated day |
-| Invalid-placement highlight | The proposed route cannot be built because its required hub is unaffordable or the network is at its hub cap |
+| Invalid-placement highlight | The proposed route cannot be built because its required hub is unaffordable or the network is at the 2-hub cap |
 
 The v0.2 red and purple dashed pending-junction diamonds are removed in v0.3. Invalid hub-forming routes are rejected atomically instead of remaining on the map.
 
@@ -2460,7 +2464,7 @@ Dirt -> Paved -> Main routes and (hub-upgrade only) Small -> Regional hubs.
 Storage types are separate buildings rather than an upgrade chain.
 
 A Small Hub (150) can be built manually with the Build Hub tool on any
-existing route tile, capped per road network (10, v0.7 item 76) -- no fork or
+existing route tile, capped at 2 hubs per road network -- no fork or
 branch-count requirement. Placing a route tile is only gated by its own cost
 (route plus optional bridge); the hub cap never blocks placement, and once a
 network is at its cap the Build Hub tool simply refuses any further tile on
@@ -2542,11 +2546,8 @@ settlements east, and a Dairy high on the ridge itself. Climate 0.9.
 maintain, and preserves cargo at 0.6x decay. So the short expensive road over
 the ridge and the long cheap road around it are genuinely different answers,
 and which is right depends on whether the food is grain (barely decays -- go
-around) or milk (go over). **What rations the passes is the hub's cost**, not
-the per-network cap: at 10 (v0.7 item 76) the cap no longer bites at this
-scale, so a hub on every pass is a §75/day standing charge rather than a
-refusal. If this region wants the cap back as its constraint, it needs a
-per-region override -- MapData has no cap field today.
+around) or milk (go over). The hub cap bites here too, since three passes and
+two hubs per network is a real budget.
 *Why second:* it is the first region where terrain is a tool rather than an
 obstacle, and it says so in one screen.
 
@@ -2566,10 +2567,8 @@ answer when Freeze Storage was retired.
 a source or a settlement or two. Climate 1.0, flat ground throughout.
 *The hook* costs nothing to build, because the rules already do it: hub and
 bridge caps are **per connected road network** (§4.4), so a fragmented map
-hands the player a dozen small networks each with its own budget, and bridging
-two islands into one halves their combined allowance. At a cap of 10 (v0.7
-item 76) that arithmetic is real but slack -- what a fragmented map actually
-rations is upkeep, since every island's road pays its own.
+hands the player a dozen small networks each with its own 2-hub budget.
+Bridging two islands into one network halves their combined hub allowance.
 Deciding *not* to connect two roads is a move the single-landmass region 1 has
 never once asked for, and here it is the whole map.
 *Why fourth:* it needs the player to already understand what a network is, and
@@ -2582,9 +2581,7 @@ gate cells**; villages and sources ring the outside. Climate 1.1.
 tiles, so **route capacity** (60 / 160 / 400) becomes the binding constraint
 instead of freshness -- the first map that forces Main routes and parallel
 trunk roads rather than merely permitting them. A gate is also the obvious
-place for a hub; with the cap at 10 (v0.7 item 76) all three gates can carry
-one, so what makes the choice is §75/day of upkeep against the capacity a hub
-tile actually gives (250, *below* a Main route's 400).
+place for a hub, and there are three gates and two hubs.
 *Why fifth:* capacity is the least-exercised system in the game and wants a
 map of its own; it also satisfies the dense-city instinct with a chokepoint
 puzzle rather than by drawing streets.
