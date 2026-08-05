@@ -103,15 +103,14 @@ func _report() -> void:
 	assert(state.has_connection(third_cell, village_a.grid_position), "Dragging onto a settlement must record an explicit connection to it")
 	assert(is_equal_approx(state.balance, starting_balance - 3 * GameBalance.ROUTE_BUILD_COST), "Route build cost must be deducted for each new tile")
 
-	# Route drag can only START from a source or a built hub (v0.5 revision) --
-	# pressing on a settlement or an already-ESTABLISHED route tile must not
-	# begin a drag (mid_cell is part of the established farm->villageA route
-	# by this point), even though a drag from a valid anchor can still cross
-	# and link to either one.
+	# A route drag starts from a source, a built hub, or any route tile --
+	# including one carrying a LIVE delivery, which the drag taps by buying a
+	# junction there (v0.7 item 77, replacing v0.5 item 22's refusal). A
+	# settlement is still not an anchor.
 	assert(_main.call("_established_route_cells").has(mid_cell), "mid_cell must be part of the established farm->villageA route by this point")
 	var mid_cell_screen := camera.unproject_position(terrain.map_to_local(Vector3i(mid_cell.x, 0, mid_cell.y)) + Vector3.UP)
 	_main.call("_start_press", mid_cell_screen)
-	assert(not _main.get("_press_eligible"), "Pressing on an established route tile must not start a route drag")
+	assert(_main.get("_press_eligible"), "Pressing on a live route tile must start a route drag -- the drag buys the junction")
 	_main.call("_start_press", village_screen)
 	assert(not _main.get("_press_eligible"), "Pressing on a settlement must not start a route drag")
 	_main.call("_start_press", farm_screen)
@@ -126,12 +125,19 @@ func _report() -> void:
 	_main.call("_start_press", hub_cell_screen)
 	assert(_main.get("_press_eligible"), "Pressing on a built hub must start a route drag")
 
-	# A drag starting from the hub still needs to END at a hub or settlement --
-	# stopping at a plain route tile is invalid even when the start is valid.
+	# A drag from that hub may now END on a plain route tile, including a live
+	# one -- it buys the junction there (v0.7 item 77). Ending on empty ground
+	# is still nothing at all, which is the rule that guarantees a committed
+	# drag reaches something.
 	var hub_short_path: Array[Vector2i] = [second_cell, mid_cell]
 	_main.set("_drag_path", hub_short_path)
 	_main.call("_recompute_drag_validity")
-	assert(not _main.get("_drag_valid"), "A drag from a hub that doesn't end at a hub or a settlement must be invalid")
+	assert(_main.get("_drag_valid"), "A drag from a hub onto a live route tile must be valid -- it buys the junction: %s" % _main.get("_drag_invalid_reason"))
+	assert(_main.get("_drag_new_hubs") == [mid_cell], "Ending on a live route tile must queue a junction there")
+	var hub_to_nowhere: Array[Vector2i] = [second_cell, second_cell + Vector2i(0, 1)]
+	_main.set("_drag_path", hub_to_nowhere)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag that stops on empty ground must still be invalid")
 
 	# A new route can never cross or reuse an already-built tile in its
 	# interior (v0.5 item 20) -- even though mid_cell is a perfectly real,
@@ -249,6 +255,11 @@ func _report() -> void:
 
 	_check_day_clock(state)
 	_check_day_cycle(state)
+	_test_drag_leaves_its_own_node(state)
+	_test_drag_buys_its_junction_and_crossing(state)
+	# After the clock checks, because proving the day clears the undo history
+	# means running a day, and those assert the calendar is still on day 1.
+	_test_undo(state)
 
 	var terrain_types_seen := {}
 	for cell in used_cells:
@@ -262,6 +273,273 @@ func _report() -> void:
 	# Garden: everything above still expects the map it started with.
 	_test_source_upgrade()
 	print("verify_main checks passed.")
+
+## ROUTE-18: a drag leaves the node it started from across that node's OWN
+## cells. A source stands on 2x1 (DEV-03), so pressing the near cell and
+## dragging out over the far one used to trip the interior rule on the anchor
+## itself -- the player was refused for crossing the very source they were
+## leaving, decided by which of two identical-looking cells they happened to
+## press. The rules it must NOT have relaxed are checked alongside it: running
+## through a settlement, and crossing a road that already exists, are both still
+## refused, and each now names what it ran into and marks the cell.
+##
+## Runs on the Bakery -> Village B corner, which nothing earlier has built in.
+func _test_drag_leaves_its_own_node(state: GameState) -> void:
+	var map_data: MapData = _main.get("_map_data")
+	var bakery: NodeData = _node_by_id(map_data, "bakery")
+	var village_b: NodeData = _node_by_id(map_data, "villageB")
+	assert(bakery.cells().size() == 2, "This check needs a 2-cell source to press the near cell of")
+	var near_cell: Vector2i = bakery.grid_position
+	var far_cell: Vector2i = bakery.far_cell()
+	var fresh: Array[Vector2i] = [Vector2i(4, 11), Vector2i(5, 11), Vector2i(6, 11)]
+	for cell in fresh:
+		assert(not state.grid.has(cell), "This check needs %s empty to run over" % cell)
+	var saved_balance: float = state.balance
+	state.balance = 5000.0
+	_main.call("_set_tool", "route")
+
+	# Pressing the near cell is a valid anchor, and the far cell of the same
+	# source is part of that anchor rather than something the route crosses.
+	var out_of_source: Array[Vector2i] = [near_cell, far_cell, fresh[0], fresh[1], fresh[2], village_b.grid_position]
+	_main.set("_drag_path", out_of_source)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag out of the near cell of a 2-cell source must be valid: %s" % _main.get("_drag_invalid_reason"))
+	# The step from one cell of a node to another is movement inside one place;
+	# recording it would put an edge in the road graph between a node and itself.
+	for pair in _main.get("_drag_new_connections"):
+		assert(not (pair[0] == near_cell and pair[1] == far_cell), "A drag must not record a connection between two cells of the same node")
+	_main.call("_commit_drag")
+	for cell in fresh:
+		assert(state.grid.has(cell), "The drag must build every empty cell it crossed (%s)" % cell)
+	assert(state.has_connection(fresh[2], village_b.grid_position), "The drag must connect to the settlement it reached")
+	assert(not state.has_connection(near_cell, far_cell), "Committing must not link a node to itself")
+
+	# Still refused: a delivery never passes THROUGH a node, so a drag that
+	# reaches a settlement and carries on out the far side is not a route.
+	var through: Array[Vector2i] = [far_cell, Vector2i(4, 10), Vector2i(5, 10), village_b.grid_position, Vector2i(7, 10)]
+	_main.set("_drag_path", through)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A drag running through a settlement must still be refused")
+	assert(_main.get("_drag_invalid_reason").contains(village_b.display_name), "The refusal must name the settlement it ran into, not just 'an existing tile or node'")
+	assert(_main.get("_drag_blocked_cells") == [village_b.grid_position], "The refused cell must be marked, so the player can see WHERE the path is refused")
+
+	# Crossing a road that already exists is no longer a refusal: the drag buys
+	# the deck that carries it over (v0.7 item 77, covered in full by
+	# _test_drag_buys_its_junction_and_crossing). What matters here is that the
+	# crossed tile is not silently REUSED -- a deck is queued for it, so the two
+	# roads still cost a structure to share a cell.
+	state.grid[Vector2i(6, 12)] = {"kind": "route", "level": "dirt"} # an unfinished stub to land on
+	var across: Array[Vector2i] = [far_cell, Vector2i(4, 10), Vector2i(5, 10), Vector2i(5, 11), Vector2i(5, 12), Vector2i(6, 12)]
+	_main.set("_drag_path", across)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag straight over an existing road must be valid now: %s" % _main.get("_drag_invalid_reason"))
+	var decks: Array = _main.get("_drag_new_bridges")
+	assert(decks.size() == 1 and decks[0][0] == Vector2i(5, 11), "The crossed road tile must be queued for a deck rather than reused")
+
+	for cell in fresh + [Vector2i(6, 12)]:
+		state.grid.erase(cell)
+		state.remove_connections(cell)
+	state.balance = saved_balance
+	_main.call("_clear_drag_preview")
+	_main.call("_after_action")
+	print("Drag out of a multi-cell node (ROUTE-18) checks passed.")
+
+## ROUTE-19: a drag buys the structure its gesture implies. Tapping a road that
+## is already delivering builds the junction hub there (§150); carrying straight
+## over one builds the deck that keeps the two apart (§60). Both are the same
+## structures the Hub and Bridge tools place, at the same price -- the gesture
+## removes the trip to the toolbar, not the cost.
+##
+## Works on the Bakery -> Village B road, which _test_drag_leaves_its_own_node
+## built and cleaned up, so this rebuilds it as its own live route first.
+func _test_drag_buys_its_junction_and_crossing(state: GameState) -> void:
+	var map_data: MapData = _main.get("_map_data")
+	var bakery: NodeData = _node_by_id(map_data, "bakery")
+	var village_b: NodeData = _node_by_id(map_data, "villageB")
+	var road: Array[Vector2i] = [Vector2i(4, 11), Vector2i(5, 11), Vector2i(6, 11)]
+	for cell in road:
+		assert(not state.grid.has(cell), "This check needs %s empty to lay its live road on" % cell)
+	var saved_balance: float = state.balance
+	state.balance = 5000.0
+	_main.call("_set_tool", "route")
+
+	var live: Array[Vector2i] = [bakery.far_cell(), road[0], road[1], road[2], village_b.grid_position]
+	_main.set("_drag_path", live)
+	_main.call("_recompute_drag_validity")
+	_main.call("_commit_drag")
+	assert(_main.call("_established_route_cells").has(road[1]), "The check's road must be live before its junction can cost anything")
+
+	# Branching out of a live road: the press is eligible, and the drag prices
+	# the junction it is about to build.
+	var branch: Array[Vector2i] = [road[1], Vector2i(5, 12), Vector2i(6, 12), Vector2i(6, 13), Vector2i(7, 13)]
+	state.grid[Vector2i(7, 13)] = {"kind": "route", "level": "dirt"} # an unfinished stub to land on
+	_main.set("_drag_path", branch)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "Branching off a live road must be valid: %s" % _main.get("_drag_invalid_reason"))
+	assert(_main.get("_drag_new_hubs") == [road[1]], "The drag must queue a junction on the live tile it taps")
+	assert(_main.get("_drag_cost_summary").contains("junction"), "The bill must name the junction before the player lets go")
+	var before_branch: float = state.balance
+	_main.call("_commit_drag")
+	assert(state.grid[road[1]].kind == "hub", "Committing must build the junction the drag queued")
+	assert(state.grid[road[1]].get("level", "") == "dirt", "The junction must remember the road under it")
+	var branch_cost: float = 3.0 * GameBalance.ROUTE_BUILD_COST + GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+	assert(is_equal_approx(state.balance, before_branch - branch_cost), "The drag must charge for its tiles AND its junction")
+
+	# A junction is a junction, not a throughput of its own (item 77): it
+	# carries what the road under it carries.
+	assert(is_equal_approx(SimulationEngine.tile_capacity(state, road[1]), GameBalance.ROUTE_LEVELS.dirt.cap),
+		"A hub on a dirt road must carry the dirt road's capacity, not a figure of its own")
+
+	# Undo takes the junction back with the road it came with.
+	_main.call("_undo_last")
+	assert(state.grid[road[1]].kind == "route", "Undo must take the junction back too")
+	assert(is_equal_approx(state.balance, before_branch), "Undo must refund the junction as well as the tiles")
+
+	# Carrying straight over a live road builds the deck, and the two roads stay
+	# two networks -- which is the whole point of paying for a crossing.
+	var north := Vector2i(5, 9)
+	var south := Vector2i(5, 13)
+	for cell in [north, south]:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	var over: Array[Vector2i] = [north, Vector2i(5, 10), road[1], Vector2i(5, 12), south]
+	_main.set("_drag_path", over)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "A drag straight over a live road must be valid: %s" % _main.get("_drag_invalid_reason"))
+	var queued: Array = _main.get("_drag_new_bridges")
+	assert(queued.size() == 1 and queued[0][0] == road[1], "The drag must queue a deck on the tile it crosses")
+	assert(queued[0][1] == Vector2i(0, 1), "The deck must run the way the drag goes, across the road below")
+	var before_cross: float = state.balance
+	_main.call("_commit_drag")
+	assert(SimulationEngine.is_bridge(state, road[1]), "Committing must build the deck the drag queued")
+	assert(is_equal_approx(state.balance, before_cross - 2.0 * GameBalance.ROUTE_BUILD_COST - GameBalance.BRIDGE_BUILD_COST), "The crossing must charge for its tiles AND its deck")
+	var comp := SimulationEngine.road_components(state)
+	assert(comp[SimulationEngine.vertex(road[1], SimulationEngine.LANE_GROUND)] != comp[SimulationEngine.vertex(road[1], SimulationEngine.LANE_DECK)],
+		"A crossing must leave two networks -- merging them silently is what paying for a deck avoids")
+
+	# Where a deck cannot go, the path is still refused rather than quietly
+	# merging the two roads. road[2] is the corner where the road turns up to
+	# Village B: there is no straight run there to span, so nothing crosses it.
+	state.grid[Vector2i(7, 11)] = {"kind": "route", "level": "dirt"}
+	var corner: Array[Vector2i] = [Vector2i(7, 11), road[2], road[1]]
+	_main.set("_drag_path", corner)
+	_main.call("_recompute_drag_validity")
+	assert(not _main.get("_drag_valid"), "A crossing with no straight run to span must still be refused")
+	assert(_main.get("_drag_blocked_cells") == [road[2]], "The refused crossing must mark the tile it could not span")
+
+	for cell in [road[0], road[1], road[2], north, south, Vector2i(5, 10), Vector2i(5, 12), Vector2i(6, 12), Vector2i(6, 13), Vector2i(7, 13), Vector2i(7, 11)]:
+		state.grid.erase(cell)
+		state.remove_connections(cell)
+	state.balance = saved_balance
+	_main.call("_clear_drag_preview")
+	_main.call("_after_action")
+	print("Drag buys its junction and its crossing (ROUTE-19) checks passed.")
+
+## BUILD-01: Undo puts the last build action back whole -- tiles, connections,
+## treasury and a source's expansion level alike -- and the day rollover clears
+## the history, so a road can never be sold back after it has already earned.
+##
+## Works on the empty bottom row west of the river (y 13, x 5-7), clear of every
+## node footprint and of the scratch roads the earlier checks left behind, and
+## puts the treasury and the grid back on the way out so the checks after this
+## one still see the map they expect.
+func _test_undo(state: GameState) -> void:
+	# Main's OWN copy of the map: it duplicates the resource at load, so the
+	# NodeData a click reaches is not the one `load()` hands back, and a source
+	# expansion would land on an object this check never looks at.
+	var map_data: MapData = _main.get("_map_data")
+	var a := Vector2i(5, 13)
+	var b := Vector2i(6, 13)
+	var c := Vector2i(7, 13)
+	for cell in [a, b, c]:
+		assert(not state.grid.has(cell), "The undo checks need %s empty to start from" % cell)
+	var saved_balance: float = state.balance
+	var undo_button: Button = _main.get("_undo_button")
+	state.balance = 5000.0
+
+	# Two unestablished route tiles to drag between (ROUTE-14), written
+	# directly so the drag under test is the only action in the history.
+	state.grid[a] = {"kind": "route", "level": "dirt"}
+	state.grid[c] = {"kind": "route", "level": "dirt"}
+	_undo_history().clear()
+	_main.call("_update_ui")
+	assert(undo_button.disabled, "With nothing to undo the button must be disabled, not merely unhelpful")
+
+	var balance_before: float = state.balance
+	var grid_before: int = state.grid.size()
+	_main.call("_set_tool", "route")
+	var path: Array[Vector2i] = [a, b, c]
+	_main.set("_drag_path", path)
+	_main.call("_recompute_drag_validity")
+	assert(_main.get("_drag_valid"), "The scratch drag the undo checks build on must be valid")
+	_main.call("_commit_drag")
+	assert(state.grid.has(b) and state.balance < balance_before, "The scratch drag must actually build and charge")
+	assert(_undo_history().size() == 1, "A committed drag must record exactly one undo step")
+	assert(not undo_button.disabled, "The button must come live the moment there is something to undo")
+
+	_main.call("_undo_last")
+	assert(not state.grid.has(b), "Undo must take back every tile the drag built")
+	assert(state.grid.size() == grid_before, "Undo must leave the grid exactly the size it was")
+	assert(not state.has_connection(a, b) and not state.has_connection(b, c), "Undo must take back every connection the drag recorded")
+	assert(is_equal_approx(state.balance, balance_before), "Undo must refund what the drag cost")
+	assert(_undo_history().is_empty(), "Undo must spend the step it used")
+
+	# A refused action records nothing: Undo's first press must never be spent
+	# on a click that did nothing (there is no route tile at `b` to hub).
+	_main.call("_set_tool", "hubBuild")
+	_main.call("_handle_click", b)
+	assert(not state.grid.has(b) and _undo_history().is_empty(), "A refused build must not record an undo step")
+
+	# A structure comes off and hands its road back at the level it really was,
+	# which is the case a per-tool inverse is most likely to get wrong.
+	state.grid[a].level = "paved"
+	var balance_before_hub: float = state.balance
+	_main.call("_handle_click", a)
+	assert(state.grid[a].kind == "hub", "The scratch hub must actually build")
+	_main.call("_undo_last")
+	assert(state.grid[a].kind == "route" and state.grid[a].level == "paved", "Undoing a hub must hand the road back at the level it was")
+	assert(is_equal_approx(state.balance, balance_before_hub), "Undoing a hub must refund it")
+
+	# The other direction: a bulldozed tile comes back, level and all.
+	_main.call("_set_tool", "remove")
+	_main.call("_handle_click", a)
+	assert(not state.grid.has(a), "The scratch bulldoze must actually clear the tile")
+	_main.call("_undo_last")
+	assert(state.grid.has(a) and state.grid[a].level == "paved", "Undo must put a bulldozed tile back exactly as it was")
+
+	# A source expansion lives on NodeData rather than the grid, so it needs
+	# its own line in the snapshot -- and its marker rebuilt, since the yard's
+	# produce models are built from upgrade_level when the marker is spawned.
+	var garden: NodeData = _node_by_id(map_data, "garden")
+	var level_before: int = garden.upgrade_level
+	state.balance = GameBalance.SOURCE_UPGRADE_COST
+	_main.call("_set_tool", "upgrade")
+	_main.call("_handle_click", garden.grid_position)
+	assert(garden.upgrade_level == level_before + 1, "The scratch expansion must actually happen")
+	_main.call("_undo_last")
+	assert(garden.upgrade_level == level_before, "Undo must take a source's expansion back")
+	assert(is_equal_approx(state.balance, GameBalance.SOURCE_UPGRADE_COST), "Undo must refund an expansion")
+
+	# The day pays out against the network as it stood, so the history it
+	# leaves behind is worthless and must not survive the rollover.
+	state.balance = 5000.0
+	_main.call("_set_tool", "remove")
+	_main.call("_handle_click", c)
+	assert(_undo_history().size() == 1, "The pre-rollover bulldoze must record a step")
+	state.day_time_left = 0.01
+	_main.call("_tick_day_clock", 0.05)
+	assert(_undo_history().is_empty(), "A day rollover must clear the undo history")
+	assert(undo_button.disabled, "The button must go dead when the rollover clears the history")
+
+	for cell in [a, b, c]:
+		state.grid.erase(cell)
+		state.remove_connections(cell)
+	state.balance = saved_balance
+	_main.call("_set_tool", "route")
+	_main.call("_after_action")
+	print("Undo (BUILD-01) checks passed.")
+
+func _undo_history() -> Array:
+	return _main.get("_undo_stack")
 
 ## ROUTE-16: every route tile is attributed to the source(s) its network is
 ## explicitly connected to, which is what Main tints the tile by. A road
@@ -369,14 +647,26 @@ func _check_bridge_tool(state: GameState, camera: Camera3D, terrain: GridMap) ->
 	_main.call("_recompute_drag_validity")
 	assert(not _main.get("_drag_valid"), "A drag must not stop on a bridge deck")
 
-	# The per-network cap: a second bridge is fine, a third is refused.
+	# A second crossing on the same network is fine and is charged for it: the
+	# cap does not bite below its limit.
 	_main.call("_set_tool", "bridgeBuild")
+	var balance_before_second: float = state.balance
 	_main.call("_handle_click", road[1])
 	assert(SimulationEngine.is_bridge(state, road[1]), "A road network under its bridge cap must accept another bridge")
-	var balance_at_cap: float = state.balance
-	_main.call("_handle_click", road[3])
-	assert(not SimulationEngine.is_bridge(state, road[3]), "A road network at BRIDGE_CAP_PER_NETWORK (%d) must refuse another bridge" % GameBalance.BRIDGE_CAP_PER_NETWORK)
-	assert(is_equal_approx(state.balance, balance_at_cap), "A bridge refused by the cap must not charge the player")
+	assert(is_equal_approx(state.balance, balance_before_second - GameBalance.BRIDGE_BUILD_COST), "The second bridge must be charged like the first")
+
+	# And the tool refuses the one over the cap, charging nothing for the
+	# refusal. Guarded on the cap actually being reached: this corner of the map
+	# holds two bridgeable tiles, so a larger BRIDGE_CAP_PER_NETWORK simply
+	# leaves this unproved here rather than failing -- the cap itself is checked
+	# exactly, at whatever the constant holds, in
+	# verify_mvp._test_bridge_cap_per_network. road[3] must stay a plain route
+	# tile either way, since the hub checks below build on it.
+	if SimulationEngine.network_at_bridge_cap(state, road[3]):
+		var balance_at_cap: float = state.balance
+		_main.call("_handle_click", road[3])
+		assert(not SimulationEngine.is_bridge(state, road[3]), "A road network at BRIDGE_CAP_PER_NETWORK (%d) must refuse another bridge" % GameBalance.BRIDGE_CAP_PER_NETWORK)
+		assert(is_equal_approx(state.balance, balance_at_cap), "A bridge refused by the cap must not charge the player")
 
 	# Bulldozing a bridge takes the STRUCTURE away, not the road it was built
 	# on: the tile survives as a route tile AT ITS OWN LEVEL, still carrying the

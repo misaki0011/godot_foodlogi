@@ -254,6 +254,36 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **`validate()` gains the check that would have shipped broken.** A node standing on sea is the obvious failure; a node WALLED IN by it is the one nobody would notice -- it can never be connected while the order book offers lines against it forever, so the run cannot be finished and never says why.
     The dev checks had to move house: their scratch road was laid in exactly this corner, and it is water now. `verify_main._test_sea_is_unbuildable` pins the DIFFERENCE rather than the sea alone -- sea refuses a drag and charges nothing, the river still takes one -- with the treasury asserted either side, since a refusal that silently charged is the bad failure. See §8.4.
 
+73. **The last build can be taken back, until the day it earns.** Every build action was final and none of them refunded, so a road dragged one tile wide of where it was meant to go cost §8 a tile to place and a second gesture to clear, with nothing handed back either way (§4.1). An **Undo** button in the control panel (§10.9) puts the last action back whole -- tiles, connections, treasury and a source's expansion level alike -- and the history keeps up to 30 of them.
+    **Snapshots, not a per-tool inverse.** There are eight build actions and they compose: a sweep is n bulldozes, a bulldoze hands the road back at whatever level it was rather than at dirt, a bridge takes down two deck connections and leaves the road beneath, a hub remembers the paving it covered. An inverse per tool is eight chances to hand back the wrong thing, and the wrong thing here is money. A snapshot of `grid` + `connections` + `balance` + every source's `upgrade_level`, taken before the action, cannot disagree with what the action did -- because it never has to know what that was. It is affordable for the same reason the map is small: region 1 is 21x14, so a whole grid is at most 294 tiny dictionaries.
+    **The rollover clears the history, and that is the rule that keeps it honest.** A day pays out against the network as it stood, so undoing a road *after* it has carried a delivery would refund its cost while the player keeps the income it earned -- an arbitrarily repeatable one, since the same road can be rebuilt and re-sold every day. Undo is for the mistake just made, not for the week just played. It also means Undo never has to reason about `active_orders`, `filled_lines` or a settlement's latched history: nothing it can reach was recorded by a day.
+    **A refused action records nothing.** Every `_push_undo` sits after its action's guards and before its first mutation, so a click that was refused for money, for the wrong tile or for a cap leaves the history alone -- otherwise the first press of Undo would be spent undoing nothing, which is worse than having no Undo at all. For the same reason the button is **disabled** when the history is empty rather than live and apologetic, and its tooltip names what the next press would take back.
+    **Full width, outside the tool grid.** Everything in those two-column grids is a MODE the map then waits for; Undo is a thing that happens when pressed, and a ninth cell in that grid would have read as a tenth tool. Ctrl+Z does the same, for desktop, but the button is the interface -- the game is playable from a phone browser and nothing may depend on a keyboard (§10.7).
+    `verify_main._test_undo` builds and takes back one of each shape -- a drag, a hub over a *paved* tile, a bulldoze, a source expansion -- asserting the grid, the connections and the treasury land back where they started, that a refused build records no step, and that a rollover empties the history. The paved tile is the case a per-tool inverse gets wrong; the treasury is the one it would get wrong expensively. See §10.9.
+
+74. **The settlement end of a route becomes an arrow too.** Item 16 gave the overlay's two ends distinct marks -- a green cone at the source, a red *bar* at the settlement -- and the bar was the weaker half: every tile-to-tile link along the road already draws a bar, so the one place a delivery actually lands looked like any other joint in the line, and it said nothing about which way the food was moving. It is the same cone now, pointing tile → settlement so the arrowhead lands on the doorstep, in the same settlement red (`ESTABLISHED_END_COLOR`) it already used.
+    **One object, two colours, read at both ends.** `_add_established_start_arrow` becomes `_add_established_arrow(pos, flow_dir, color)` -- the two ends are the same statement (this is which way the food is going) seen from its opposite ends, so drawing them with the same mesh is what makes the pair read as one sentence. Colour still separates supplier from customer, the fulfilled green and the settlement red used everywhere else, so nothing about telling start from finish depends on following the strand. Purely visual: no simulation, pathfinding or cost change. See §4.1.
+
+75. **A drag may leave the source it started on, and a refusal says where it is refused.** A source stands on 2x1 and a City on 2x2 (§0.41), but the interior rule (item 20) counted CELLS: pressing the near cell of a source and dragging out across its far one tripped that rule **on the anchor itself**, so the player was refused for crossing the very source they were leaving -- decided by which of two identical-looking cells they happened to press first, and reported as "a new route can't cross or reuse an existing tile or node", which reads as *source-to-settlement is not allowed*. "Between the two ends" is measured in **nodes** now: the leading run of cells belonging to the start node and the trailing run belonging to the end node are those ends. Re-entering either node later is still a crossing, and a step between two cells of one node records **no connection** -- an edge in the road graph between a node and itself.
+    **Nothing else was relaxed.** Running THROUGH a settlement is still refused (a delivery never transits a node, and the simulation does not either), and so is crossing a road that already exists -- that one is what the Bridge is for (§4.1), and relaxing it would let a drag silently merge two networks the player built apart.
+    **The refusal now says where, and while the path is still being drawn.** A path turns red end to end when any one cell breaks a rule, which says "no" without saying WHERE -- and on a long drag across a busy map the offending tile is rarely the one under the finger. The refused cell now carries a solid red block standing above the flat preview plates (height being what reads at a 60-degree pitch), and the bottom hint bar carries the reason live, in red. It also **names what it ran into** rather than restating the rule: "a route can't run THROUGH Village B", or "build a Bridge on that tile and carry straight over it". Previously the reason existed only as a toast on RELEASE -- readable only after the player had given up on the path it was explaining.
+    `verify_main._test_drag_leaves_its_own_node` drags out of the Bakery's near cell to Village B and asserts it commits, that no connection links the Bakery's two cells, and that the two rules NOT relaxed still refuse -- each naming what it hit and marking the one cell it is refused for. See §4.1.
+
+76. **Hub and bridge caps per network go from 2 to 10.** Both were authored when a hub formed automatically at a fork (items 2, 12) -- a rule that no longer exists: a hub is a deliberate §150 purchase now, and a bridge a deliberate §60 one. **The cap was never what stopped hub spam, and it was doing no work at ten.** A hub costs §25/day forever against a discount of 15% on the upkeep of the road tiles *directly connected* to it -- at most four of them, so at most §1.20/day back on dirt and §3/day on Main. It has never repaid itself out of the discount; what a player buys is the junction and its 250 flow capacity. Ten hubs on one network is §250/day, which the treasury refuses long before the cap would.
+    **What the caps still do.** A backstop against a map of interchanges rather than an everyday brake. A bridge still counts against BOTH networks it serves (§4.1), so ten is ten crossings *touching* a network, not ten built from it; and the geometry is its own limit, since no two bridges may land on each other and each needs a straight run with room to land on both sides.
+    **Two things get easier that were meant to be hard, and one trap gets easier to fall into.** A hub tile's flow capacity is **250, below a Main route's 400** (§4.4) -- so converting a Main trunk tile to a hub *narrows* it, and at ten per network there is more room to do that by accident. And three planned regions were designed against the old number: The Terraces rationed passes with "three passes and two hubs" (§12.1), The Delta's hook is that merging two island networks halves their hub allowance, and Oldwall's three gates were meant to compete for two hubs. Their text is updated to say cost rather than cap, but if any of them wants the old pressure back it needs a **per-region cap override** -- `MapData` has no cap field today, and both caps are global constants.
+    The dev checks that reached the cap are sized from the constants now rather than written out for 2, so raising it again re-runs them at the new value instead of indexing off the end of a scratch road (`verify_mvp._test_hub_cap_per_network`, `_test_bridge_cap_per_network`). `verify_main`'s bridge check no longer reaches the cap through the tool -- ten bridgeable tiles' worth of clear map is more than that corner has -- and proves instead that a second crossing is accepted and charged; the cap itself is proved exactly, at whatever the constant holds, in `verify_mvp`. That is where the hub cap has always been proved.
+
+77. **A route drag buys the structure its gesture implies.** Two gestures were refused outright, and both had one obvious meaning. Starting a drag from the middle of a road that is already delivering was refused (item 22) because a live route could only be tapped at its own hub -- so the player had to notice that, find the Hub tool, switch to it, click the tile, switch back, and only then drag. Drawing a route straight over an existing road was refused (item 20) because crossing without joining needs a deck -- same five steps with the Bridge tool. **The drag now buys the structure itself**: a **junction hub** (§150) where it taps a live road, at either end, and a **deck** (§60) where it carries straight over one. Same structures, same prices, same rules -- what goes away is the trip to the toolbar.
+    **What was NOT relaxed is the point.** A crossing still builds a deck rather than merging the two roads, because a silent merge is the bug item 15 exists to prevent -- and where a deck cannot go (no straight run to span, a landing off the map or on a node, the network at its bridge cap) the path is refused exactly as before, marking the tile that stopped it. A delivery still never transits a source or a settlement, a drag still cannot stop on empty ground or park on a deck, and both caps still bite. The invariant is unchanged and easier to say than it was: **every shared cell is a paid structure** -- the drag either buys the junction that joins two roads or the deck that keeps them apart.
+    **The bill is the risk, so the bill is on screen.** A gesture that cost §8 a tile can now cost §368, and a player who discovers that in the toast afterwards has been robbed by their own tool. The hint bar carries the itemised total while the drag is still held ("Release to build: 3 tiles + 1 junction hub §150 -- §174"), the structure stands on its tile in the preview in its own colour -- hub orange, deck cream -- and the whole thing is one Undo away (§0.73). Affordability is checked against the **total**, structures included, so a drag that outruns the treasury goes red before release rather than half-building.
+    **A junction stops having a throughput of its own** (§4.4), which is what makes it safe to hand one out by gesture. A hub tile reported a flat 250 food/day, so a §150 hub was a cheaper capacity upgrade than paving (60 -> 250 on dirt) and, worse, a silent capacity CUT where it mattered (400 -> 250 on a Main trunk). `tile_capacity` reads the road underneath now: a junction changes what a tile does, never what it carries.
+    **Known asymmetry, stated:** only a road that is already DELIVERING costs a junction. Branching off one that isn't live yet has always been free and stays free -- nothing that was free before this becomes paid -- so the same finished network costs §150 or §0 depending on whether the road was carrying deliveries at the moment you branched. `verify_main._test_drag_buys_its_junction_and_crossing` covers both gestures end to end: the queued structure, the itemised bill, the charge, the junction's inherited capacity, Undo taking it back, the two networks still separate after a crossing, and a crossing with no straight run still refused and marked. See §4.1, §4.4.
+
+78. **Both caps go back to 2.** Item 76 raised the hub and bridge caps per network from 2 to 10 on the reasoning that the cap was doing no work -- the treasury refuses ten hubs long before the cap does. That reasoning still holds for a player *buying* hubs one click at a time, and it stopped holding the moment item 77 let a route drag buy a junction by gesture: a cap of 10 is ten junctions a network can accumulate without anyone deciding to build one. At 2 the cap is the brake it was written to be, and the topology decision §4.4 exists to pose -- keep roads physically separate for separate budgets, or merge them and live with two -- is a decision again.
+    **Cheap to reverse because nothing was written against the number.** Both are still single constants, the dev checks that reach a cap size their scratch roads from those constants (item 76), and the region designs in §12.1 that ration passes and gates against "two per network" never had to change in the first place. What did come back is `verify_main`'s tool-level refusal check: at 2 the bridge corner reaches its cap again, so the Bridge tool is once more proved to refuse over the cap and charge nothing for it -- guarded on the cap actually being reached, so a future change leaves it unproved there rather than failing.
+    **What is NOT reverted is item 77's other half:** a junction still carries the road it stands on rather than a flat 250 of its own (§4.4). That was never an argument about how many hubs a network may have.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -590,13 +620,13 @@ that a drag is needed** (v0.5 item 21 retires the old tap-to-cycle-shape
 feature) -- it never places, connects, or reshapes a tile. All route
 creation is drag-only:
 
-1. Press and hold on a valid anchor -- a source node, a built hub tile, or a
-   route tile that ISN'T part of an established route yet -- for a short
-   moment (roughly a third of a second) without releasing to switch into
-   drag mode. A press on a settlement, empty ground, or an already-
-   established route tile is not drag-eligible: every route must trace back
-   to a supply point, or continue unfinished infrastructure that isn't
-   serving any delivery yet (v0.5 items 18, 22).
+1. Press and hold on a valid anchor -- a source node, a built hub tile, or
+   any plain route tile -- for a short moment (roughly a third of a second)
+   without releasing to switch into drag mode. A press on a settlement, on
+   empty ground, on a storage building or on a bridge deck is not
+   drag-eligible. A tile carrying a LIVE delivery was excluded too until
+   v0.7 item 77; the drag now **buys the junction** there rather than
+   refusing the gesture (see rule 6).
 2. Dragging the pointer traces a candidate path across further cells, drawn
    live as a translucent line so the player can see it before committing to
    anything.
@@ -606,33 +636,57 @@ creation is drag-only:
    becomes a new tile to build, and each consecutive pair (including the two
    ends) becomes a connection to record. The running cost only counts these
    genuinely new tiles, and must fit the current treasury (the hub cap never
-   blocks a placement -- see §4.4).
-4. **The path's LAST cell must be a hub tile, a settlement node, or likewise
-   an unestablished route tile** (v0.5 items 19, 22) -- a drag that releases
-   on an already-established route tile, or on empty ground, is invalid, no
-   matter how far it traveled or how affordable it was. This is what
+   blocks a placement -- see §4.4). **"Between" is measured in nodes, not
+   cells** (v0.7 item 75): a source stands on 2x1 and a City on 2x2 (§0.41),
+   so the leading run of cells belonging to the *start* node and the trailing
+   run belonging to the *end* node are part of those ends, not interior. A
+   drag out of the near cell of its own source used to be refused for
+   crossing that source -- decided by which of two identical-looking cells
+   the player happened to press. Re-entering either node later in the path is
+   still a crossing, and a step between two cells of the same node records no
+   connection: that would put an edge in the road graph between a node and
+   itself.
+4. **The path's LAST cell must be a hub tile, a settlement node, or another
+   route tile** (v0.5 items 19, 22; widened to any route tile in v0.7 item
+   77) -- a drag that releases on empty ground is invalid, no matter how far
+   it traveled or how affordable it was. This is what
    guarantees every committed drag either reaches a genuine delivery
    destination or joins onto unfinished infrastructure -- never a route that
    silently stops one tile short of the node it looked like it was reaching,
    and never one that piggybacks mid-network onto a route that's already
    live. The preview line renders green only once the affordability,
-   interior, and end-point checks all pass, red otherwise, explaining why in
-   a toast if the player releases while it's red.
+   interior, and end-point checks all pass, red otherwise. **A refused path
+   says where and why while it is still being drawn** (v0.7 item 75): the
+   offending cell carries a solid red block standing above the path, and the
+   bottom hint bar carries the reason in red -- naming the settlement or
+   source the path ran through, or pointing at the Bridge for a road it tried
+   to cross. Previously the whole path turned a uniform red and the reason
+   arrived only as a toast on release, so a player watching a red line had
+   nothing to read until they had already given up on it.
 5. **Only a fully valid path is committed, and only on release** -- an
    invalid path places and connects nothing at all. On a valid release,
-   every queued tile and connection is written at once. A press that
-   releases before the hold threshold, or one that never actually drags to
-   a second cell, is an ordinary tap on the anchor (info tip for a node,
+   every queued tile, structure and connection is written at once. A press
+   that releases before the hold threshold, or one that never actually drags
+   to a second cell, is an ordinary tap on the anchor (info tip for a node,
    just a hint for a route tile) -- never a build.
+6. **The drag buys the structure its gesture implies** (v0.7 item 77).
+   Tapping a road that is already delivering -- starting a drag from one, or
+   releasing onto one -- builds a **junction hub** on that tile for §150.
+   Carrying straight over one builds the **deck** that lets the two cross
+   without joining, for §60. Both are the same structures the Hub and Bridge
+   tools place, at the same price and under the same rules: the gesture
+   removes the trip to the toolbar, not the cost. Where the structure cannot
+   be built -- no straight run to span, a landing off the map or on a node,
+   a network at its cap, a treasury short of the total -- the path is refused
+   exactly as before, and says which tile stopped it. The whole bill is shown
+   in the hint bar while the drag is still being held, and Undo (§10.9) takes
+   the lot back.
 
-Because the interior must be empty ground, the only pre-existing cells a
-drag ever touches are its very first and very last -- there's no way for a
-new route to physically overlap an unrelated existing one. Two separately-
-built roads, or a road and a node, only ever get linked by a drag that ends
-exactly ON that shared hub, settlement, or unestablished route tile --
-never by crossing through the middle of one another. The one exception is a
-**bridge**, a structure the player places and pays for first, which a drag
-may then run straight over without the two routes joining (see below).
+The rule this preserves is that **every shared cell is a paid structure**. A
+drag never silently overlaps an unrelated road: it either buys the junction
+that joins them or the deck that keeps them apart. Two roads still never
+merge merely by touching (§4.1's explicit connections), and a delivery still
+never transits a source or a settlement.
 
 ### Bridges: crossing a route without joining it (added in v0.5 item 32)
 
@@ -686,7 +740,7 @@ and the result stays legible:
   never land on one.
 - **No two bridges may land on each other**, which stops decks butting
   end-to-end into a continuous elevated road.
-- A connected road network supports at most **2 bridges**. An existing bridge
+- A connected road network supports at most **2 bridges** (`BRIDGE_CAP_PER_NETWORK`). An existing bridge
   counts against both networks it serves — the road beneath it and the route
   across it — so approaching from the other side does not reset the budget.
 - Nothing else can be built on a bridge tile afterwards, and a route drag may
@@ -762,7 +816,7 @@ The established-route overlay (below) draws one **lane per source**, in the colo
 - **A tile is attributed to a source when that source can reach a settlement *through* it**, not merely when they share a road network. Attribution runs the established-route computation once per source, counting only that source as a starting anchor -- so a spur that only one source feeds unravels in every other source's pass, and never takes their colour.
 - **Shared roads carry several lanes at once.** Where two sources' deliveries run down the same road, both colours run down it side by side, evenly straddling the road's centre; a lone source runs down the middle. The lanes are laid out perpendicular to each link, so they stay parallel along the whole shared stretch, and a link between two tiles carries exactly the sources both tiles have.
 - **Route tiles themselves are not recoloured.** They keep their ordinary Dirt/Paved/Main appearance -- colouring the road surface as well was tried and dropped: it fought with the level colours, and the overlay is where "which supply is this" belongs.
-- **The endpoints stay distinct regardless of colour:** a green arrow at the source end (pointing the way delivery flows) and a red bar at the settlement end.
+- **The endpoints stay distinct regardless of colour:** an arrow at each node end, both pointing the way delivery flows -- green leaving the source, red arriving at the settlement (v0.7 item 74).
 - **The legend lists the mapping**, generated from the region's own sources rather than hardcoded, so it can't drift from what is actually drawn.
 
 Colour comes from the *food* rather than the source marker because every source marker shares one colour (§16), so the food is the only thing that visually distinguishes one source from another -- and it matches the colours already used by the source/settlement speech bubbles (§10.1).
@@ -791,10 +845,11 @@ connected to -- see "Explicit connections" above and §16):
   supplier to customer.
 
 **The two ends are visually distinguished, not just gold like the rest of
-the strand:** the source end shows a green arrow pointing in the direction
-delivery actually flows (source → first tile), and the settlement end shows
-a red bar instead of gold, so the player can tell start from finish at a
-glance without having to trace the whole line.
+the strand:** each shows an arrow pointing the way delivery actually flows
+-- green out of the source (source → first tile) and red into the
+settlement (last tile → settlement, added in v0.7 item 74) -- so the player
+can tell start from finish, and read the direction of travel, at a glance
+without having to trace the whole line.
 
 The overlay is rebuilt on every render, so it stays live as the player
 edits the network or runs a day.
@@ -980,14 +1035,14 @@ net_savings = route_discount_savings - hub_daily_upkeep
 
 ### Hub cap per connected network
 
-Each connected road network can support at most **2 built hubs**. A network is a maximal set of orthogonally-connected built tiles (route, storage, and hub). Source and settlement nodes are terminal endpoints for flow, not transit tiles, so they never join two road groups into one network: **two road groups that touch only a shared source/settlement are separate networks with separate hub budgets** (revised in v0.4). A delivery can't cross a node, so the cap can't leak across one -- building a junction on a small road hanging off a source is never blocked just because some other road on that same source is already at the cap.
+Each connected road network can support at most **2 built hubs** (`HUB_CAP_PER_NETWORK`). A network is a maximal set of orthogonally-connected built tiles (route, storage, and hub). Source and settlement nodes are terminal endpoints for flow, not transit tiles, so they never join two road groups into one network: **two road groups that touch only a shared source/settlement are separate networks with separate hub budgets** (revised in v0.4). A delivery can't cross a node, so the cap can't leak across one -- building a junction on a small road hanging off a source is never blocked just because some other road on that same source is already at the cap.
 
 - Any route tile in a network already at the cap stays a plain, capacity-limited route tile -- the Build Hub tool refuses it there, and no cost is charged for the attempt.
 - The player receives a clear explanation that the network has reached its hub cap.
 - Route placement is never blocked by the cap; the player can reroute, keep networks separate, or remove an existing hub-bearing branch to free budget.
 - Existing networks created by older versions or imported data should be validated separately; the MVP does not need migration logic.
 
-This preserves the topology decision: keep networks physically separate to receive independent hub budgets, or merge them and accept a maximum of 2 hubs.
+This preserves the topology decision: keep networks physically separate to receive independent hub budgets, or merge them and accept a maximum of 2 hubs. The cap is felt rather than notional at this value, and it is also what stops a network accumulating junctions by gesture now that a route drag buys one where it taps a live road (§4.1).
 
 ### Suggested hub levels
 
@@ -997,7 +1052,9 @@ This preserves the topology decision: keep networks physically separate to recei
 | Regional Hub | 350 | 60 | 8 links | 25% | 600 food/day |
 | Central Hub | 800 | 140 | 14 links | 35% | 1,400 food/day |
 
-**Only the Small Hub exists in the build.** Every hub is a Small Hub, built manually on any route tile. The Regional Hub upgrade was retired in v0.4 item 28 -- its tool, its 200 upgrade cost, and the REGIONAL enum value are all removed -- and Central Hub was never in MVP scope. The rows above are kept for the numbers, should either tier be revived.
+**A hub carries the road it stands on, not a figure of its own** (v0.7 item 77). The Flow capacity column above is retired for the Small Hub: `SimulationEngine.tile_capacity` reads the level of the road underneath (60 / 160 / 400), so a junction changes what a tile *does* without changing what it *carries*. The flat 250 it used to report made a §150 hub a cheaper capacity upgrade than paving (60 → 250 on dirt) and a silent capacity CUT on a Main trunk (400 → 250) -- a junction that narrows the road it sits on is the opposite of what one is for. A future Regional/Central tier that genuinely carries more than its road would reinstate the field.
+
+**Only the Small Hub exists in the build.** Every hub is a Small Hub, built manually on any route tile, or bought by the drag that taps a live road (§4.1). The Regional Hub upgrade was retired in v0.4 item 28 -- its tool, its 200 upgrade cost, and the REGIONAL enum value are all removed -- and Central Hub was never in MVP scope. The rows above are kept for the numbers, should either tier be revived.
 
 ### Hub last-delivery hover view (added in v0.3)
 
@@ -1046,7 +1103,7 @@ Farm -> Hub -> Village A
             -> Town D
 ```
 
-The hub network should have lower upkeep when the hub is well positioned, but the 2-hub cap and atomic formation rule prevent unlimited branching inside one connected network.
+The hub network should have lower upkeep when the hub is well positioned. Unlimited branching inside one connected network is held back by the 2-hub cap and by what a hub costs to keep: §25/day against at most §1.20-§3/day of discount (atomic formation is retired -- see §0.14).
 
 ---
 
@@ -2221,6 +2278,7 @@ Top to bottom:
 
 - **Status:** current day and treasury on one row; grade, best score, and 7-day average score as three captioned numbers beneath it (LOOP-01/LOOP-06).
 - **Build tools:** every tool as a short, priced toggle in two columns -- Route §8 / Upgrade, then Normal §80 / Cool §180, then Hub §150 / Bulldoze. The panel is narrow, so a button carries only its name and price; the full explanation is in its tooltip and, once selected, in the bottom hint bar. Each tool now exists exactly once, so there is no shortcut copy to keep in sync.
+- **Undo (added in v0.7 item 73):** one full-width button under the tools, deliberately outside the two-column grid -- every button in that grid selects a *mode*, and this one acts when pressed. Disabled whenever there is nothing to take back. See §10.9.
 
 - **Zoom:** +/− buttons adjust camera zoom continuously while held (tap for a small step, hold for continuous zoom).
 - **Pan:** a 4-direction (^/v/</>) pad moves the camera across the map while held, clamped to a small margin past the map edge so the player can't pan away indefinitely. Plain ASCII glyphs are used instead of Unicode arrows since the default exported font has no glyphs for U+25B2-U+25BC/U+25C0/U+25B6, which renders as blank "tofu" boxes on some platforms.
@@ -2252,6 +2310,18 @@ Day runs itself at 0:00
 Directly beneath the panel, an auto-run day posts a **summary card** -- day number, grade and score, profit, average freshness, settlement happiness, plus a personal-best or capacity-blocked line -- which fades on its own after a few seconds. It is non-blocking by design: the auto-run loop can't stop for a dialog every day, so the card carries the headline and the Report button carries the detail.
 
 Like the control panel, this one is usable by mouse or touch and never triggers a tile action underneath it.
+
+### 10.9 Undo (added in v0.7 item 73)
+
+A misplaced build used to be permanent and unrefunded: clearing it cost a second gesture and returned nothing (§4.1). **Undo** takes the last build action back whole, treasury included.
+
+- **What it covers:** every action that changes the board -- a route drag, a bulldoze, a bulldoze or upgrade sweep, a route upgrade, storage, a hub, a bridge, and a source expansion. Up to 30 of them, most recent first.
+- **What it restores:** the tiles, the explicit connections between them, the treasury, and every source's expansion level. A structure hands its road back at the level that road actually was, because the state is restored from a snapshot taken before the action rather than reconstructed by an inverse of it.
+- **What clears it:** the day rollover. The day is paid out against the network as it stood, so a road undone afterwards would be refunded while the income it carried stays -- and the same road could be rebuilt and sold back every day. Undo reaches back to the start of the current day and no further, which is also why it never has to touch the order book.
+- **A refused action records nothing.** A build stopped by its own guards -- no treasury, wrong tile, cap reached -- leaves the history exactly as it was, so the next press of Undo always takes back something the player actually did.
+- **Placement and state:** a full-width button beneath the build tools, disabled when there is nothing to undo, its tooltip naming what the next press would take back. Ctrl+Z is a desktop convenience only; nothing depends on a keyboard (§10.7).
+
+Undo is a *building* control, not a time machine: it never rewinds a simulated day, a delivery, an opened order or a score. Those are the run's history, and the game has no version of undoing them.
 
 ---
 
@@ -2868,7 +2938,8 @@ compatible_food_categories: list
 hub_id: string
 hub_type: small | regional | central
 link_capacity: number
-flow_capacity: number
+flow_capacity: number   # unused by the Small Hub since v0.7 item 77 -- a
+                        # junction carries the road it stands on
 route_discount: number
 daily_upkeep: number
 ```

@@ -10,6 +10,14 @@ const ROUTE_BASE_UPKEEP := 2.0
 ## free-standing river crossing, nothing to do with the placed BRIDGE_* deck
 ## below (which crosses a ROAD, not water).
 const RIVER_BRIDGE_COST := 40.0
+## Built hubs allowed on one connected road network (raised to 10 in v0.7 item
+## 76, returned to 2 in item 78).
+##
+## At 2 the cap is the brake rather than a backstop, and it is felt: a network
+## gets two junctions, and a third means keeping the roads physically separate
+## or clearing one. That is the topology decision §4.4 exists to pose -- and
+## since a route drag now buys a junction where it taps a live road (§4.1), the
+## cap is also what stops a network from accumulating them by gesture.
 const HUB_CAP_PER_NETWORK := 2
 
 ## How many foods a settlement may ever demand, by type (DEV-04). A budget
@@ -61,11 +69,18 @@ const SOURCE_UPGRADE_MAX := 5
 ## joining networks (see SimulationEngine's lane rules).
 ##
 ## A bridge is the single, deliberate, paid exception to "a new route can never
-## cross an existing tile", so it is priced and capped to stay one: at §60 plus
-## its own upkeep it loses to a detour of up to ~7 tiles, the deck costs an
-## extra tile's worth of freshness to climb, and a connected road network only
-## ever supports BRIDGE_CAP_PER_NETWORK of them. Together those keep crossings
-## rare and deliberate instead of letting the map fill with interchanges.
+## cross an existing tile", so it is priced AND capped to stay one: at §60 plus
+## §6/day it loses to a detour of up to ~7 tiles, the deck costs an extra tile's
+## worth of freshness to climb, and a connected road network only ever supports
+## BRIDGE_CAP_PER_NETWORK of them. Together those keep crossings rare and
+## deliberate instead of letting the map fill with interchanges -- which matters
+## more since a route drag can buy a deck by crossing (§4.1) rather than by a
+## deliberate trip to the Bridge tool.
+##
+## An existing bridge counts against BOTH networks it serves (see
+## SimulationEngine.network_at_bridge_cap), so two is two crossings *touching*
+## a network, not two built from it. (Raised to 10 in v0.7 item 76, returned to
+## 2 in item 78.)
 const BRIDGE_BUILD_COST := 60.0
 const BRIDGE_UPKEEP := 6.0
 const BRIDGE_CAP_PER_NETWORK := 2
@@ -124,8 +139,14 @@ const STORAGE_TYPES := {
 	GameEnums.StorageType.COOL: {"name": "Cool Storage", "build": 180.0, "upkeep": 35.0, "capacity": 100.0, "protection": 8, "mult": 0.35, "color": Color("5B8FA8")},
 }
 
+## `flow_capacity` is gone for the Small Hub (v0.7 item 77): a junction carries
+## the road it stands on (SimulationEngine.tile_capacity reads the level
+## underneath) rather than a figure of its own. The flat 250 made a §150 hub a
+## cheaper capacity upgrade than paving on dirt, and a silent capacity CUT on a
+## Main trunk. A future tier that genuinely carries more than its road brings
+## the field back.
 const HUB_TYPES := {
-	GameEnums.HubType.SMALL: {"name": "Small Hub", "build": 150.0, "upkeep": 25.0, "discount": 0.15, "flow_capacity": 250.0, "color": Color("D98E4A")},
+	GameEnums.HubType.SMALL: {"name": "Small Hub", "build": 150.0, "upkeep": 25.0, "discount": 0.15, "color": Color("D98E4A")},
 }
 
 static func food_types() -> Dictionary:

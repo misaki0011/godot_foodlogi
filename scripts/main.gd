@@ -108,6 +108,28 @@ var _nodes_by_id: Dictionary = {}
 var _grid_visuals: Node3D
 var _fx_layer: Node3D
 
+## ---------- undo (BUILD-01) ----------
+##
+## One entry per completed build action, newest last: {label, grid, connections,
+## balance, source_levels}. Snapshots of the state BEFORE the action rather than
+## an inverse operation per tool -- there are eight of those and they compose
+## (a sweep is n bulldozes, a bulldoze hands a road back at whatever level it
+## was, a bridge takes two connections down and leaves the road), so a per-tool
+## inverse is eight chances to hand back the wrong thing. A snapshot cannot
+## disagree with what the action did, because it never has to know.
+##
+## Cheap enough to be uninteresting: region 1 is 21x14, so a full grid is at
+## most 294 tiny dictionaries and a real one is a few dozen.
+##
+## Cleared by the day rollover, and that is the rule that keeps this honest:
+## the day pays out against the network as it stood, so undoing a road after it
+## has earned would refund its cost while the player keeps the income it
+## carried. Undo is for the mistake you just made, not for the week you just
+## played.
+const UNDO_DEPTH := 30
+var _undo_stack: Array[Dictionary] = []
+var _undo_button: Button
+
 ## How much of a node's order book is drawn on the map at rest.
 ##
 ## GLYPHS is the default and the reason this enum exists: a full balloon per
@@ -312,10 +334,31 @@ var _drag_new_cells: Array[Vector2i] = []
 var _drag_new_connections: Array[Array] = [] # [[Vector2i, Vector2i], ...]
 var _drag_valid := true
 var _drag_invalid_reason := ""
+## The cells the path is actually refused for. A path turns red end to end when
+## any one cell breaks a rule, which says "no" without saying WHERE -- and on a
+## long drag over a busy map the offending tile is rarely the one the player is
+## looking at. These are drawn as solid blocks standing above the preview, so
+## the eye lands on the tile that is the problem (v0.7 item 75).
+var _drag_blocked_cells: Array[Vector2i] = []
+## Structures this drag will buy on its way (v0.7 item 77), queued during
+## validity and written by _commit_drag: a junction where it taps a live road,
+## a deck where it carries straight over one. Both are the same structures the
+## Hub and Bridge tools place, at the same price -- what the gesture removes is
+## the tool trip, not the cost.
+var _drag_new_hubs: Array[Vector2i] = []
+var _drag_new_bridges: Array[Array] = [] # [[Vector2i cell, Vector2i deck_axis], ...]
+## What the drag will charge, spelled out, for the hint bar -- a §8-a-tile
+## gesture that quietly became §368 is the one way this feature could hurt.
+var _drag_cost_summary := ""
 var _drag_preview_visuals: Node3D
 
 const DRAG_PREVIEW_VALID_COLOR := Color(0.4, 0.85, 0.45, 0.6)
 const DRAG_PREVIEW_INVALID_COLOR := Color(0.85, 0.3, 0.3, 0.6)
+const DRAG_PREVIEW_BLOCKED_COLOR := Color(0.95, 0.16, 0.16, 0.95)
+## Taller than a path marker as well as opaque: at a 60-degree pitch height is
+## what reads from across the map, where a colour change alone can be lost
+## against a red path it sits inside.
+const DRAG_BLOCKER_SIZE := Vector3(0.62, 0.62, 0.62)
 
 ## ---------- sweep drags (bulldoze / upgrade) ----------
 ## Bulldoze and Upgrade also work as a drag: sweeping across a run of tiles
@@ -348,8 +391,9 @@ var _sweep_cost := 0.0
 
 ## Overlay marking established (source->settlement) routes -- a bright, mostly
 ## opaque gold line floating just above the road surface (see
-## _render_established_routes), with a green arrow at the source end (pointing
-## the way delivery actually flows) and a red bar at the settlement end.
+## _render_established_routes), with an arrow at each node end, both pointing
+## the way delivery actually flows: green leaving the source, red arriving at
+## the settlement.
 const ESTABLISHED_ROUTE_COLOR := Color(1.0, 0.83, 0.29, 0.9)
 const ESTABLISHED_START_COLOR := Color("5C8A5C") # matches the "done/fulfilled" green used elsewhere (e.g. settlement tips)
 const ESTABLISHED_END_COLOR := Color("C4573A") # matches MarkerColors.SETTLEMENT_COLOR
@@ -439,6 +483,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
 		_toggle_pause()
 		return
+	# Ignored mid-gesture: a drag is committed on release against the grid as it
+	# stands, so undoing underneath one would leave it holding cells it worked
+	# out against a board that no longer exists. The button can't be reached
+	# mid-drag anyway -- the mouse is busy -- so this only closes the keyboard's
+	# way in.
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_Z \
+			and event.ctrl_pressed and not _drag_active and not _press_eligible:
+		_undo_last()
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_start_press(event.position)
@@ -455,22 +508,22 @@ func _start_press(screen_position: Vector2) -> void:
 	_press_cell = cell
 	_press_start_msec = Time.get_ticks_msec()
 	_drag_active = false
-	# A route drag can start FROM a source node, a built hub tile, or a plain
-	# route tile that ISN'T part of an established route (v0.5 item 22) --
-	# never from empty ground, a settlement, or a route tile that's already
-	# live (established_route_cells) -- so an already-delivering route can
-	# only ever be extended through its own hub/settlement, while unfinished
-	# infrastructure that isn't serving any delivery yet can be picked up and
-	# continued from any of its own tiles. The drag can still cross and link
-	# to any existing tile/node along the way; only the starting anchor is
-	# restricted. Other tools behave exactly as a normal click on release.
+	# A route drag can start FROM a source node, a built hub tile, or any plain
+	# route tile -- never from empty ground, a settlement, a storage building or
+	# a bridge deck (a crossing is passed over, never anchored to).
+	#
+	# A tile carrying a LIVE delivery used to be excluded too (v0.5 item 22), so
+	# a delivering road could only be tapped at its own hub or settlement. The
+	# drag buys that junction itself now (v0.7 item 77) rather than refusing the
+	# gesture and leaving the player to find the Hub tool, switch to it, click
+	# the tile, and switch back.
 	var node := _node_at(cell)
 	var cell_data = _state.grid.get(cell)
 	_drag_kind = ""
 	_press_eligible = _tool == "route" and _cell_in_bounds(cell) and (
 		(node != null and node.node_type == GameEnums.NodeType.SOURCE) or
 		(cell_data != null and cell_data.kind == "hub") or
-		(cell_data != null and cell_data.kind == "route" and not SimulationEngine.is_bridge(_state, cell) and not _established_route_cells().has(cell))
+		(cell_data != null and cell_data.kind == "route" and not SimulationEngine.is_bridge(_state, cell))
 	)
 	if _press_eligible:
 		_drag_kind = "route"
@@ -560,22 +613,42 @@ func _cells_between(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 ## never a tile in the middle, so there's no way for a new drag to silently
 ## piggyback on infrastructure that already exists. An established (live,
 ## delivering) route tile is never a valid end, only its own hub/settlement
-## is (v0.5 item 22). Runs against a scratch grid copy -- _state.grid/
-## .connections are never touched here.
+## is (v0.5 item 22).
+##
+## "Between the two ends" is measured in NODES, not cells (v0.7 item 75). A
+## source stands on 2x1 and a City on 2x2 (DEV-02), so a drag that presses the
+## near cell of its own anchor and leaves across the far one used to trip the
+## interior rule on the anchor itself -- the player was refused for crossing the
+## very source they were dragging out of, which on a 2x1 is whichever cell they
+## happened to press first. The leading run of cells belonging to the start node
+## and the trailing run belonging to the end node are therefore part of those
+## ends rather than interior; re-entering either node later is still a crossing.
+## Runs against a scratch grid copy -- _state.grid/.connections are never
+## touched here.
 func _recompute_drag_validity() -> void:
 	_drag_valid = true
 	_drag_invalid_reason = ""
 	_drag_new_cells.clear()
 	_drag_new_connections.clear()
+	_drag_blocked_cells.clear()
+	_drag_new_hubs.clear()
+	_drag_new_bridges.clear()
+	_drag_cost_summary = ""
 	var newly_built: Dictionary = {} # cells this same drag has already queued
 	var total_cost := 0.0
 	var last_index := _drag_path.size() - 1
+	var head_span := _node_run_length(0, 1)
+	var tail_span := _node_run_length(last_index, -1)
 	for i in range(1, _drag_path.size()):
 		var prev: Vector2i = _drag_path[i - 1]
 		var cell: Vector2i = _drag_path[i]
 		if prev == cell:
 			continue
-		_drag_new_connections.append([prev, cell])
+		# A step from one cell of a node to another cell of the SAME node is
+		# movement inside one place, not a link between two: recording it would
+		# put an edge in the road graph between a node and itself.
+		if _node_at(prev) == null or _node_at(prev) != _node_at(cell):
+			_drag_new_connections.append([prev, cell])
 		if newly_built.has(cell):
 			continue
 		# Open sea is the one terrain with no price at all (TERR-10). The river
@@ -583,49 +656,182 @@ func _recompute_drag_validity() -> void:
 		# two this is -- otherwise a refusal reads as a treasury problem and the
 		# player comes back with more money.
 		if not _map_data.is_buildable(cell.x, cell.y):
+			_drag_valid = false
+			_drag_blocked_cells.append(cell)
 			if _drag_invalid_reason == "":
-				_drag_valid = false
 				_drag_invalid_reason = "A route can't be built on open sea -- unlike the river, there's no crossing at any price. Go around."
 			continue
 		var pre_existing: bool = _node_at(cell) != null or _state.grid.has(cell)
 		if pre_existing:
-			if i == last_index or _crosses_bridge_at(i):
+			if i == last_index or i < head_span or i >= _drag_path.size() - tail_span or _crosses_bridge_at(i):
 				continue
+			# Carrying straight over a road builds the deck that lets the two
+			# cross without joining -- the same structure the Bridge tool
+			# places, at the same §60, decided by the gesture instead of by a
+			# trip to the toolbar (v0.7 item 77). Where a deck cannot go, the
+			# path is refused exactly as before rather than quietly merging the
+			# two roads: a silent merge is the bug ROUTE-09 exists to prevent.
+			var deck_axis := _auto_bridge_axis_at(i)
+			if deck_axis != Vector2i.ZERO and not _bridge_budget_spent(cell):
+				_drag_new_bridges.append([cell, deck_axis])
+				total_cost += GameBalance.BRIDGE_BUILD_COST
+				continue
+			_drag_valid = false
+			_drag_blocked_cells.append(cell)
 			if _drag_invalid_reason == "":
-				_drag_valid = false
 				_drag_invalid_reason = ("A bridge can only be crossed straight over, along the deck." if SimulationEngine.is_bridge(_state, cell)
-					else "A new route can't cross or reuse an existing tile or node -- it can only run over empty ground between its two ends, or straight over a bridge.")
+					else _crossing_reason(cell))
 			continue
 		total_cost += SimulationEngine.route_build_cost(cell, _map_data)
 		newly_built[cell] = true
 		_drag_new_cells.append(cell)
 	if not _drag_valid:
 		return
-	if total_cost > _state.balance:
-		_drag_valid = false
-		_drag_invalid_reason = "Not enough treasury for the whole path (§%d needed)." % roundi(total_cost)
-		return
-	# A drag must end at a hub, a settlement, or a plain route tile that ISN'T
-	# part of an established route yet (v0.5 items 19/22) -- this guarantees a
-	# completed drag either reaches a genuine delivery destination, or joins
-	# onto unfinished infrastructure that isn't serving any delivery yet.
-	# An already-established route tile can only ever be reached through its
-	# own hub or settlement, never picked up again mid-network.
+	# A drag must end at a hub, a settlement, or a plain route tile (v0.5 items
+	# 19/22, relaxed in v0.7 item 77) -- this guarantees a completed drag
+	# either reaches a genuine delivery destination or joins onto another road.
+	# Tapping a road that is already DELIVERING buys a junction there, at both
+	# ends alike: leaving one is a branch out, arriving at one is a branch in,
+	# and they are the same act seen from either side.
 	var end_cell: Vector2i = _drag_path[-1]
 	var end_node := _node_at(end_cell)
 	var end_cell_data = _state.grid.get(end_cell)
 	var ends_at_hub: bool = end_cell_data != null and end_cell_data.kind == "hub"
 	var ends_at_settlement: bool = end_node != null and end_node.node_type == GameEnums.NodeType.SETTLEMENT
 	var ends_at_bridge: bool = SimulationEngine.is_bridge(_state, end_cell)
-	var ends_at_unestablished_route: bool = end_cell_data != null and end_cell_data.kind == "route" and not ends_at_bridge and not _established_route_cells().has(end_cell)
-	if not (ends_at_hub or ends_at_settlement or ends_at_unestablished_route):
+	var ends_at_route: bool = end_cell_data != null and end_cell_data.kind == "route" and not ends_at_bridge
+	if not (ends_at_hub or ends_at_settlement or ends_at_route):
 		_drag_valid = false
 		# Stopping ON a deck would leave a route hanging in mid-air over
 		# somebody else's road, which is exactly the mess bridges are meant to
 		# avoid -- a crossing is something you pass over, not somewhere you park.
 		_drag_invalid_reason = ("A route can't stop on a bridge -- carry straight over and land on the far side."
 			if ends_at_bridge
-			else "A route must end at a hub, a settlement, or an unfinished route tile.")
+			else "A route must end at a hub, a settlement, or another route tile.")
+		return
+	# The junctions, last, because both ends have to have survived their own
+	# rules before it is worth asking what tapping them costs.
+	for anchor in [_drag_path[0], end_cell]:
+		if not _needs_junction_at(anchor) or _drag_new_hubs.has(anchor):
+			continue
+		if _hub_budget_spent(anchor):
+			_drag_valid = false
+			_drag_blocked_cells.append(anchor)
+			_drag_invalid_reason = "That road already carries %d junction hubs -- the cap is reached, so this branch has nowhere to tap in." % GameBalance.HUB_CAP_PER_NETWORK
+			return
+		_drag_new_hubs.append(anchor)
+		total_cost += GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+	if total_cost > _state.balance:
+		_drag_valid = false
+		_drag_invalid_reason = "Not enough treasury for the whole path -- %s, §%d needed." % [_bill_text(), roundi(total_cost)]
+		_drag_new_hubs.clear()
+		_drag_new_bridges.clear()
+		return
+	_drag_cost_summary = "%s -- §%d" % [_bill_text(), roundi(total_cost)]
+
+## What this drag is about to charge for, itemised. Only ever shown for a valid
+## path, so it is a price rather than a diagnosis.
+func _bill_text() -> String:
+	var parts: Array[String] = []
+	if not _drag_new_cells.is_empty():
+		parts.append("%d tile%s" % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	if not _drag_new_hubs.is_empty():
+		parts.append("%d junction hub%s §%d" % [_drag_new_hubs.size(), "" if _drag_new_hubs.size() == 1 else "s", roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build)])
+	if not _drag_new_bridges.is_empty():
+		parts.append("%d bridge%s §%d" % [_drag_new_bridges.size(), "" if _drag_new_bridges.size() == 1 else "s", roundi(GameBalance.BRIDGE_BUILD_COST)])
+	return " + ".join(parts) if not parts.is_empty() else "nothing new"
+
+## Whether tapping `cell` as one end of a drag has to buy a junction there.
+##
+## Only a road that is already DELIVERING costs one. A road that isn't live yet
+## has always been free to pick up and extend (v0.5 item 22) and stays free --
+## nothing that was free before this becomes paid -- and a tile that is already
+## a hub needs nothing bought. The asymmetry is real and worth knowing: the same
+## finished network costs §150 or §0 depending on whether the road was carrying
+## deliveries at the moment you branched off it.
+func _needs_junction_at(cell: Vector2i) -> bool:
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route" or SimulationEngine.is_bridge(_state, cell):
+		return false
+	return _established_route_cells().has(cell)
+
+## Cap checks that also count what THIS drag has already queued -- the queued
+## structures are not in the grid yet, so asking the engine alone would let one
+## gesture buy its way past a cap the tools refuse one click at a time.
+## Deliberately conservative where a single drag touches two different networks:
+## queued structures are counted against each, which can refuse a legal path but
+## never permits an illegal one.
+func _hub_budget_spent(cell: Vector2i) -> bool:
+	return SimulationEngine.hubs_on_network(_state, cell) + _drag_new_hubs.size() >= GameBalance.HUB_CAP_PER_NETWORK
+
+func _bridge_budget_spent(cell: Vector2i) -> bool:
+	return SimulationEngine.bridges_on_network(_state, cell) + _drag_new_bridges.size() >= GameBalance.BRIDGE_CAP_PER_NETWORK
+
+## The axis a deck would run along to carry the drag straight over the road at
+## _drag_path[i], or Vector2i.ZERO when no deck can go there. Every condition is
+## the Bridge tool's own (_do_build_bridge): the gesture buys exactly what the
+## tool would have built, so a crossing the tool refuses is refused here too.
+func _auto_bridge_axis_at(i: int) -> Vector2i:
+	if i <= 0 or i >= _drag_path.size() - 1:
+		return Vector2i.ZERO
+	var cell: Vector2i = _drag_path[i]
+	var incoming: Vector2i = cell - _drag_path[i - 1]
+	var outgoing: Vector2i = _drag_path[i + 1] - cell
+	# A crossing goes straight through. A corner on someone else's road is a
+	# knot, not an overpass.
+	if incoming != outgoing:
+		return Vector2i.ZERO
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route" or SimulationEngine.is_bridge(_state, cell):
+		return Vector2i.ZERO
+	# A river tile is already a crossing; a second deck can't be stacked on it.
+	if _map_data.is_river(cell.x, cell.y):
+		return Vector2i.ZERO
+	var axis := _deck_axis_for(cell)
+	# The road below must run ACROSS the way the drag is going -- otherwise the
+	# drag is running along the road, not over it.
+	if axis == Vector2i.ZERO or (axis.x != 0) != (incoming.x != 0):
+		return Vector2i.ZERO
+	for step in [axis, -axis]:
+		var landing: Vector2i = cell + step
+		if not _cell_in_bounds(landing) or _node_at(landing) != null or SimulationEngine.is_bridge(_state, landing):
+			return Vector2i.ZERO
+		for queued in _drag_new_bridges:
+			if queued[0] == landing:
+				return Vector2i.ZERO
+	return axis
+
+## How many cells from `from_index` (walking by `step`) belong to the same node
+## as the cell at `from_index`. 0 when that cell isn't a node at all, so an
+## ordinary drag between route tiles keeps exactly the old behaviour.
+##
+## This is what makes a multi-tile node one place rather than several: the run
+## it returns is the part of the path still standing on the anchor it started
+## from (or already standing on the node it ends at), which is an end of the
+## route, not something the route crosses.
+func _node_run_length(from_index: int, step: int) -> int:
+	if from_index < 0 or from_index >= _drag_path.size():
+		return 0
+	var node := _node_at(_drag_path[from_index])
+	if node == null:
+		return 0
+	var run := 0
+	var i := from_index
+	while i >= 0 and i < _drag_path.size() and _node_at(_drag_path[i]) == node:
+		run += 1
+		i += step
+	return run
+
+## Names what the path ran into, rather than restating the rule. "An existing
+## tile or node" is equally true of a road, a source and a settlement, so the
+## old wording left the player to work out which of the three they had touched
+## -- and, having started at a source and finished at a settlement, to conclude
+## that source-to-settlement was itself refused.
+func _crossing_reason(cell: Vector2i) -> String:
+	var node := _node_at(cell)
+	if node != null:
+		return "A route can't run THROUGH %s -- a delivery never passes through a source or a settlement. End the drag there, or go around it." % node.display_name
+	return "A route can't cross or reuse the road already on this tile. Run over empty ground instead, or build a Bridge on that tile and carry straight over it."
 
 ## Whether _drag_path[i] is a bridge tile the drag is legitimately crossing:
 ## the one and only case where a route may run over a cell that already exists.
@@ -656,15 +862,34 @@ func _commit_drag() -> void:
 	if _drag_new_cells.is_empty() and _drag_new_connections.is_empty():
 		_show_toast("Nothing new to build or connect along that path.", true)
 		return
+	_push_undo("that route drag")
 	for cell in _drag_new_cells:
 		_state.balance -= SimulationEngine.route_build_cost(cell, _map_data)
 		_state.grid[cell] = {"kind": "route", "level": "dirt"}
 	_arm_placement_pops(_drag_new_cells)
+	# The structures the gesture bought (v0.7 item 77). Both go onto tiles that
+	# already exist, so neither is in _drag_new_cells and neither pops with the
+	# road: only the structure lands, exactly as when its own tool places it.
+	for cell in _drag_new_hubs:
+		_state.balance -= GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build
+		# `level` is the road underneath, carried so a bulldoze can hand it back
+		# and so the junction keeps carrying what that road carried.
+		_state.grid[cell] = {"kind": "hub", "htype": GameEnums.HubType.SMALL, "level": _state.grid[cell].level}
+		_pending_tile_pops[cell] = {"part": TilePart.STRUCTURE, "delay": 0.0}
+	for entry in _drag_new_bridges:
+		var cell: Vector2i = entry[0]
+		_state.balance -= GameBalance.BRIDGE_BUILD_COST
+		_state.grid[cell]["bridge_axis"] = entry[1]
+		_pending_tile_pops[cell] = {"part": TilePart.STRUCTURE, "delay": 0.0}
 	for pair in _drag_new_connections:
 		_state.add_connection(pair[0], pair[1])
 	var parts: Array[String] = []
 	if not _drag_new_cells.is_empty():
 		parts.append("%d new tile%s" % [_drag_new_cells.size(), "" if _drag_new_cells.size() == 1 else "s"])
+	if not _drag_new_hubs.is_empty():
+		parts.append("%d junction hub%s" % [_drag_new_hubs.size(), "" if _drag_new_hubs.size() == 1 else "s"])
+	if not _drag_new_bridges.is_empty():
+		parts.append("%d bridge%s" % [_drag_new_bridges.size(), "" if _drag_new_bridges.size() == 1 else "s"])
 	if not _drag_new_connections.is_empty():
 		parts.append("%d connection%s" % [_drag_new_connections.size(), "" if _drag_new_connections.size() == 1 else "s"])
 	_show_toast("Built %s." % " and ".join(parts))
@@ -683,6 +908,9 @@ func _recompute_sweep() -> void:
 	_sweep_cost = 0.0
 	_drag_valid = true
 	_drag_invalid_reason = ""
+	# A sweep is blocked by its total cost rather than by any one tile, so it
+	# never marks a blocker -- but it must not inherit one from a route drag.
+	_drag_blocked_cells.clear()
 	var seen: Dictionary = {}
 	for cell in _drag_path:
 		if seen.has(cell):
@@ -718,6 +946,7 @@ func _commit_sweep() -> void:
 		return
 	var count := _sweep_cells.size()
 	var plural := "" if count == 1 else "s"
+	_push_undo("that %s sweep" % ("bulldoze" if _tool == "remove" else "upgrade"))
 	if _tool == "remove":
 		# Same rule as a single bulldoze (see _clear_cell): a swept hub,
 		# storage or bridge leaves its road behind rather than taking it with it.
@@ -767,8 +996,13 @@ func _clear_drag_preview() -> void:
 	_drag_path.clear()
 	_drag_new_cells.clear()
 	_drag_new_connections.clear()
+	_drag_blocked_cells.clear()
+	_drag_new_hubs.clear()
+	_drag_new_bridges.clear()
+	_drag_cost_summary = ""
 	_sweep_cells.clear()
 	_sweep_cost = 0.0
+	_update_hint()
 
 ## Translucent green (valid) or red (invalid) boxes on every crossed cell,
 ## connected by thin bars between orthogonal neighbors, so the path reads
@@ -776,6 +1010,7 @@ func _clear_drag_preview() -> void:
 ## _state.grid isn't touched until _commit_drag().
 func _update_drag_preview() -> void:
 	_clear_children(_drag_preview_visuals)
+	_update_hint()
 	if _drag_kind == "sweep":
 		_update_sweep_preview()
 		return
@@ -787,11 +1022,41 @@ func _update_drag_preview() -> void:
 		_add_drag_marker(world_positions[i], color)
 		if i > 0:
 			_add_drag_segment(world_positions[i - 1], world_positions[i], color)
+	# Structures and blockers last, so neither is buried under the path markers
+	# it explains. A structure the drag will BUY stands on the tile in its own
+	# colour -- the hub orange and the deck cream the finished thing will be --
+	# so the §150 or §60 is visible on the map, not only in the hint bar.
+	for cell in _drag_new_hubs:
+		_add_drag_structure(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.45, 0),
+			GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color)
+	for entry in _drag_new_bridges:
+		var bridge_cell: Vector2i = entry[0]
+		_add_drag_structure(_terrain.map_to_local(Vector3i(bridge_cell.x, 0, bridge_cell.y)) + Vector3(0, 1.45, 0), BRIDGE_DECK_COLOR)
+	for cell in _drag_blocked_cells:
+		_add_drag_blocker(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.45, 0))
 
 func _add_drag_marker(pos: Vector3, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.5, 0.14, 0.5)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.material_override = _drag_preview_material(color)
+	_drag_preview_visuals.add_child(mesh_instance)
+
+## A solid block standing on the one cell a refused path is refused FOR. Opaque
+## and cube-shaped against the flat translucent plates of the path itself, so it
+## reads as an obstruction rather than as another step of the drag.
+func _add_drag_blocker(pos: Vector3) -> void:
+	_add_drag_structure(pos, DRAG_PREVIEW_BLOCKED_COLOR)
+
+## Same block, whatever it means: a refusal in hot red, a structure the drag
+## will buy in that structure's own colour. One shape for "this tile is not
+## just road" keeps the preview readable at a glance.
+func _add_drag_structure(pos: Vector3, color: Color) -> void:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = DRAG_BLOCKER_SIZE
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos
 	mesh_instance.material_override = _drag_preview_material(color)
@@ -829,8 +1094,7 @@ func _add_established_marker(pos: Vector3, color: Color = ESTABLISHED_ROUTE_COLO
 
 ## A thin bar joining two adjacent established points (tile-tile or
 ## tile-node); `a` and `b` are one grid step apart, so it's axis-aligned.
-## Gold by default; the settlement end of a route uses ESTABLISHED_END_COLOR
-## instead (see _render_established_routes).
+## Gold by default (see _render_established_routes).
 func _add_established_segment(a: Vector3, b: Vector3, color: Color = ESTABLISHED_ROUTE_COLOR) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
@@ -841,12 +1105,21 @@ func _add_established_segment(a: Vector3, b: Vector3, color: Color = ESTABLISHED
 	mesh_instance.material_override = _drag_preview_material(color)
 	_grid_visuals.add_child(mesh_instance)
 
-## A green cone arrow marking where an established route begins at a source,
-## pointing in the direction delivery actually flows (source -> first tile).
-## Positioned at the midpoint of the source<->tile link, same spot a plain
+## A cone arrow marking where an established route meets a node, pointing the
+## way delivery actually flows -- green out of a source, red into a settlement.
+## Positioned at the midpoint of the node<->tile link, same spot a plain
 ## established_segment bar would sit, so it reads as replacing that bar with
 ## a directional marker rather than adding a separate decoration.
-func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
+##
+## Both ends are the same object because they are the same statement read at
+## its two ends: this is which way the food is going. The settlement end was a
+## plain bar, which said only that the route arrived there -- and a bar is what
+## every tile-to-tile link on the road already draws, so the one place the
+## delivery lands looked like any other joint in the line. Colour still
+## separates the two (ESTABLISHED_START_COLOR / ESTABLISHED_END_COLOR, the
+## fulfilled green and the settlement red used everywhere else), so a glance
+## tells source from destination without following the line.
+func _add_established_arrow(pos: Vector3, flow_dir: Vector2i, color: Color) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = 0.0
@@ -855,7 +1128,7 @@ func _add_established_start_arrow(pos: Vector3, flow_dir: Vector2i) -> void:
 	mesh_instance.mesh = mesh
 	mesh_instance.position = pos
 	mesh_instance.rotation_degrees = ARROW_ROTATION_BY_DIR.get(flow_dir, Vector3.ZERO)
-	mesh_instance.material_override = _drag_preview_material(ESTABLISHED_START_COLOR)
+	mesh_instance.material_override = _drag_preview_material(color)
 	_grid_visuals.add_child(mesh_instance)
 
 ## Rebuilds the cell -> node lookup. Run at load; footprints are fixed, so
@@ -936,6 +1209,7 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 	if _state.balance < cost:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
 		return
+	_push_undo("that route upgrade")
 	_state.balance -= cost
 	cell_data.level = lvl.next
 	# An upgrade swaps the block outright -- Dirt, Paved and Main are three
@@ -966,6 +1240,7 @@ func _do_upgrade_source(n: NodeData) -> void:
 		_show_toast("Not enough treasury to expand %s (§%d needed)." % [n.display_name, roundi(cost)], true)
 		return
 
+	_push_undo("the %s expansion" % n.display_name)
 	_state.balance -= cost
 	n.upgrade_level += 1
 	var gained := []
@@ -993,6 +1268,7 @@ func _do_build_storage(cell: Vector2i) -> void:
 	if _state.balance < st.build:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(st.build), true)
 		return
+	_push_undo("that %s" % st.name.to_lower())
 	_state.balance -= st.build
 	# `level` is the road UNDERNEATH, carried along so the tile can be drawn
 	# under the building and handed back when it's bulldozed -- same contract as
@@ -1024,6 +1300,7 @@ func _do_build_hub(cell: Vector2i) -> void:
 	if _state.balance < cost:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
 		return
+	_push_undo("that hub")
 	_state.balance -= cost
 	# `level` is the road UNDERNEATH, carried along so bulldozing the hub can
 	# hand it back (see _clear_cell). Nothing dispatches on it while the cell is
@@ -1080,6 +1357,7 @@ func _do_build_bridge(cell: Vector2i) -> void:
 	if _state.balance < cost:
 		_show_toast("Not enough treasury (§%d needed)." % roundi(cost), true)
 		return
+	_push_undo("that bridge")
 	_state.balance -= cost
 	cell_data["bridge_axis"] = axis
 	# The deck alone, for the same reason a hub pops only its marker: the road
@@ -1152,6 +1430,7 @@ func _do_bulldoze(cell: Vector2i) -> void:
 	if not _state.grid.has(cell):
 		_show_toast("Nothing to remove here.", true)
 		return
+	_push_undo("bulldoze")
 	_spawn_removal_ghost(cell, _state.grid[cell], 0.0)
 	var cleared := _clear_cell(cell).split("|")
 	match cleared[0]:
@@ -1163,6 +1442,84 @@ func _do_bulldoze(cell: Vector2i) -> void:
 			_show_toast("Storage removed. The tile stays as %s route." % GameBalance.ROUTE_LEVELS[cleared[1]].label)
 		_:
 			_show_toast("Tile cleared.")
+
+## ---------- undo (BUILD-01) ----------
+
+## Records the state as it stands, for the action about to be taken. Every
+## caller sits AFTER that action's guards and BEFORE its first mutation, so an
+## attempt that was refused (no treasury, wrong tile, cap reached) leaves the
+## history alone -- otherwise Undo's first press would spend itself on a click
+## that never did anything, which is worse than no Undo at all.
+##
+## `label` names the action in the button's tooltip and the toast, so pressing
+## Undo is never a guess about what is about to come back.
+func _push_undo(label: String) -> void:
+	var source_levels := {}
+	for node_id in _nodes_by_id:
+		var node: NodeData = _nodes_by_id[node_id]
+		if node.node_type == GameEnums.NodeType.SOURCE:
+			source_levels[node_id] = node.upgrade_level
+	_undo_stack.append({
+		"label": label,
+		# duplicate(true) is what makes this a snapshot rather than a second
+		# reference: both dictionaries are one level deep in more dictionaries
+		# (a cell's {kind, level, ...}, a cell's adjacency set), and a shallow
+		# copy would leave those shared and mutating underneath us.
+		"grid": _state.grid.duplicate(true),
+		"connections": _state.connections.duplicate(true),
+		"balance": _state.balance,
+		"source_levels": source_levels,
+	})
+	if _undo_stack.size() > UNDO_DEPTH:
+		_undo_stack.remove_at(0)
+
+## Puts the most recent build action back, treasury included. A source upgrade
+## additionally rebuilds that source's marker, for the same reason
+## _do_upgrade_source does: the yard's produce models are built from
+## `upgrade_level` at spawn time, so the marker has to be made again rather
+## than merely re-rendered.
+func _undo_last() -> void:
+	if _undo_stack.is_empty():
+		_show_toast("Nothing to undo -- the history clears when a day runs.", true)
+		return
+	var snapshot: Dictionary = _undo_stack.pop_back()
+	var refund: float = snapshot.balance - _state.balance
+	_state.grid = snapshot.grid
+	_state.connections = snapshot.connections
+	_state.balance = snapshot.balance
+	for node_id in snapshot.source_levels:
+		var node: NodeData = _nodes_by_id.get(node_id)
+		if node == null or node.upgrade_level == snapshot.source_levels[node_id]:
+			continue
+		node.upgrade_level = snapshot.source_levels[node_id]
+		_node_spawner.refresh_source(node_id)
+	# A removal ghost still crushing belongs to the bulldoze being undone, and a
+	# swept one can have up to TILE_POP_STAGGER_BUDGET of stagger left to run --
+	# so the tile would come back underneath its own disappearance. The payout
+	# labels sharing this layer are left alone: they report a day the undo has
+	# no claim on.
+	for child in _fx_layer.get_children():
+		if child.name.begins_with("RemovalGhost"):
+			child.queue_free()
+	# Rounded, because that is how every other figure reaches the player (the
+	# treasury reads "§ %d"), and an undo that says §60 while the counter moves
+	# by 60 is the only version that reconciles.
+	var money := " §%d back." % roundi(refund) if roundi(refund) > 0 else ""
+	_show_toast("Undid %s.%s" % [snapshot.label, money])
+	_after_action()
+
+## What the next press would put back, for the button's label and tooltip. The
+## button is disabled outright when there is nothing -- a live button that
+## answers "nothing to undo" teaches the player to stop trusting it.
+func _update_undo_button() -> void:
+	if _undo_button == null:
+		return
+	var available := not _undo_stack.is_empty()
+	_undo_button.disabled = not available
+	if available:
+		_undo_button.tooltip_text = "Undo the last build action (%s), refunding what it cost. Ctrl+Z. Only actions taken since the last day ran can be undone." % _undo_stack.back().label
+	else:
+		_undo_button.tooltip_text = "Nothing to undo. Build actions can be undone until the day runs."
 
 func _after_action() -> void:
 	_render_grid()
@@ -1249,6 +1606,9 @@ func _run_day() -> void:
 		_schedule_new_order_reveal()
 	_state.day_time_left = GameBalance.DAY_LENGTH_SEC
 	_clock_shown_sec = -1
+	# The day has just been paid out against the network as it stood, so nothing
+	# built before it can be handed back for its money any more (BUILD-01).
+	_undo_stack.clear()
 	if _state.auto_run:
 		_advance_day()
 		_show_day_summary(report)
@@ -1708,9 +2068,9 @@ func _render_established_routes() -> void:
 	# deliveries run through it, and each link to an established neighbour
 	# carries a bar per source SHARED with that neighbour -- so a colour joins
 	# the road where its source does and peels off exactly where their paths
-	# part. The node ends stay distinguished regardless of colour: a green
-	# arrow at the source (pointing the way delivery flows) and a red bar at
-	# the settlement.
+	# part. The node ends stay distinguished regardless of colour: an arrow at
+	# each, both pointing the way delivery flows -- green leaving the source,
+	# red arriving at the settlement.
 	#
 	# Iterated per GRAPH VERTEX rather than per tile (SimulationEngine's lane
 	# rules), so at a bridge the deck and the road beneath it each get their own
@@ -1755,9 +2115,11 @@ func _render_established_routes() -> void:
 				if node.node_type == GameEnums.NodeType.SOURCE:
 					# `d` points from the tile to the source; delivery flows
 					# the opposite way, from the source into the tile.
-					_add_established_start_arrow((here + there) * 0.5, -d)
+					_add_established_arrow((here + there) * 0.5, -d, ESTABLISHED_START_COLOR)
 				else:
-					_add_established_segment(here, there, ESTABLISHED_END_COLOR)
+					# At a settlement `d` already points the way the food goes,
+					# tile into node -- so the arrowhead lands on the doorstep.
+					_add_established_arrow((here + there) * 0.5, d, ESTABLISHED_END_COLOR)
 
 ## Where the overlay draws for a graph vertex: the tile's centre, lifted to the
 ## deck's height when the vertex is a bridge deck so the crossing line visibly
@@ -2331,7 +2693,33 @@ func _set_tool(tool: String) -> void:
 	for key in _tool_buttons:
 		for button in _tool_buttons[key]:
 			button.button_pressed = key == tool
-	_hint_label.text = TOOL_HINTS.get(tool, "")
+	_update_hint()
+
+## The bottom bar carries the selected tool's instructions at rest, and the live
+## reason a drag is currently refused while one is being drawn -- the refusal
+## used to arrive only as a toast on RELEASE, so a player watching a red path
+## had nothing to read until they had already given up on it. In red, since it
+## is a refusal rather than advice.
+const HINT_REFUSED_COLOR := Color("E8A0A0")
+const HINT_BILL_COLOR := Color("A8D8B0")
+
+func _update_hint() -> void:
+	if _hint_label == null:
+		return
+	if _drag_active and not _drag_valid and _drag_invalid_reason != "":
+		_hint_label.text = _drag_invalid_reason
+		_hint_label.add_theme_color_override("font_color", HINT_REFUSED_COLOR)
+		return
+	# A valid drag carries its bill, because a drag can now buy structures as
+	# well as road (v0.7 item 77) -- a §8-a-tile gesture that quietly turns into
+	# §368 is the one way that could hurt, and the answer is to say so before
+	# the player lets go rather than in the toast afterwards.
+	if _drag_active and _drag_valid and _drag_cost_summary != "":
+		_hint_label.text = "Release to build: %s" % _drag_cost_summary
+		_hint_label.add_theme_color_override("font_color", HINT_BILL_COLOR)
+		return
+	_hint_label.text = TOOL_HINTS.get(_tool, "")
+	_hint_label.remove_theme_color_override("font_color")
 
 ## Three states rather than a checkbox, so the compact default and the old
 ## dense view are both reachable without a second control.
@@ -2346,6 +2734,7 @@ func _update_ui() -> void:
 	_funds_label.text = "§ %d" % roundi(_state.balance)
 	_day_label.text = "Day %d" % _state.day
 	_update_clock_ui()
+	_update_undo_button()
 	if _state.best_grade != "":
 		_best_grade_label.text = _state.best_grade
 		_best_grade_label.add_theme_color_override("font_color", GRADE_COLORS.get(_state.best_grade, Color.WHITE))
@@ -2530,6 +2919,17 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_tool_button(hub_grid, "Bridge  §%d" % roundi(GameBalance.BRIDGE_BUILD_COST), "bridgeBuild", "Build a Bridge over a straight run of route tile for §%d, so a second route can be drawn straight over it without joining it. §%d/day extra upkeep, the deck costs %.0f× freshness decay to cross, and each connected road network supports %d." % [roundi(GameBalance.BRIDGE_BUILD_COST), roundi(GameBalance.BRIDGE_UPKEEP), GameBalance.BRIDGE_DECK_DECAY_MULT, GameBalance.BRIDGE_CAP_PER_NETWORK])
 	_add_tool_button(hub_grid, "Bulldoze", "remove", "Remove a built tile, along with every connection touching it. A hub, storage or bridge only loses the structure -- the road it was built on stays, at the level it already was, so clearing that too is a second click. No refund.")
 
+	# Full width, and outside the tool grid on purpose: everything in those
+	# grids is a MODE the map then waits for, and Undo is a thing that happens
+	# the moment it is pressed. A ninth two-column cell would have read as a
+	# tenth tool.
+	_undo_button = Button.new()
+	_undo_button.text = "↶  Undo"
+	_undo_button.custom_minimum_size.y = 32
+	_undo_button.pressed.connect(_undo_last)
+	box.add_child(_undo_button)
+	_update_undo_button()
+
 func _build_map_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "MAP")
 	var zoom_row := HBoxContainer.new()
@@ -2597,8 +2997,6 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
 	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
 	_add_legend_row(_legend_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build on any route tile)")
-	_add_legend_row(_legend_box, Color("4FA8A0"), "Fork available -- Hub tool")
-	_add_legend_row(_legend_box, Color("8B6B9C"), "Junction over the hub cap")
 	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
 	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
 	_add_legend_row(_legend_box, RIVER_BRIDGE_COLOR, "River / river crossing")
