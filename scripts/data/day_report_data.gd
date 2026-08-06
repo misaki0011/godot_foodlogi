@@ -28,5 +28,11 @@ var grade := "D"
 var grade_score := 0.0
 ## Array of {settlement:NodeData, fulfill_rate, avg_fresh, waste_rate, sat}
 var settlement_scores: Array[Dictionary] = []
-var capacity_blocked := 0.0
+## How many built tiles ran at or past GameBalance.CONGESTION_FREE_LOAD, and
+## how hard the busiest one was worked (1.0 = exactly its comfortable figure).
+## Congestion no longer blocks a delivery (v0.8 item 80) -- it charges the
+## cargo freshness -- so what the report has to say is "these roads are costing
+## you", not "this much food never moved".
+var congested_tiles := 0
+var worst_load := 0.0
 var is_personal_best := false

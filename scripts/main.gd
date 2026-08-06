@@ -1738,8 +1738,10 @@ func _show_day_summary(r: DayReportData) -> void:
 	text += "[color=%s]%s§%d[/color] · %d%% fresh · %d%% happy" % [profit_color, "+" if r.profit >= 0.0 else "−", absi(roundi(r.profit)), roundi(r.avg_freshness_overall), roundi(r.avg_happiness)]
 	if r.is_personal_best and r.day > 1:
 		text += "\n[color=#C9A227]New personal best score![/color]"
-	elif r.capacity_blocked > 0.0:
-		text += "\n[color=#C4573A]%d food blocked by route capacity[/color]" % roundi(r.capacity_blocked)
+	elif r.congested_tiles > 0:
+		text += "\n[color=#C4573A]%d busy road tile%s costing freshness[/color]" % [
+			r.congested_tiles, "" if r.congested_tiles == 1 else "s",
+		]
 	_summary_label.text = text
 	_summary_panel.visible = true
 	if _summary_tween != null and _summary_tween.is_valid():
@@ -1800,8 +1802,14 @@ func _show_report(r: DayReportData) -> void:
 	# Demand that never arrived. It used to count cargo REFUSED for arriving
 	# under min_freshness as well, which is not a thing that happens now.
 	text += "Unmet demand: %d%%\n" % roundi(r.waste_pct)
-	if r.capacity_blocked > 0.0:
-		text += "[color=#C4573A]⚠ Blocked by route capacity: %d food[/color]\n" % roundi(r.capacity_blocked)
+	# What the busy roads took. Everything still got through (v0.8 item 80) --
+	# what an overloaded tile costs is freshness, which is why this line sits
+	# under the freshness figure it is explaining rather than beside a
+	# shortfall it no longer causes.
+	if r.congested_tiles > 0:
+		text += "[color=#C4573A]⚠ %d road tile%s over capacity (busiest at %d%%), costing freshness[/color]\n" % [
+			r.congested_tiles, "" if r.congested_tiles == 1 else "s", roundi(r.worst_load * 100.0),
+		]
 	# The denominator is printed because it moves: happiness averages only
 	# the settlements actually taking orders (DEV-01), so without it a
 	# perfectly steady network would look like it had swung whenever the
@@ -1818,8 +1826,8 @@ func _show_report(r: DayReportData) -> void:
 	if r.is_personal_best and r.day > 1:
 		_report_banner.text = "🏆 New personal best score! Grade %s, %d/100. Can you clean the network up further?" % [r.grade, roundi(r.grade_score)]
 		_report_banner.visible = true
-	elif r.capacity_blocked > 0.0:
-		_report_banner.text = "Routes maxed out today -- some deliveries couldn't get through. Consider a hub, an upgrade, or a second route through the bottleneck."
+	elif r.congested_tiles > 0:
+		_report_banner.text = "Busy roads spoiled cargo today. Everything got through, but the crush cost freshness -- upgrading the marked tiles (§%d each, Dirt to Paved) buys it back." % roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost)
 		_report_banner.visible = true
 	else:
 		_report_banner.visible = false
@@ -2893,7 +2901,11 @@ func _build_tools_section(box: VBoxContainer) -> void:
 	_add_section_title(box, "ROUTES")
 	var route_grid := _add_tool_grid(box)
 	_add_tool_button(route_grid, "Route  §%d" % roundi(GameBalance.ROUTE_BUILD_COST), "route", "Draw Route -- §%d per tile, +§%d to bridge the river. Drag from a source or hub to a hub or settlement." % [roundi(GameBalance.ROUTE_BUILD_COST), roundi(GameBalance.RIVER_BRIDGE_COST)])
-	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d) or Paved to Main (§%d); a food source to expand it, up to %d times (§%d each)." % [roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), GameBalance.SOURCE_UPGRADE_MAX, roundi(GameBalance.SOURCE_UPGRADE_COST)])
+	_add_tool_button(route_grid, "Upgrade", "upgrade", "Upgrade -- route Dirt to Paved (§%d, carries %d/day) or Paved to Main (§%d, %d/day). A busy road still carries everything, but the crush costs freshness, so paving is how you buy that back. Or upgrade a food source to expand it, up to %d times (§%d each)." % [
+		roundi(GameBalance.ROUTE_LEVELS.dirt.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.paved.cap),
+		roundi(GameBalance.ROUTE_LEVELS.paved.upgrade_cost), roundi(GameBalance.ROUTE_LEVELS.main.cap),
+		GameBalance.SOURCE_UPGRADE_MAX, roundi(GameBalance.SOURCE_UPGRADE_COST),
+	])
 
 	_add_section_title(box, "STORAGE")
 	var storage_grid := _add_tool_grid(box)
@@ -2986,8 +2998,8 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, ROUTE_LEVEL_COLORS.dirt, "Dirt route")
 	_add_legend_row(_legend_box, GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].color, "Cool storage")
 	_add_legend_row(_legend_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build on any route tile)")
-	_add_legend_row(_legend_box, Color("D98E4A"), "Tile near capacity (90%+)")
-	_add_legend_row(_legend_box, Color("C4573A"), "Tile over capacity")
+	_add_legend_row(_legend_box, Color("D98E4A"), "Busy tile — costs freshness")
+	_add_legend_row(_legend_box, Color("C4573A"), "Over capacity — costs more")
 	_add_legend_row(_legend_box, RIVER_BRIDGE_COLOR, "River / river crossing")
 	_add_legend_row(_legend_box, SEA_COLOR, "Open sea -- no route, at any price")
 	_add_legend_row(_legend_box, BRIDGE_DECK_COLOR, "Bridge deck -- routes cross, never join")

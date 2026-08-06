@@ -290,6 +290,13 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **What completion still does.** A whole order is what opens the next line (§6, DEV-01) and nothing else — so completion decides *progress* and delivery decides *pay*. The red bubble accordingly changes meaning: it is "nothing arrived", not "not enough arrived". A short line reads amber, prints its "5/20" and its earnings, and visibly does not grow the region.
     **`min_freshness` survives as data, not as a rule.** `NodeData.min_freshness` is still authored on every settlement and read by nothing; a later region may want "this place will not touch anything under X" back as one settlement's character rather than as the whole game's failure mode.
 
+80. **A busy road carries everything and charges freshness for it.** Route capacity was a hard wall: a tile with no room left contributed nothing to a path, so a line whose road was full delivered **zero** and earned zero. Two things were wrong with that. It made the **tile upgrade compulsory** — a player is meant to be paid for completing a route and for expanding a source, with paving the optional move that buys a better score, and a wall inverts that: until the trunk is paved, some settlement gets nothing whatever else the player does. And it starved lines **in dictionary order** — whichever was simulated first drained the trunk and the rest got exactly nothing, so a Town's foods failed in the order their ids happened to sort. The reported case was Town D showing bread `0/25` and grain `0/20` beside vegetables `20/30`, on roads that were connected and a source that had stock: `b` and `g` sort before `v`. **Capacity is now what a tile carries comfortably**, not a ceiling on what it will carry at all. Past it the cargo decays faster (`GameBalance.CONGESTION_*`), so a packed dirt trunk delivers in full, arrives dull, loses the freshness bonus and drags the grade down — and paving it buys that back. See §4.1, §4.2, §9.
+    **Multiplicative on the food's own decay, because congestion is time.** A cart held up on a busy road spends longer holding its cargo, and an hour costs milk (4.0/tile) eight times what it costs grain (0.5). So a jam on the dairy run is worth paving out and a jam on the grain run is worth shrugging at — the food set doing work the roads alone cannot. The ramp starts at **0.9** so it lines up with the congestion dots the map already draws at 90%: the amber dot is now the first tile costing the player something rather than a warning about a cliff further on. Slope 2.0, ceiling **2.0**.
+    **The ceiling is load-bearing at 2, not 3.** At 3x, region 1's own worst case — all four of Town D's lines down one dirt trunk at 167% — landed milk at exactly **0%** and paid nothing for it, which is the same failure item 79 removed, arriving through traffic instead of through an unfilled order. At 2x the same run lands milk near 28% against 64% paved: still a bad road, still obviously worth §6 a tile, still paying.
+    **The day is now simulated in two passes**, and that is what makes the result independent of iteration order. Pass 1 allocates amounts against supply alone and accumulates each tile's traffic; pass 2 prices every flow against the day's **finished** loads. Pricing as-it-goes would pay the earliest-simulated line for an empty road it never had, and re-introduce by the back door exactly the ordering bias the wall created.
+    **What this costs, and why it is affordable.** Capacity was the one rule creating topology pressure — a reason to build a second road rather than a shorter one — and softening a wall into a tax softens that too. It does not remove it: Oldwall (§12.1, STAGE-06) funnels a city's whole supply through three gate tiles, and three tiles at several times their figure is a heavy standing freshness bill that only Main roads pay off. The region's premise survives; what changes is that its failure mode is a bad grade rather than a starved city.
+    **Measured on region 1's worst trunk** (Town D's four lines, one 8-tile dirt run, 167% loaded): dirt delivers everything for §329 income and grade 47; paving the run (§48, +§10/day upkeep) takes it to §474 and grade 56, repaying itself in under a day. Main on the same run is **worse than paved** — identical freshness, §14/day more upkeep — so there is a wrong answer available, which is what makes it a choice.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -552,13 +559,30 @@ To keep the game simple, route capacity should exist but remain readable.
 
 Example:
 
-| Route level | Capacity/day | Upkeep multiplier |
+| Route level | Comfortable load/day | Upkeep multiplier |
 |---|---:|---:|
 | Dirt route | 60 food | 1.0x |
 | Paved route | 160 food | 1.6x |
 | Main route | 400 food | 2.5x |
 
-Capacity creates meaningful hub and route upgrade decisions without needing vehicles. In playtesting, capacity needed to be tight enough that a single settlement's combined demand could exceed one dirt tile's throughput — otherwise capacity never became a real constraint on a small map (see Changelog §0.3).
+**Capacity is a comfort figure, not a wall (revised in v0.8 item 80).** A tile
+asked for more than it carries comfortably still carries all of it; what the
+crush costs is **freshness**. Cargo crossing a tile loaded past 90% of its
+figure decays faster — `1 + (load - 0.9) × 2.0`, capped at 2.0x the food's own
+rate — so a packed dirt trunk delivers in full, arrives dull, loses the
+freshness bonus and drags the grade down.
+
+That keeps the upgrade decision this table exists for while making it the
+*optional* one it should be. A player is paid for completing a route and for
+expanding a source; paving is the move that buys a better score. As a hard
+wall it was the opposite — a full trunk delivered **zero** to whichever line
+was simulated last, so until the road was paved some settlement got nothing
+whatever else the player did.
+
+Because congestion multiplies the food's own decay rate, it is a problem worth
+paving out on the dairy run (milk 4.0/tile) and worth shrugging at on the
+grain run (0.5) — a jam costs time, and time costs delicate cargo eight times
+what it costs a sack of grain.
 
 ### Transactional route placement (added in v0.3, revised in v0.4)
 
@@ -1099,7 +1123,7 @@ Rules:
 - Outgoing branches use readable directions when unambiguous: North, South, East, or West.
 - When a direction is insufficient, show the next settlement or route label, such as `East → Town D`.
 - Percentages use the source-food total routed through that hub as the denominator and should sum to 100%, allowing for display rounding.
-- Deliveries blocked by route capacity may be shown with a warning marker or a separate blocked amount. (There is no *rejected* amount any more — see §4.2, v0.8 item 79.)
+- Overloaded tiles are shown with a warning marker and reported as a count of congested tiles. (Nothing is *blocked* or *rejected* any more — an overloaded road costs freshness and a settlement accepts whatever reaches it. See §4.1 and §4.2, v0.8 items 79-80.)
 - Before the first simulation, show `No deliveries routed through this hub yet.`
 
 ### Hub placement decision
@@ -2353,7 +2377,7 @@ Day runs itself at 0:00
 - **Report:** reopens the last simulated day's full report for review (disabled before the first simulated day). This never advances the calendar -- only the end-of-day report's "Continue to next day" does that.
 - **Run Day Now:** simulates the current day immediately instead of waiting out the clock.
 
-Directly beneath the panel, an auto-run day posts a **summary card** -- day number, grade and score, profit, average freshness, settlement happiness, plus a personal-best or capacity-blocked line -- which fades on its own after a few seconds. It is non-blocking by design: the auto-run loop can't stop for a dialog every day, so the card carries the headline and the Report button carries the detail.
+Directly beneath the panel, an auto-run day posts a **summary card** -- day number, grade and score, profit, average freshness, settlement happiness, plus a personal-best or congested-roads line -- which fades on its own after a few seconds. It is non-blocking by design: the auto-run loop can't stop for a dialog every day, so the card carries the headline and the Report button carries the detail.
 
 Like the control panel, this one is usable by mouse or touch and never triggers a tile action underneath it.
 
@@ -2504,7 +2528,8 @@ same amount every day (v0.6 item 37).
 
 Route construction costs 8 per tile before terrain modifiers. Dirt route upkeep
 is 2 per tile/day before terrain, route-level, and hub modifiers. Route
-capacity is 60 (Dirt) / 160 (Paved) / 400 (Main) food/day. Crossing a river
+capacity is 60 (Dirt) / 160 (Paved) / 400 (Main) food/day -- what a tile
+carries comfortably rather than a ceiling, since v0.8 item 80. Crossing a river
 automatically constructs a bridge for an additional 40. Basic upgrades are
 Dirt -> Paved -> Main routes and (hub-upgrade only) Small -> Regional hubs.
 Storage types are separate buildings rather than an upgrade chain.
@@ -2624,9 +2649,13 @@ it re-reads a rule they think they know.
 grid. A 3x3 City sits inside a ring of `BLOCKED` wall with exactly **three
 gate cells**; villages and sources ring the outside. Climate 1.1.
 *The hook* is that every delivery to the City eventually funnels through three
-tiles, so **route capacity** (60 / 160 / 400) becomes the binding constraint
-instead of freshness -- the first map that forces Main routes and parallel
-trunk roads rather than merely permitting them. A gate is also the obvious
+tiles, so **route capacity** (60 / 160 / 400) becomes the binding constraint --
+the first map that forces Main routes and parallel trunk roads rather than
+merely permitting them. Since v0.8 item 80 that constraint is paid in
+freshness rather than in blocked deliveries: three gates at several times
+their comfortable figure is a heavy standing freshness bill that only Main
+roads and a second trunk pay off, so the map's failure mode is a bad grade
+rather than a starved city. A gate is also the obvious
 place for a hub, and there are three gates and two hubs.
 *Why fifth:* capacity is the least-exercised system in the game and wants a
 map of its own; it also satisfies the dense-city instinct with a chokepoint
@@ -2782,7 +2811,7 @@ which is exactly the confusion a tutorial exists to prevent.
 | 4 | Distance costs freshness | "The Dairy is further out. Run milk to Village B." | — (opens `villageB/milk`) | `line_filled(villageB, milk)` |
 | 5 | Cool Storage | "That milk arrived at 68%, so it paid 68% of its value. Green pays 25% more on top. Put Cool Storage early on the run." | Normal, Cool | `line_green(villageB, milk)` |
 | 6 | Hubs | "Village C wants grain too, and the road out of the Farm is already there. Build a hub where they share it." | Hub | `structure_built(hub)` **and** `line_filled(villageC, grain)` |
-| 7 | Route capacity | "That trunk is carrying 65 a day down a 60 road. Upgrade it." | Upgrade | `no_tile_over_capacity` |
+| 7 | Route capacity | "That trunk is carrying 65 a day down a 60 road, and the crush is costing freshness. Upgrade it." | Upgrade | `no_tile_over_capacity` |
 | 8 | Crossing the river | "Town D is across the water. A route tile on the river costs §40 extra -- or go the long way round." | — (opens `townD/grain`) | `line_filled(townD, grain)` |
 | 9 | Source upgrades | "Town D wants milk as well. That's 45 a day, and the Dairy makes 40." | — (opens `townD/milk`) | `source_upgraded(dairy)` **and** `line_filled(townD, milk)` |
 
@@ -3046,7 +3075,7 @@ Each day simulates in this order:
 3. Create candidate flows whose start is a matching source and whose destination is a settlement requesting that food.
 4. Find paths while blocking every other source and every non-target settlement as intermediate vertices.
 5. Assign only the amount needed by settlement demand; unassigned production remains at the source.
-6. Apply route, storage, and hub capacity limits.
+6. Record each tile's traffic. (Capacity is a comfort figure, not a limit -- see §4.1, revised in v0.8 item 80.)
 7. Apply freshness loss along each path.
 8. Apply storage preservation effects when food passes storage.
 9. Record every delivery. (Nothing is rejected: a settlement accepts whatever reaches it and pays for it by freshness — see §4.2, revised in v0.8 item 79.)

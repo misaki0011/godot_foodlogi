@@ -128,11 +128,84 @@ const DAY_CLOCK_URGENT_SEC := 5.0
 const DAY_SUMMARY_HOLD_SEC := 5.0
 
 ## level id ("dirt"/"paved"/"main") -> stats. "next" is "" at max level.
+##
+## `cap` is what a tile carries COMFORTABLY, not a wall (v0.8 item 80). Past it
+## the road still carries everything handed to it -- see CONGESTION_* below.
 const ROUTE_LEVELS := {
 	"dirt": {"cap": 60.0, "upkeep_mult": 1.0, "upgrade_cost": 0.0, "next": "paved", "label": "Dirt"},
 	"paved": {"cap": 160.0, "upkeep_mult": 1.6, "upgrade_cost": 6.0, "next": "main", "label": "Paved"},
 	"main": {"cap": 400.0, "upkeep_mult": 2.5, "upgrade_cost": 12.0, "next": "", "label": "Main"},
 }
+
+## ---------- congestion: what an overloaded road costs (v0.8 item 80) ----------
+## Capacity used to be a HARD WALL: a tile with no room left contributed
+## nothing, so a line whose path was full delivered exactly zero and earned
+## exactly zero. Two things were wrong with that, and they compound.
+##
+## It made the tile upgrade COMPULSORY rather than optional. A player is meant
+## to be paid for completing a route and for expanding a source; paving is the
+## optional move that buys a better score. A wall inverts that -- until the
+## trunk is paved, some settlement simply gets nothing, whatever else the
+## player does.
+##
+## And it starved lines in DICTIONARY ORDER. Whichever line was simulated
+## first drained the trunk and the rest got nothing, so a Town's foods failed
+## in the order their ids happened to sort: Town D's bread and grain came up
+## empty while its vegetables were served, because 'b' and 'g' sort before 'v'.
+##
+## A busy road now still carries everything, and charges for it in the one
+## currency this game has: cargo on an overloaded tile decays faster, so a
+## packed dirt trunk delivers in full but arrives dull, loses the freshness
+## bonus, and drags the grade down. Paving it (60 -> 160) buys that back. The
+## decision moves from "pave or go without" to "is this road's freshness worth
+## §6 a tile and the upkeep" -- which is a decision rather than a toll.
+##
+## Multiplicative on the food's own decay rather than a flat surcharge, because
+## congestion is TIME: a cart held up on a busy road spends longer holding its
+## cargo, and an hour costs milk (4.0/tile) eight times what it costs grain
+## (0.5). That is what makes a jam on the dairy run a problem worth paving and
+## a jam on the grain run something to shrug at -- the food set doing work the
+## roads alone cannot.
+##
+## The ramp starts at 0.9 rather than 1.0 so it lines up with the congestion
+## markers the map already draws at 90% (Main._add_congestion_marker): the
+## amber dot is now the first tile costing the player something, rather than a
+## warning about a cliff further on.
+const CONGESTION_FREE_LOAD := 0.9
+## Extra decay multiplier per unit of load past CONGESTION_FREE_LOAD. At the
+## nominal capacity (load 1.0) a tile decays 1.2x; half as much again, 1.9x.
+const CONGESTION_DECAY_SLOPE := 2.0
+## Ceiling on that multiplier -- reached at about 1.45x capacity, so a jam is
+## bounded at twice the food's own decay however badly a tile is
+## over-subscribed. Without a ceiling the penalty grows without limit and a
+## trunk at ten times its figure is indistinguishable from no road at all.
+##
+## **Two rather than three, and the number is load-bearing.** At 3x, region 1's
+## own worst case -- every one of Town D's four lines down a single dirt trunk,
+## 167% loaded -- landed milk at exactly 0% and paid nothing for it. A
+## completed route that earns zero is the failure this whole revision exists to
+## remove, and it is no better arriving through traffic than through an unpaid
+## order. At 2x the same run lands milk around 28% against 64% on paved: still
+## a bad road, still obviously worth §6 a tile to fix, and still paying.
+##
+## What the ceiling does NOT promise: a long enough route lands cargo at 0%
+## congested or not -- seafood at 6.0/tile runs out after 17 tiles on an empty
+## road today. Congestion does not add that failure mode, and the answers to it
+## are the ones already in the game: pave, shorten, or chill.
+const CONGESTION_DECAY_MAX := 2.0
+
+## The load at which a tile is worth reporting to the player, matching the
+## overlay's own threshold.
+static func is_congested(load_ratio: float) -> bool:
+	return load_ratio >= CONGESTION_FREE_LOAD
+
+## The decay multiplier a tile carrying `load_ratio` of its capacity applies.
+## 1.0 anywhere below the threshold, so an uncongested map behaves exactly as
+## it did before congestion existed.
+static func congestion_decay_multiplier(load_ratio: float) -> float:
+	if load_ratio <= CONGESTION_FREE_LOAD:
+		return 1.0
+	return minf(1.0 + (load_ratio - CONGESTION_FREE_LOAD) * CONGESTION_DECAY_SLOPE, CONGESTION_DECAY_MAX)
 
 const STORAGE_TYPES := {
 	GameEnums.StorageType.NORMAL: {"name": "Normal Storage", "build": 80.0, "upkeep": 10.0, "capacity": 150.0, "protection": 4, "mult": 0.70, "color": Color("8B7355")},

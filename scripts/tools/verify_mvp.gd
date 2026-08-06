@@ -32,6 +32,8 @@ func _initialize() -> void:
 	_test_line_earnings_reconcile()
 	_test_a_short_line_still_pays()
 	_test_freshness_scales_the_price()
+	_test_a_busy_road_delivers_and_costs_freshness()
+	_test_lines_do_not_starve_by_iteration_order()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -866,6 +868,127 @@ func _test_freshness_scales_the_price() -> void:
 		])
 	print("Freshness is the price (FRESH-02): %.1f%% pays §%.0f, %.1f%% pays §%.0f, no step between." % [
 		freshnesses[0], earnings[0], freshnesses[1], earnings[1],
+	])
+
+## A road asked for more than it comfortably carries still carries it, and
+## charges the cargo freshness for the crush (v0.8 item 80). Capacity used to
+## be a wall -- a tile with no room contributed nothing, so the line delivered
+## zero and earned zero -- which made paving compulsory rather than the
+## optional score move it is meant to be.
+##
+## Run twice over the same one-tile trunk, once inside its comfortable figure
+## and once well past it, so the only thing differing is the load.
+func _test_a_busy_road_delivers_and_costs_freshness() -> void:
+	var results: Array[Dictionary] = []
+	for demand_amount in [30.0, 300.0]:
+		var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+		var farm := _node(map, "farm")
+		var village_a := _node(map, "villageA")
+		# Supply well clear of both demands, so nothing here is a supply test.
+		farm.produces = {"grain": 1000.0}
+		village_a.demand = {"grain": demand_amount}
+		# Long enough that the congestion multiplier has tiles to act over: on
+		# a two-tile hop the difference would round away.
+		var state := GameState.new()
+		var route_path: Array[Vector2i] = []
+		for i in 12:
+			route_path.append(Vector2i(4 + i, 1))
+		for cell in route_path:
+			state.grid[cell] = {"kind": "route", "level": "dirt"}
+		state.add_connection(farm.grid_position, route_path[0])
+		_connect_chain(state, route_path)
+		state.add_connection(route_path[-1], village_a.grid_position)
+		OrderBook.initialize(state, map)
+		var report := SimulationEngine.run_day(state, map.node_placements)
+		var line: Dictionary = state.last_settlement_status[village_a.node_id].grain
+		results.append({
+			"line": line,
+			"fresh": line.fresh_sum / line.delivered,
+			"congested": report.congested_tiles,
+		})
+
+	var quiet: Dictionary = results[0]
+	var busy: Dictionary = results[1]
+	var dirt_cap: float = GameBalance.ROUTE_LEVELS.dirt.cap
+	assert(quiet.congested == 0, "30/day on a %.0f road must not be congested" % dirt_cap)
+	assert(busy.congested > 0, "300/day on a %.0f road must congest every tile of it" % dirt_cap)
+
+	# The point of the whole change: the overloaded road still delivers the
+	# whole order and still pays.
+	assert(is_equal_approx(busy.line.delivered, busy.line.requested),
+		"A busy road must still carry the whole order, got %.1f of %.1f" % [busy.line.delivered, busy.line.requested])
+	assert(busy.line.earned > 0.0, "A busy road must still pay")
+
+	# And it costs freshness, which is the whole price of the crush.
+	assert(busy.fresh < quiet.fresh,
+		"Congestion must cost freshness: %.1f%% busy vs %.1f%% quiet" % [busy.fresh, quiet.fresh])
+	# Per unit, so the comparison is not just "more cargo earns more".
+	var quiet_rate: float = quiet.line.earned / quiet.line.delivered
+	var busy_rate: float = busy.line.earned / busy.line.delivered
+	assert(busy_rate < quiet_rate,
+		"A unit down a busy road must be worth less: §%.2f vs §%.2f" % [busy_rate, quiet_rate])
+	print("Busy road (ROUTE-04): %.0f/day arrives at %.1f%% and pays §%.2f a unit, against %.0f/day at %.1f%% and §%.2f." % [
+		busy.line.delivered, busy.fresh, busy_rate, quiet.line.delivered, quiet.fresh, quiet_rate,
+	])
+
+## Two lines sharing one overloaded trunk must both be served. Until v0.8 item
+## 80 the first line simulated drained the trunk and every later one delivered
+## exactly nothing -- and the order was the order the food ids happened to
+## sort in, so a Town's bread and grain came up empty while its vegetables were
+## served, because 'b' and 'g' sort before 'v'.
+##
+## Also pins the property that made that fixable: freshness is priced against
+## the day's FINISHED traffic, so two identical deliveries down one road are
+## worth the same whichever was allocated first.
+func _test_lines_do_not_starve_by_iteration_order() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	var farm := _node(map, "farm")
+	var village_a := _node(map, "villageA")
+	farm.produces = {"grain": 1000.0}
+	# Two foods from one source over one road, each on its own well past what
+	# the road carries comfortably.
+	farm.produces["bread"] = 1000.0
+	village_a.demand = {"bread": 200.0, "grain": 200.0}
+
+	var state := GameState.new()
+	var route_path: Array[Vector2i] = []
+	for i in 6:
+		route_path.append(Vector2i(4 + i, 1))
+	for cell in route_path:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.add_connection(farm.grid_position, route_path[0])
+	_connect_chain(state, route_path)
+	state.add_connection(route_path[-1], village_a.grid_position)
+	OrderBook.initialize(state, map)
+	# Both lines open, so neither is waiting on the order book.
+	state.active_orders[village_a.node_id] = {"bread": 1, "grain": 1}
+	var report := SimulationEngine.run_day(state, map.node_placements)
+
+	var status: Dictionary = state.last_settlement_status[village_a.node_id]
+	assert(status.has("bread") and status.has("grain"), "Both lines must be simulated")
+	for food_id in status:
+		var line: Dictionary = status[food_id]
+		assert(is_equal_approx(line.delivered, line.requested),
+			"%s must be delivered in full off a shared busy road, got %.1f of %.1f -- the first line simulated is draining the trunk" % [
+				food_id, line.delivered, line.requested,
+			])
+		assert(line.earned > 0.0, "%s must be paid for" % food_id)
+
+	# Both lines travelled the same road at the same final load, so both took
+	# the same freshness hit -- neither was priced against an emptier road for
+	# having been allocated first.
+	var bread_fresh: float = status.bread.fresh_sum / status.bread.delivered
+	var grain_fresh: float = status.grain.fresh_sum / status.grain.delivered
+	var bread_decay: float = 100.0 - bread_fresh
+	var grain_decay: float = 100.0 - grain_fresh
+	var bread_rate: float = GameBalance.food_types().bread.decay_per_tile
+	var grain_rate: float = GameBalance.food_types().grain.decay_per_tile
+	assert(is_equal_approx(bread_decay / bread_rate, grain_decay / grain_rate),
+		"Both lines shared one road, so both must have paid the same congestion: bread lost %.2f at %.1f/tile, grain %.2f at %.1f/tile" % [
+			bread_decay, bread_rate, grain_decay, grain_rate,
+		])
+	print("Shared busy trunk (ECON-01): bread %.0f/%.0f and grain %.0f/%.0f both served, %d tiles congested, same congestion on each." % [
+		status.bread.delivered, status.bread.requested, status.grain.delivered, status.grain.requested, report.congested_tiles,
 	])
 
 func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:

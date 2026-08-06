@@ -335,7 +335,14 @@ static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vect
 
 ## Freshness at the end of `path` (path[0] is the source tile itself, so
 ## decay is only applied from path[1] onward, matching the HTML).
-static func simulate_freshness(state: GameState, path: Array[Vector2i], food: FoodData) -> float:
+##
+## `tile_usage` is the day's finished traffic figure per tile, and passing it
+## is what makes a busy road cost freshness (v0.8 item 80, see
+## GameBalance.congestion_decay_multiplier). Omit it -- as the candidate-
+## ranking pass does, having no traffic figures yet -- and the road is treated
+## as clear, which is exactly the "how good could this route be" question that
+## pass is asking.
+static func simulate_freshness(state: GameState, path: Array[Vector2i], food: FoodData, tile_usage := {}) -> float:
 	var fresh := 100.0
 	var protection_left := 0
 	var protection_mult := 1.0
@@ -347,6 +354,7 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 			mult = protection_mult
 			protection_left -= 1
 		var decay: float = food.decay_per_tile * mult
+		decay *= GameBalance.congestion_decay_multiplier(tile_load(state, pos, tile_usage))
 		# Climbing onto a bridge deck and back down costs an extra tile's worth
 		# of decay. Only the route ON the deck pays it -- the road passing
 		# underneath is untouched, which is why the lane has to be re-derived
@@ -361,10 +369,24 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 		fresh -= decay
 	return clampf(fresh, 0.0, 100.0)
 
+## How hard `pos` is being worked: the day's traffic over what the tile carries
+## comfortably. 1.0 is exactly at capacity, 2.0 is twice it. Zero for anything
+## with no finite capacity (a node, empty ground), which therefore never
+## congests -- a settlement's own doorstep is not a road.
+static func tile_load(state: GameState, pos: Vector2i, tile_usage: Dictionary) -> float:
+	var cap := tile_capacity(state, pos)
+	if not is_finite(cap) or cap <= 0.0:
+		return 0.0
+	return float(tile_usage.get(pos, 0.0)) / cap
+
 ## Capacity belongs to the TILE, so the two routes crossing at a bridge share
 ## one budget rather than getting a lane each -- a crossing is a single piece of
 ## built infrastructure with a single throughput, and keeping it per-tile is
 ## what lets the congestion overlay and tile_usage stay tile-keyed.
+##
+## Since v0.8 item 80 this is what a tile carries COMFORTABLY rather than a
+## ceiling on what it will carry at all: past it the road still moves
+## everything, and charges freshness for the crush (GameBalance.CONGESTION_*).
 static func tile_capacity(state: GameState, pos: Vector2i) -> float:
 	var cell = state.grid.get(pos)
 	if cell == null:
@@ -408,7 +430,7 @@ static func hub_split_summary(state: GameState, pos: Vector2i) -> Dictionary:
 
 ## Runs one full day: demand generation, demand-pull source
 ## assignment (best predicted freshness first, upkeep as an implicit
-## tie-break via Dijkstra), capacity limits, freshness, storage
+## tie-break via Dijkstra), road congestion, freshness, storage
 ## preservation, hub discounts/upkeep, income, satisfaction, and the
 ## efficiency grade/score chase. See SPEC.md §17.
 static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
@@ -443,10 +465,19 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	var requested_total := 0.0
 	var fresh_weighted_sum := 0.0
 	var fresh_weight_total := 0.0
-	var capacity_blocked := 0.0
 	var settlement_food_status := {}
 	var settlement_scores: Array[Dictionary] = []
 
+	## ---------- pass 1: allocate ----------
+	## Who sends what to whom, and the traffic that puts on each tile. No
+	## freshness and no money are decided here, because neither can be known
+	## until the whole day's traffic is in: a tile's decay now depends on how
+	## loaded it ends up (v0.8 item 80), and pricing a flow against a road that
+	## later fills up would pay the earliest-simulated line for a journey it
+	## never had. Splitting the day in two is what makes the result independent
+	## of the order settlements and foods happen to be iterated in -- the same
+	## order that used to decide which lines starved outright.
+	var allocations: Array[Dictionary] = []
 	for settlement in settlements:
 		# Only the demand lines whose orders have opened are simulated
 		# (DEV-01). A settlement whose first order is still days out stands
@@ -460,10 +491,6 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			settlement_food_status[settlement.node_id] = {}
 			continue
 
-		var fulfilled := 0.0
-		var requested := 0.0
-		var fresh_sum := 0.0
-		var fresh_count := 0.0
 		var food_status := {}
 		settlement_food_status[settlement.node_id] = food_status
 		for food_id in demand:
@@ -477,7 +504,6 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			# day is: the same network delivers the same result, and a number
 			# that moves means something the player did moved it.
 			var need: float = maxf(1.0, roundf(demand[food_id]))
-			requested += need
 			requested_total += need
 			# `earned` is what this line paid, recorded here rather than
 			# re-derived in the UI, so the number a row prints can never drift
@@ -495,12 +521,6 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 				candidates.append({"src": src, "path": path, "predicted": simulate_freshness(state, path, food)})
 			candidates.sort_custom(func(a, b): return a.predicted > b.predicted)
 
-			# Banked as each cart lands (v0.8). It used to be held back until the
-			# settlement's whole order was met and forfeited otherwise; now
-			# delivering IS being paid, and completion decides progress rather
-			# than pay (OrderBook). See GameBalance.FRESHNESS_BONUS_RATE.
-			var line_income := 0.0
-
 			for c in candidates:
 				if need <= 0.0:
 					break
@@ -508,38 +528,56 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 				var avail: float = supply_left.get(sup_key, 0.0)
 				if avail <= 0.0:
 					continue
-				var path_cap := INF
-				for pos in c.path:
-					path_cap = minf(path_cap, tile_capacity(state, pos) - float(tile_usage.get(pos, 0.0)))
-				if path_cap <= 0.0:
-					capacity_blocked += minf(need, avail)
-					continue
-				var amt: float = minf(need, minf(avail, path_cap))
+				# Supply is the only thing that limits an amount now (v0.8 item
+				# 80). A road that is asked for more than it comfortably carries
+				# still carries it -- what the crush costs is freshness, charged
+				# in pass 2 once the day's traffic is known. Capacity was a wall
+				# here until this change, and a wall makes paving compulsory:
+				# until the trunk was upgraded, some settlement got nothing
+				# whatever else the player did.
+				var amt: float = minf(need, avail)
 				if amt <= 0.0:
 					continue
-				var fresh: float = simulate_freshness(state, c.path, food)
 				for pos in c.path:
 					tile_usage[pos] = float(tile_usage.get(pos, 0.0)) + amt
 				supply_left[sup_key] = avail - amt
 				need -= amt
+				allocations.append({
+					"settlement": settlement, "food_id": food_id, "food": food,
+					"src": c.src, "path": c.path, "amt": amt,
+				})
 
-				# Every cart that arrives is delivered and paid for. There is no
-				# freshness a settlement turns away any more (v0.8): cargo that
-				# crawls in at 20% is worth a fifth of its value, not a fine and a
-				# binned load. Freshness enters the price HERE, per cart at that
-				# cart's own freshness, rather than through a tier table -- the
-				# bonus below is the only step left in the whole payment.
-				fulfilled += amt
-				delivered_total += amt
-				food_status[food_id].delivered += amt
-				food_status[food_id].fresh_sum += fresh * amt
-				line_income += amt * food.base_value * (fresh / 100.0)
-				fresh_sum += fresh * amt
-				fresh_count += amt
-				fresh_weighted_sum += fresh * amt
-				fresh_weight_total += amt
-				flows.append({"food": food_id, "path": c.path, "delivered": amt, "fresh": fresh, "settlement": settlement.node_id, "source": c.src.node_id})
+	## ---------- pass 2: what arrived, and what it was worth ----------
+	## Every cart that arrives is delivered and paid for. There is no freshness
+	## a settlement turns away (v0.8 item 79): cargo that crawls in at 20% is
+	## worth a fifth of its value, not a fine and a binned load. Freshness
+	## enters the price here, per cart at that cart's own freshness -- now
+	## including whatever the roads it used cost it in traffic.
+	for a in allocations:
+		var amt: float = a.amt
+		var fresh: float = simulate_freshness(state, a.path, a.food, tile_usage)
+		var line: Dictionary = settlement_food_status[a.settlement.node_id][a.food_id]
+		line.delivered += amt
+		line.fresh_sum += fresh * amt
+		line.earned += amt * a.food.base_value * (fresh / 100.0)
+		delivered_total += amt
+		fresh_weighted_sum += fresh * amt
+		fresh_weight_total += amt
+		flows.append({
+			"food": a.food_id, "path": a.path, "delivered": amt, "fresh": fresh,
+			"settlement": a.settlement.node_id, "source": a.src.node_id,
+		})
 
+	## ---------- pass 3: the bonus, and the settlement's verdict ----------
+	for settlement in settlements:
+		var food_status: Dictionary = settlement_food_status.get(settlement.node_id, {})
+		if food_status.is_empty():
+			continue
+		var fulfilled := 0.0
+		var requested := 0.0
+		var fresh_sum := 0.0
+		var fresh_count := 0.0
+		for food_id in food_status:
 			# Payout, matching the three states of this line's speech bubble
 			# (Main._render_settlement_bubbles): red is nothing arrived and so
 			# nothing earned, amber is delivered and paid, green is delivered at
@@ -550,17 +588,17 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			# than per cart, so a line fed by two sources is judged as the one
 			# delivery the settlement actually received -- which is also what the
 			# bubble's freshness figure shows.
-			#
-			# `line` aliases the food_status entry (Dictionaries are references),
-			# so writing earned here records it on the line itself.
 			var line: Dictionary = food_status[food_id]
-			income += line_income
-			line.earned = line_income
+			income += line.earned
 			if line.delivered > 0.0 and line.fresh_sum / line.delivered >= settlement.bonus_freshness:
-				var bonus: float = line_income * GameBalance.FRESHNESS_BONUS_RATE
+				var bonus: float = line.earned * GameBalance.FRESHNESS_BONUS_RATE
 				income += bonus
 				bonus_income += bonus
 				line.earned += bonus
+			fulfilled += line.delivered
+			requested += line.requested
+			fresh_sum += line.fresh_sum
+			fresh_count += line.delivered
 		var avg_fresh: float = fresh_sum / fresh_count if fresh_count > 0.0 else 0.0
 		var fulfill_rate: float = fulfilled / requested if requested > 0.0 else 1.0
 		# Waste is what the settlement asked for and did not get. The term used
@@ -643,14 +681,21 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	state.last_flows = flows
 	state.last_settlement_status = settlement_food_status
 	state.last_source_status = source_status
+	# The overlay's dots, and the report's count of them. `over` still means
+	# past the tile's comfortable figure -- what changed in v0.8 item 80 is
+	# what that costs: the tile carries the traffic either way and charges
+	# freshness for it, so a dot marks a road worth paving rather than a
+	# delivery that never happened.
 	state.last_congestion.clear()
+	var congested_tiles := 0
+	var worst_load := 0.0
 	for pos in state.grid:
-		var cap := tile_capacity(state, pos)
-		if not is_finite(cap):
+		var load := tile_load(state, pos, tile_usage)
+		if not GameBalance.is_congested(load):
 			continue
-		var used: float = tile_usage.get(pos, 0.0)
-		if used >= cap * 0.9:
-			state.last_congestion.append({"pos": pos, "over": used >= cap})
+		congested_tiles += 1
+		worst_load = maxf(worst_load, load)
+		state.last_congestion.append({"pos": pos, "over": load >= 1.0})
 
 	report.income = income
 	report.bonus_income = bonus_income
@@ -667,6 +712,7 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 	report.grade = grade
 	report.grade_score = grade_score
 	report.settlement_scores = settlement_scores
-	report.capacity_blocked = capacity_blocked
+	report.congested_tiles = congested_tiles
+	report.worst_load = worst_load
 	report.is_personal_best = is_personal_best
 	return report
