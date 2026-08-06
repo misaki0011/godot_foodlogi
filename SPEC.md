@@ -297,6 +297,10 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **What this costs, and why it is affordable.** Capacity was the one rule creating topology pressure — a reason to build a second road rather than a shorter one — and softening a wall into a tax softens that too. It does not remove it: Oldwall (§12.1, STAGE-06) funnels a city's whole supply through three gate tiles, and three tiles at several times their figure is a heavy standing freshness bill that only Main roads pay off. The region's premise survives; what changes is that its failure mode is a bad grade rather than a starved city.
     **Measured on region 1's worst trunk** (Town D's four lines, one 8-tile dirt run, 167% loaded): dirt delivers everything for §329 income and grade 47; paving the run (§48, +§10/day upkeep) takes it to §474 and grade 56, repaying itself in under a day. Main on the same run is **worse than paved** — identical freshness, §14/day more upkeep — so there is a wrong answer available, which is what makes it a choice.
 
+81. **A short line says why, and the two causes are told apart.** A red bubble was unexplainable from the screen. Town D read bread `0/25` and grain `0/20` with a road running to its door and both sources holding stock, and nothing anywhere said which of two completely different problems it was. **No route** is answered with an §8 drag; **the source ran out** is answered with a §300 expansion. Each line now records a `reason` alongside its amounts (`unreachable` / `no_supply` / `no_producer`) plus the sources it names, written by `run_day` where the fact is known rather than re-derived in the UI. The expanded bubble row prints it on the third line — the layout item 52 built for "5 spoiled at 32%" and item 79 emptied — and the day report gains a **Short today** section listing every short line worst-first, because "why is that one red?" is asked about a settlement the player is looking away from.
+    **"No route" is not the same as "no road", which is exactly why it needs saying.** A delivery may never pass THROUGH a settlement (§4.7), so a road drawn Farm → Village A → Town D leaves Town D unreachable while looking, on screen, precisely like a road that works — the tiles are continuous, the drags were all accepted, and the overlay may still draw because that eastern road touches settlements at both ends. Physical adjacency is not connection either (v0.5 item 11): two roads that touch without a drag between them are two roads. Both mistakes produce the same silent red bubble, and neither is visible by looking.
+    **The arithmetic that makes this diagnosable at all** is worth recording, since it is what proved the reported case was not congestion: with capacity no longer a wall (item 80), a line delivers `min(need, supply)` — so **zero delivered while the source still holds stock can only mean no path exists**. Region 1's Farm showed 65 of 80 drawn with 15 spare while Town D's grain read 0/20; had any path existed those 15 would have arrived.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -3045,6 +3049,8 @@ requested: number
 delivered: number
 average_freshness: number
 earned: number
+reason: "" | unreachable | no_supply | no_producer
+reason_sources: list          # the sources that reason names
 source_ids: list
 status: complete | partial | missing
 ```

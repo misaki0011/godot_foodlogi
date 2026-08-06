@@ -34,6 +34,7 @@ func _initialize() -> void:
 	_test_freshness_scales_the_price()
 	_test_a_busy_road_delivers_and_costs_freshness()
 	_test_lines_do_not_starve_by_iteration_order()
+	_test_a_short_line_says_why()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -989,6 +990,90 @@ func _test_lines_do_not_starve_by_iteration_order() -> void:
 		])
 	print("Shared busy trunk (ECON-01): bread %.0f/%.0f and grain %.0f/%.0f both served, %d tiles congested, same congestion on each." % [
 		status.bread.delivered, status.bread.requested, status.grain.delivered, status.grain.requested, report.congested_tiles,
+	])
+
+## A line that came up short must say WHY, and must tell the two causes apart
+## (v0.8 item 81). They look identical on the map -- a red bubble on a
+## settlement a road runs to -- and have completely different answers: a road
+## costs §8 a tile, a source expansion §300.
+##
+## The unreachable case here is the trap that prompted this: a road drawn
+## Farm -> Village A -> Town D. It LOOKS like one continuous road to Town D,
+## the overlay draws, and a delivery can still never use it, because a
+## delivery may not pass through a settlement (§4.7) -- so the road east of
+## Village A is a separate network with no source on it at all.
+func _test_a_short_line_says_why() -> void:
+	var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	var state := GameState.new()
+	var farm := _node(map, "farm")
+	var village_a := _node(map, "villageA")
+	var town_d := _node(map, "townD")
+
+	# Farm -> Village A, then Village A -> Town D. Every tile is built and
+	# every link is dragged; the only thing between the Farm and Town D is the
+	# village standing in the middle of it.
+	var west: Array[Vector2i] = [Vector2i(4, 2), Vector2i(5, 2)]
+	var east: Array[Vector2i] = [Vector2i(8, 3), Vector2i(9, 3), Vector2i(10, 3), Vector2i(11, 3)]
+	for cell in west + east:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	state.add_connection(farm.grid_position, west[0])
+	_connect_chain(state, west)
+	state.add_connection(west[-1], village_a.grid_position)
+	state.add_connection(village_a.grid_position, east[0])
+	_connect_chain(state, east)
+	state.add_connection(east[-1], town_d.grid_position)
+
+	OrderBook.initialize(state, map)
+	state.active_orders[town_d.node_id] = {"grain": 1}
+	SimulationEngine.run_day(state, map.node_placements)
+
+	var line: Dictionary = state.last_settlement_status[town_d.node_id].grain
+	assert(line.delivered == 0.0,
+		"A delivery must not transit a settlement (§4.7), so Town D gets nothing here -- got %.1f" % line.delivered)
+	assert(line.reason == "unreachable",
+		"A line no source can reach must say so, got '%s'" % line.reason)
+	assert(Array(line.reason_sources).has(farm.display_name),
+		"The unreachable line must name the source that cannot get through, got %s" % [line.reason_sources])
+
+	# The other cause, on a road that genuinely reaches: the source is empty.
+	var supplied: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	var supplied_farm := _node(supplied, "farm")
+	var supplied_village := _node(supplied, "villageA")
+	supplied_farm.produces = {"grain": 1.0}
+	var direct := GameState.new()
+	var road: Array[Vector2i] = [Vector2i(4, 2), Vector2i(5, 2), Vector2i(6, 2)]
+	for cell in road:
+		direct.grid[cell] = {"kind": "route", "level": "dirt"}
+	direct.add_connection(supplied_farm.grid_position, road[0])
+	_connect_chain(direct, road)
+	direct.add_connection(road[-1], supplied_village.grid_position)
+	OrderBook.initialize(direct, supplied)
+	SimulationEngine.run_day(direct, supplied.node_placements)
+
+	var starved: Dictionary = direct.last_settlement_status[supplied_village.node_id].grain
+	assert(starved.delivered > 0.0 and starved.delivered < starved.requested,
+		"The fixture must arrive but fall short, got %.1f of %.1f" % [starved.delivered, starved.requested])
+	assert(starved.reason == "no_supply",
+		"A reachable line short on stock must say the source ran out, got '%s'" % starved.reason)
+
+	# And a line that got everything says nothing at all, or every healthy row
+	# on the map would grow a third line of explanation it does not need.
+	var healthy: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+	var healthy_village := _node(healthy, "villageA")
+	var full := GameState.new()
+	for cell in road:
+		full.grid[cell] = {"kind": "route", "level": "dirt"}
+	full.add_connection(_node(healthy, "farm").grid_position, road[0])
+	_connect_chain(full, road)
+	full.add_connection(road[-1], healthy_village.grid_position)
+	OrderBook.initialize(full, healthy)
+	SimulationEngine.run_day(full, healthy.node_placements)
+	var whole: Dictionary = full.last_settlement_status[healthy_village.node_id].grain
+	assert(is_equal_approx(whole.delivered, whole.requested), "The fixture must fill this line")
+	assert(whole.reason == "", "A line that got everything must record no reason, got '%s'" % whole.reason)
+
+	print("Shortfall reasons (UI-04): a road through a settlement reads '%s from %s', an empty source reads '%s', a full line reads nothing." % [
+		line.reason, ", ".join(Array(line.reason_sources)), starved.reason,
 	])
 
 func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:

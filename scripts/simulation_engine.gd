@@ -508,18 +508,47 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 			# `earned` is what this line paid, recorded here rather than
 			# re-derived in the UI, so the number a row prints can never drift
 			# from the number the treasury was credited (see UI-04).
-			food_status[food_id] = {"requested": need, "delivered": 0.0, "fresh_sum": 0.0, "earned": 0.0}
+			#
+			# `reason` and `reason_sources` are why a line came up short, filled
+			# in below (v0.8 item 81). A red bubble used to be unexplainable
+			# from the screen: a road ran to the door, the source had stock, and
+			# nothing arrived, with the game offering no way to tell "no route
+			# reaches here" from "the farm was empty by the time your turn came".
+			food_status[food_id] = {
+				"requested": need, "delivered": 0.0, "fresh_sum": 0.0, "earned": 0.0,
+				"reason": "", "reason_sources": PackedStringArray(),
+			}
 			var food: FoodData = foods[food_id]
 
+			# Every source making this food, whether or not one can be reached --
+			# the unreachable ones are exactly what the player needs named.
+			var producers: Array[NodeData] = []
 			var candidates: Array[Dictionary] = []
 			for src in sources:
 				if not src.produces.has(food_id):
 					continue
+				producers.append(src)
 				var path := find_path(state, nodes_by_pos, src.grid_position, settlement.grid_position, food)
 				if path.is_empty():
 					continue
 				candidates.append({"src": src, "path": path, "predicted": simulate_freshness(state, path, food)})
 			candidates.sort_custom(func(a, b): return a.predicted > b.predicted)
+
+			# Why this line will fall short, decided before any of it moves.
+			#
+			# NO ROUTE is the one worth naming hardest, and it is not the same
+			# as "no road on the map". A delivery may never pass THROUGH a
+			# settlement (§4.7), so a road drawn source -> Village -> Town
+			# leaves the Town unreachable while looking, on screen, exactly like
+			# a road that works. Physical adjacency is not connection either
+			# (v0.5): two roads that touch without a drag between them are two
+			# roads. Both mistakes produce the same silent red bubble.
+			if producers.is_empty():
+				food_status[food_id].reason = "no_producer"
+			elif candidates.is_empty():
+				food_status[food_id].reason = "unreachable"
+				for src in producers:
+					food_status[food_id].reason_sources.append(src.display_name)
 
 			for c in candidates:
 				if need <= 0.0:
@@ -546,6 +575,18 @@ static func run_day(state: GameState, nodes: Array[NodeData]) -> DayReportData:
 					"settlement": settlement, "food_id": food_id, "food": food,
 					"src": c.src, "path": c.path, "amt": amt,
 				})
+
+			# Reachable, and still short: every source that could have sent it
+			# was already empty. Recorded after the loop rather than guessed at,
+			# so it names the sources the player would actually have to expand.
+			# This is the one shortfall the map itself imposes -- region 1 wants
+			# 85 grain against the Farm's 80 with every line open -- and telling
+			# it apart from an unreachable line is the whole point: one is
+			# answered with a road, the other with §300.
+			if need > 0.0 and food_status[food_id].reason == "":
+				food_status[food_id].reason = "no_supply"
+				for c in candidates:
+					food_status[food_id].reason_sources.append(c.src.display_name)
 
 	## ---------- pass 2: what arrived, and what it was worth ----------
 	## Every cart that arrives is delivered and paid for. There is no freshness

@@ -117,6 +117,7 @@ func setup_settlement_column(entries: Array, bonus_freshness: float) -> void:
 			"freshness_pct": e.freshness_pct,
 			"threshold": bonus_freshness / 100.0,
 			"earned": e.get("earned", 0.0),
+			"reason": e.get("reason", ""),
 		})
 	_apply(BubbleCanvas.column_size(rows.size(), true), BubbleCanvas.column_x_shift(rows.size()))
 	_canvas.set_settlement_column(rows)

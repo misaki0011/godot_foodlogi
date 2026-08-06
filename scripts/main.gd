@@ -1822,6 +1822,15 @@ func _show_report(r: DayReportData) -> void:
 	text += "[b]Per-settlement[/b]\n"
 	for s in r.settlement_scores:
 		text += "%s: %d%% happy · %d%% fresh\n" % [s.settlement.display_name, roundi(s.sat), roundi(s.avg_fresh)]
+	# Every line that fell short, and why (v0.8 item 81). The bubbles carry
+	# this too, but only for the settlement being hovered -- and the question
+	# "why is that one red?" is asked about a settlement the player is looking
+	# away from, having just watched the day resolve.
+	var shortfalls := _shortfall_lines()
+	if not shortfalls.is_empty():
+		text += "\n[b]Short today[/b]\n"
+		for s in shortfalls:
+			text += "[color=#D64545]%s[/color]\n" % s
 	_report_text.text = text
 	if r.is_personal_best and r.day > 1:
 		_report_banner.text = "🏆 New personal best score! Grade %s, %d/100. Can you clean the network up further?" % [r.grade, roundi(r.grade_score)]
@@ -2321,6 +2330,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 		var delivered: float = 0.0
 		var avg_fresh: float = 0.0
 		var earned: float = 0.0
+		var reason := ""
 		var s = status.get(food_id)
 		if s != null:
 			requested = s.requested
@@ -2331,6 +2341,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			# never used to say so -- which is why a red row beside "90% fresh"
 			# read as a freshness verdict rather than an earnings one.
 			earned = s.get("earned", 0.0)
+			reason = _shortfall_text(s)
 
 		var bubble_status: FoodBubbleMarker.Status
 		if delivered <= 0.0:
@@ -2347,6 +2358,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"status": bubble_status,
 			"freshness_pct": roundi(avg_fresh) if delivered > 0.0 else -1,
 			"earned": earned,
+			"reason": reason,
 		})
 
 	# Worst first, so the leftmost glyph on the strip -- and the first
@@ -2371,6 +2383,7 @@ func _render_settlement_bubbles(n: NodeData, foods: Dictionary) -> void:
 			"requested": e.requested,
 			"freshness_pct": e.freshness_pct,
 			"earned": e.earned,
+			"reason": e.reason,
 		})
 
 	# One flourish per column, chosen by the same rule that decides which chip
@@ -2506,6 +2519,67 @@ static func _status_rank(status: FoodBubbleMarker.Status) -> int:
 		FoodBubbleMarker.Status.AMBER:
 			return 1
 	return 2
+
+## Every line that came up short today, as "Town D · bread 0/25 -- no route
+## from Bakery", worst first. Read off the same per-line records the bubbles
+## use, so the report and the map can never disagree about a cause.
+func _shortfall_lines() -> Array[String]:
+	var rows: Array[Dictionary] = []
+	for node_id in _state.last_settlement_status:
+		var node := _node_by_id(node_id)
+		if node == null:
+			continue
+		for food_id in _state.last_settlement_status[node_id]:
+			var line: Dictionary = _state.last_settlement_status[node_id][food_id]
+			var why := _shortfall_text(line)
+			if why == "":
+				continue
+			rows.append({
+				"missing": line.requested - line.delivered,
+				"text": "%s · %s %d/%d — %s" % [
+					node.display_name, food_id, roundi(line.delivered), roundi(line.requested), why,
+				],
+			})
+	rows.sort_custom(func(a, b): return a.missing > b.missing)
+	var out: Array[String] = []
+	for row in rows:
+		out.append(row.text)
+	return out
+
+func _node_by_id(node_id: String) -> NodeData:
+	for n in _map_data.node_placements:
+		if n.node_id == node_id:
+			return n
+	return null
+
+## Why a line came up short, in the words the player can act on (v0.8 item 81).
+## Empty for a line that got everything it asked for.
+##
+## This exists because a red bubble was unexplainable from the screen. A road
+## ran to the settlement's door and the source had stock, and nothing arrived,
+## and nothing anywhere said whether the problem was the road or the farm --
+## which are answered with a §8 drag and a §300 expansion respectively. The two
+## look identical until the game names them.
+##
+## "No route" is the sharp one, because it is NOT the same as "no road". A
+## delivery may never pass THROUGH a settlement (§4.7), so a road drawn
+## Farm → Village → Town leaves the Town unreachable while looking exactly like
+## a road that works; and two roads that merely touch are two roads until a
+## drag joins them (v0.5). The message names the source that cannot get through
+## rather than the road, since that is the end the player has to re-reach.
+static func _shortfall_text(line: Dictionary) -> String:
+	var reason: String = line.get("reason", "")
+	if reason == "":
+		return ""
+	var names := ", ".join(Array(line.get("reason_sources", PackedStringArray())))
+	match reason:
+		"unreachable":
+			return "no route from %s" % names if names != "" else "no route"
+		"no_supply":
+			return "%s ran out" % names if names != "" else "supply ran out"
+		"no_producer":
+			return "nothing on this map makes it"
+	return ""
 
 ## As a fraction of what was asked for, so a village 5 short of 10 outranks a
 ## city 5 short of 40 -- the small order is the one closer to failing.

@@ -115,6 +115,12 @@ const BAR_TRACK_COLOR := Color(0.0, 0.0, 0.0, 0.30)
 const BAR_TICK_COLOR := Color(1.0, 1.0, 1.0, 0.70)
 const BAR_TICK_WIDTH := 5.0
 
+## The reason a line fell short, in the red accent whatever the row's own
+## status is: on a row that IS red it is usually the whole explanation, and on
+## an amber one it is the difference between "nearly there" and "this will
+## never fill until you expand the Farm".
+const SHORTFALL_TEXT_COLOR := Color("f08a8a")
+
 ## What the line paid. The row's colour IS the payment (§9: nothing arrived
 ## pays nothing, a delivery pays freshness x value x amount, and a delivery at
 ## bonus_freshness pays 25% more) and the row never used to say so -- which is
@@ -453,17 +459,25 @@ func _draw_row_detail(entry: Dictionary, rect: Rect2, cell_right: float, accent:
 	# Freshness and money share a line: they are the two facts that between
 	# them explain the row's colour, and pairing them is what stops the
 	# freshness reading as the reason on its own.
-	#
-	# The third line this layout used to carry is gone with the rules that fed
-	# it (v0.8) -- "5 spoiled at 32%" and "§100 withheld" were both consequences
-	# of cargo being refused and short orders paying nothing, and neither can
-	# happen now. What a line delivered against what was asked is still right
-	# above, in amount_text.
 	var money := "+§%d" % roundi(earned) if paid else "§0"
 	var status_line := "%d%% fresh · %s" % [fresh, money] if fresh >= 0 else money
 
-	_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
-	_draw_pair(status_line, money, text_x, text_w, row_cy + 30.0, sub, paid)
+	# The third line carries WHY a line fell short -- "no route from Bakery",
+	# "Farm ran out" (v0.8 item 81). The layout is the one item 52 built for
+	# "5 spoiled at 32%" and item 79 emptied when refusals stopped existing;
+	# what fills it now is the question that replaced them, because a row
+	# reading "0/25 · §0" states a failure and names no cause -- and the two
+	# causes have completely different answers (a §8 drag, a §300 expansion).
+	# A line that got everything it asked for has nothing to say there and
+	# keeps the two-line layout.
+	var note: String = entry.get("reason", "")
+	if note != "":
+		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 30.0, int(rect.size.y * 0.30), TEXT_COLOR)
+		_draw_pair(status_line, money, text_x, text_w, row_cy + 14.0, sub, paid)
+		_draw_fitted(note, text_x, text_w, row_cy + 48.0, sub, SHORTFALL_TEXT_COLOR)
+	else:
+		_draw_fitted(entry.amount_text, text_x, text_w, row_cy - 16.0, int(rect.size.y * 0.34), TEXT_COLOR)
+		_draw_pair(status_line, money, text_x, text_w, row_cy + 30.0, sub, paid)
 
 	_draw_freshness_bar(
 		Rect2(Vector2(text_x, bar_y), Vector2(text_w, BAR_HEIGHT)),

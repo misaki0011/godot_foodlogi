@@ -26,9 +26,12 @@ func _initialize() -> void:
 	# The amber row is deliberately SHORT (18 of 25) and still paid: that is
 	# the case the new rule exists for, and the row has to prove it prints
 	# "18/25" next to a positive figure rather than reading as a failure.
+	# Two of the three carry a shortfall reason, so both row layouts -- the
+	# two-line one and the three-line one that names a cause -- are drawn side
+	# by side and can be compared for alignment.
 	var tiers := [
-		_e(foods, "grain", FoodBubbleMarker.Status.RED, 0, 30, -1, 0),
-		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER, 18, 25, 68, 73),
+		_e(foods, "grain", FoodBubbleMarker.Status.RED, 0, 30, -1, 0, "no route from Farm"),
+		_e(foods, "vegetables", FoodBubbleMarker.Status.AMBER, 18, 25, 68, 73, "Garden ran out"),
 		_e(foods, "bread", FoodBubbleMarker.Status.GREEN, 30, 30, 94, 176),
 	]
 
@@ -44,7 +47,7 @@ func _initialize() -> void:
 	# Nothing arrived at all: no route reaches this settlement, or the one that
 	# does had nothing to bring. No freshness line, so the money stands alone.
 	_col(Vector2(880, 30), true, 1).set_settlement_column(_rows([
-		_e(foods, "seafood", FoodBubbleMarker.Status.RED, 0, 25, -1, 0),
+		_e(foods, "seafood", FoodBubbleMarker.Status.RED, 0, 25, -1, 0, "no route from Harbor"),
 	]))
 
 	# Worst-case contrast: a food glyph on a row tinted its OWN hue.
@@ -72,7 +75,7 @@ func _rows(entries: Array) -> Array:
 			"food_id": e.food_id, "color": e.color, "status": e.status,
 			"amount_text": "%d/%d" % [e.delivered, e.requested],
 			"freshness_pct": e.freshness_pct, "threshold": 0.85,
-			"earned": e.earned,
+			"earned": e.earned, "reason": e.reason,
 		})
 	return out
 
@@ -85,11 +88,11 @@ func _col(pos: Vector2, expanded: bool, rows: int, source := false) -> BubbleCan
 	root.add_child(c)
 	return c
 
-func _e(foods: Dictionary, food_id: String, status: FoodBubbleMarker.Status, delivered: float, requested: float, fresh: int, earned: float) -> Dictionary:
+func _e(foods: Dictionary, food_id: String, status: FoodBubbleMarker.Status, delivered: float, requested: float, fresh: int, earned: float, reason := "") -> Dictionary:
 	return {
 		"food_id": food_id, "color": foods[food_id].color, "status": status,
 		"delivered": delivered, "requested": requested, "freshness_pct": fresh,
-		"earned": earned,
+		"earned": earned, "reason": reason,
 	}
 
 func _process(_delta: float) -> bool:
