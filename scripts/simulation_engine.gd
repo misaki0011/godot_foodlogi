@@ -311,6 +311,12 @@ static func find_path(state: GameState, nodes_by_pos: Dictionary, from_pos: Vect
 		for v in exits(state, u):
 			if visited.has(v):
 				continue
+			# A cold corridor turns this cargo away (v0.8 item 82), and the
+			# search treats such a tile as though no road stood there -- which
+			# is what makes an excluded food find the long way round by itself,
+			# rather than the player having to route it by hand.
+			if not food_may_enter(state, vertex_pos(v), food.food_id):
+				continue
 			var w: float = 0.01 if nodes_by_pos.has(vertex_pos(v)) else food.decay_per_tile
 			if v.z == LANE_DECK:
 				w *= GameBalance.BRIDGE_DECK_DECAY_MULT
@@ -362,12 +368,61 @@ static func simulate_freshness(state: GameState, path: Array[Vector2i], food: Fo
 		if lane_for_step(state, pos, pos - path[i - 1]) == LANE_DECK:
 			decay *= GameBalance.BRIDGE_DECK_DECAY_MULT
 		if cell and cell.kind == "storage":
-			decay = 0.0
+			# The fridge is full (v0.8 item 82). A storage handles its own
+			# capacity a day and no more; cargo past that goes through
+			# untouched, so the protection the run gets is the two blended by
+			# how much of the traffic actually fitted.
+			#
+			# This is what gives the map a problem worth solving rather than a
+			# building worth buying, and it has one property that matters more
+			# than the arithmetic: **a second storage on the same run does not
+			# help.** Both see the same flow, both chill the same fraction, and
+			# the second re-arms protection at the same weakened figure the
+			# first gave. You cannot stack your way out -- the only thing that
+			# helps is less traffic through the point, which means splitting the
+			# flow or reserving the road (CORRIDOR_COLD).
+			#
+			# Continuous, so there is no cliff to discover: one unit over
+			# capacity costs a hair, not a tier.
 			var st = GameBalance.STORAGE_TYPES[cell.stype]
+			var load := tile_load(state, pos, tile_usage)
+			var chilled: float = 1.0 if load <= 1.0 else 1.0 / load
 			protection_left = st.protection
-			protection_mult = st.mult
+			protection_mult = lerpf(st.mult, 1.0, 1.0 - chilled)
+			# The share that never got into the fridge decays on this tile like
+			# it would on any other. A swamped storage is a road with a shed on
+			# it, and the tile should cost what a road costs.
+			decay = food.decay_per_tile * (1.0 - chilled)
 		fresh -= decay
 	return clampf(fresh, 0.0, 100.0)
+
+## ---------- cold corridors (v0.8 item 82) ----------
+## A designation held on the cell as `corridor`, absent on an ordinary road.
+## It changes NOTHING about the road as infrastructure: road_components,
+## the hub and bridge caps, established_route_cells, capacity and upkeep all
+## see the same tile they always did. The only thing it touches is which
+## DELIVERIES may use it -- find_path refuses to expand into a corridor tile
+## with the wrong cargo, so the excluded foods reroute around it or, if there
+## is no way round, simply do not arrive (and say so, item 81).
+##
+## Keeping it out of connectivity is the whole reason this is cheap: a corridor
+## is a rule about traffic, not a second road network, so nothing that reasons
+## about the shape of the map has to learn it exists.
+const CORRIDOR_COLD := "cold"
+
+static func corridor_of(state: GameState, pos: Vector2i) -> String:
+	var cell = state.grid.get(pos)
+	if cell == null:
+		return ""
+	return cell.get("corridor", "")
+
+## Whether cargo of `food_id` may travel over `pos`. True everywhere that is
+## not a designated corridor, which is everywhere until the player says so.
+static func food_may_enter(state: GameState, pos: Vector2i, food_id: String) -> bool:
+	match corridor_of(state, pos):
+		CORRIDOR_COLD:
+			return GameBalance.may_use_cold_corridor(food_id)
+	return true
 
 ## How hard `pos` is being worked: the day's traffic over what the tile carries
 ## comfortably. 1.0 is exactly at capacity, 2.0 is twice it. Zero for anything

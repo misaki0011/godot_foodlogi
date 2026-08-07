@@ -301,6 +301,13 @@ The Godot port needed to be testable from a phone browser, which has no hover an
     **"No route" is not the same as "no road", which is exactly why it needs saying.** A delivery may never pass THROUGH a settlement (§4.7), so a road drawn Farm → Village A → Town D leaves Town D unreachable while looking, on screen, precisely like a road that works — the tiles are continuous, the drags were all accepted, and the overlay may still draw because that eastern road touches settlements at both ends. Physical adjacency is not connection either (v0.5 item 11): two roads that touch without a drag between them are two roads. Both mistakes produce the same silent red bubble, and neither is visible by looking.
     **The arithmetic that makes this diagnosable at all** is worth recording, since it is what proved the reported case was not congestion: with capacity no longer a wall (item 80), a line delivers `min(need, supply)` — so **zero delivered while the source still holds stock can only mean no path exists**. Region 1's Farm showed 65 of 80 drawn with 15 spare while Town D's grain read 0/20; had any path existed those 15 would have arrived.
 
+82. **Cold corridors: the player sorts the traffic.** Every other thing the player can do to a road is a **purchase placed on a tile** -- pave it, chill it, junction it -- so every phase past "connect everything" was the same verb repeated, which is a chore however the numbers are tuned. A designation is a different verb: it decides what *belongs* on a road, and the map answers by sending everything else the long way round. **Reserve a run of road as a cold corridor and only the fastest-spoiling foods may use it** (derived from the food table at `COLD_CORRIDOR_MIN_DECAY = 3.0`: milk 4.0 and seafood 6.0 in, vegetables 2.5 and below out). Free to set and free to lift -- the cost is somewhere else entirely, and pricing the paint would only discourage the experimenting this is for. See §4.1, §4.3.
+    **What it buys is exclusion, which is only worth anything because the fridge can now be full.** A Cool Storage handles **100/day**; past that the overflow went through *entirely untouched by any penalty* -- `simulate_freshness` zeroed the tile's decay before congestion could bite it, so an overloaded chiller cost nothing at all. It now chills what fits and blends the rest: `protection = lerp(0.35, 1.0, 1 - capacity/flow)`, with the unchilled share decaying on the storage tile like it would on any road. Continuous, so one unit over capacity costs a hair rather than a tier.
+    **The property that makes it a decision: you cannot stack your way out.** Two chillers on one run see the same flow, chill the same fraction, and the second re-arms protection at the same weakened figure the first gave. Measured: a second §180 building on a swamped run adds **§11 a day and costs §35 a day**. The only thing that helps is less traffic through the point -- split the flow, or reserve the road.
+    **The insight the player is meant to have** is which cargo should take the detour, and the food table is what tells them. Grain loses 0.5 a tile and can go eight tiles out of its way for four points of freshness; seafood loses 6.0 and cannot go anywhere at all. So the toughest cargo detours and the most fragile keeps the short road -- a real logistics idea, discovered from the map rather than narrated, and it comes straight out of the 12x spread in decay rates that is this game's one axis. Measured end to end: a shared trunk carrying 180/day past a chiller delivers milk at **70.1%** for §505; reserving it drops the chiller to 90/day and the same milk arrives at **84.6%** for §609, with the grain rerouted and still arriving in full.
+    **A corridor is a rule about traffic and nothing else.** `road_components`, the hub and bridge caps, `established_route_cells`, capacity and upkeep all see exactly the tile they saw before -- only `find_path` consults it, treating a corridor the wrong cargo cannot enter as though no road stood there. That is what keeps it cheap: a corridor is not a second road network, so nothing that reasons about the shape of the map has to learn it exists.
+    **A warning, not a refusal.** Excluding a food from the only road that reached a settlement does not reroute it, it strands it -- so the tool checks every open line and names what it just cut off. It does not *refuse*, because reserving a trunk before drawing the bulk road around it is a perfectly sensible order to work in, and a tool that blocked the first half of that plan would be enforcing an order of operations nobody agreed to. The day's report says it precisely either way (item 81); the toast only says it sooner.
+
 ### v0.2 → v0.3 — Routing and inspection playtest
 
 The next playtest clarified how junction construction, pathfinding, and delivery feedback should work. These rules supersede conflicting v0.2 text elsewhere in the document:
@@ -587,6 +594,32 @@ Because congestion multiplies the food's own decay rate, it is a problem worth
 paving out on the dairy run (milk 4.0/tile) and worth shrugging at on the
 grain run (0.5) — a jam costs time, and time costs delicate cargo eight times
 what it costs a sack of grain.
+
+### Cold corridors (added in v0.8 item 82)
+
+A run of road may be **reserved** for the fastest-spoiling foods. Only foods
+decaying at or above `COLD_CORRIDOR_MIN_DECAY` (3.0/tile — milk and seafood)
+may travel it; everything else routes around, automatically, or does not
+arrive and says so.
+
+Free to set and free to lift. The cost is the detour the excluded foods now
+take, which is what makes it a decision: reserve too much and you have built
+two networks where one would do.
+
+What it is for: a Cool Storage handles 100/day (§4.3.4), and a chiller
+standing on a trunk that everything funnels down is swamped by cargo that did
+not need chilling. Keeping the bulk off it makes the same building cover the
+delicate cargo completely.
+
+The classification is **by decay rate, not authored per map**, because the
+choice of what to detour is the lesson: grain loses 0.5 a tile and can go
+eight tiles out of its way for four points of freshness, while seafood loses
+6.0 and cannot go anywhere. The toughest cargo takes the long road.
+
+A corridor is a rule about **traffic only**. Network membership, hub and bridge
+caps, the established-route overlay, capacity and upkeep are all unchanged —
+only delivery pathfinding consults it, treating a tile the cargo may not enter
+as though no road stood there.
 
 ### Transactional route placement (added in v0.3, revised in v0.4)
 
@@ -1030,7 +1063,31 @@ Kept here rather than deleted so the numbers are recoverable if the tier is ever
 
 ---
 
-## 4.3.4 Storage behavior rule
+## 4.3.4 Storage throughput (added in v0.8 item 82)
+
+A storage handles its **capacity** in food per day and no more. Cargo past
+that goes through unchilled, and the protection the rest of the run gets is
+the two blended by how much of the traffic actually fitted:
+
+```text
+chilled    = min(1, capacity / flow_through_the_tile)
+protection = lerp(storage_mult, 1.0, 1 - chilled)
+```
+
+The unchilled share decays on the storage tile like it would on any road tile.
+
+**A second storage on the same run does not help.** Both see the same flow,
+both chill the same fraction, and the second re-arms protection at the same
+weakened figure the first gave — a second §180 Cool Storage on a swamped run
+measures at §11/day gained against §35/day upkeep. The only thing that helps
+is less traffic through the point: split the flow across two roads, or reserve
+the road as a cold corridor (§4.1) so the bulk cargo goes another way.
+
+This is deliberate. If piling on storage worked, nobody would ever sort their
+traffic, and phase 2 would be the tile-painting exercise it is designed not to
+be.
+
+## 4.3.5 Storage behavior rule
 
 When food passes through storage:
 

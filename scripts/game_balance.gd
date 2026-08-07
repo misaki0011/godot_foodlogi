@@ -137,6 +137,45 @@ const ROUTE_LEVELS := {
 	"main": {"cap": 400.0, "upkeep_mult": 2.5, "upgrade_cost": 12.0, "next": "", "label": "Main"},
 }
 
+## ---------- cold corridors: sorting the traffic (v0.8 item 82) ----------
+## Every other thing the player can do to a road is a PURCHASE placed on a
+## tile -- pave it, chill it, junction it. A designation is a different verb:
+## it decides what BELONGS on that road, and the map answers back by sending
+## everything else the long way round.
+##
+## A cold corridor admits only the fastest-decaying foods. What that buys is
+## not speed, it is EXCLUSION: a Cool Storage carries 100/day (STORAGE_TYPES),
+## and a chiller standing on a trunk that everything funnels down is swamped by
+## cargo that did not need chilling. Keep grain and bread off it and the same
+## §180 building covers the milk and seafood completely.
+##
+## The trade that makes it a decision rather than a free win: the excluded
+## foods still have to get there, so a corridor costs a detour -- more road,
+## more upkeep, more distance. Which is why the classification is BY DECAY
+## RATE rather than authored per map. Grain loses 0.5 a tile and can go eight
+## tiles out of its way for four points of freshness; seafood loses 6.0 and
+## cannot go anywhere. The player's insight is meant to be exactly that: the
+## toughest cargo takes the detour, and the food table is what tells them so.
+##
+## Derived rather than listed, so a sixth food classifies itself. At 3.0 the
+## line falls between vegetables (2.5) and milk (4.0) -- two foods in, three
+## out, on a five-food table.
+const COLD_CORRIDOR_MIN_DECAY := 3.0
+
+## Whether `food_id` may travel a cold corridor.
+static func may_use_cold_corridor(food_id: String) -> bool:
+	var food: FoodData = food_types().get(food_id)
+	return food != null and food.decay_per_tile >= COLD_CORRIDOR_MIN_DECAY
+
+## The foods a corridor admits, for the tool's own description -- so the button
+## names them rather than making the player infer the threshold.
+static func cold_corridor_foods() -> Array[String]:
+	var out: Array[String] = []
+	for food_id in food_types():
+		if may_use_cold_corridor(food_id):
+			out.append(food_id)
+	return out
+
 ## ---------- congestion: what an overloaded road costs (v0.8 item 80) ----------
 ## Capacity used to be a HARD WALL: a tile with no room left contributed
 ## nothing, so a line whose path was full delivered exactly zero and earned

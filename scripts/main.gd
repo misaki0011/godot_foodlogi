@@ -86,13 +86,17 @@ const TOOL_HINTS := {
 	"cool": "Click an existing route tile to build Cool Storage there (good for vegetables, milk).",
 	"hubBuild": "Click an existing route tile to build a Small Hub there for §150.",
 	"bridgeBuild": "Click a straight run of route tile to build a Bridge over it, so a second route can later cross without joining it. The crossing route still has to be drawn over the top afterwards.",
+	"coldCorridor": "Click a route tile, or drag along a run, to reserve it for the fastest-spoiling foods. Everything else reroutes the long way round -- which is the point: a Cool Storage on a corridor only has the delicate cargo to chill. Click again to lift it. Free either way.",
 	"remove": "Click a built tile to bulldoze it, or drag across several to clear them all at once (no refund). A hub, storage or bridge leaves the road it was built on behind, at the level it already was -- clearing that road too is a second click.",
 }
 
 ## Tools whose action can be swept across many tiles in one drag, rather than
 ## clicked one tile at a time. Route drawing is NOT one of them -- it traces a
 ## path with its own start/end rules (see _recompute_drag_validity).
-const SWEEP_TOOLS := {"remove": true, "upgrade": true}
+const SWEEP_TOOLS := {"remove": true, "upgrade": true, "coldCorridor": true}
+
+## What each sweep tool CALLS what it does, for the toast and the undo label.
+const SWEEP_VERBS := {"remove": "clear", "upgrade": "upgrade", "coldCorridor": "reserve"}
 
 @onready var _terrain: TerrainRenderer = $TerrainMap
 @onready var _node_spawner: NodeSpawner = $NodeMarkers
@@ -374,11 +378,25 @@ const DRAG_BLOCKER_SIZE := Vector3(0.62, 0.62, 0.62)
 ## the gesture off the mobile long-press that swallows it.
 ##
 ## The colour says what the tool will do (red = these get cleared, green =
-## these get upgraded); gray means the sweep is blocked and will do nothing,
-## which today only happens when an upgrade sweep outruns the treasury.
+## these get upgraded, ice blue = these get reserved as a cold corridor); gray
+## means the sweep is blocked and will do nothing, which today only happens
+## when an upgrade sweep outruns the treasury.
 const SWEEP_REMOVE_COLOR := Color(0.85, 0.3, 0.3, 0.62)
 const SWEEP_UPGRADE_COLOR := Color(0.4, 0.85, 0.45, 0.62)
+const SWEEP_CORRIDOR_COLOR := Color(0.45, 0.78, 0.92, 0.62)
 const SWEEP_BLOCKED_COLOR := Color(0.55, 0.58, 0.62, 0.5)
+const SWEEP_PREVIEW_COLORS := {
+	"remove": SWEEP_REMOVE_COLOR,
+	"upgrade": SWEEP_UPGRADE_COLOR,
+	"coldCorridor": SWEEP_CORRIDOR_COLOR,
+}
+
+## The cold corridor's mark on the map: a thin ice-blue skin over the road
+## block, in the same hue as Cool Storage (MarkerColors) because they are two
+## halves of one idea -- the corridor is what makes the chiller affordable.
+## Kept shallow so the road's own level still reads through the silhouette.
+const CORRIDOR_PAINT_COLOR := Color(0.36, 0.70, 0.86, 0.85)
+const CORRIDOR_PAINT_HEIGHT := 0.06
 ## The line traced through every crossed cell, affected or not, so the gesture
 ## itself reads even where it passes over empty ground.
 const SWEEP_TRACE_COLOR := Color(0.9, 0.93, 0.96, 0.3)
@@ -927,6 +945,11 @@ func _recompute_sweep() -> void:
 				continue
 			_sweep_cells.append(cell)
 			_sweep_cost += lvl.upgrade_cost
+		elif _tool == "coldCorridor" and cell_data.kind == "route":
+			# A corridor is a RUN of road, so the sweep is its natural gesture
+			# and a single click is the fiddly special case. Costs nothing, so
+			# it can never trip the affordability rule below.
+			_sweep_cells.append(cell)
 	# All-or-nothing, matching the route drag: a sweep that outruns the
 	# treasury applies to nothing at all, and says so before release by
 	# turning gray. Shortening the sweep is the fix.
@@ -942,11 +965,31 @@ func _commit_sweep() -> void:
 		_show_toast(_drag_invalid_reason, true)
 		return
 	if _sweep_cells.is_empty():
-		_show_toast("Nothing to %s along that sweep." % ("clear" if _tool == "remove" else "upgrade"), true)
+		_show_toast("Nothing to %s along that sweep." % SWEEP_VERBS.get(_tool, "change"), true)
 		return
 	var count := _sweep_cells.size()
 	var plural := "" if count == 1 else "s"
-	_push_undo("that %s sweep" % ("bulldoze" if _tool == "remove" else "upgrade"))
+	_push_undo("that %s sweep" % SWEEP_VERBS.get(_tool, "tool"))
+	if _tool == "coldCorridor":
+		# One decision for the whole run rather than a per-tile toggle: a sweep
+		# that alternated reserve/lift down a road half of which was already a
+		# corridor would leave a striped mess, and a striped corridor is the one
+		# shape that cannot work -- cargo excluded from every other tile simply
+		# has nowhere to go. Whether the FIRST tile is already reserved decides
+		# what the whole sweep does, so dragging back over a corridor lifts it.
+		var lifting: bool = SimulationEngine.corridor_of(_state, _sweep_cells[0]) == SimulationEngine.CORRIDOR_COLD
+		for cell in _sweep_cells:
+			if lifting:
+				_state.grid[cell].erase("corridor")
+			else:
+				_state.grid[cell].corridor = SimulationEngine.CORRIDOR_COLD
+		if lifting:
+			_show_toast("Lifted the corridor from %d tile%s." % [count, plural])
+		else:
+			_show_toast("Reserved %d tile%s for %s." % [count, plural, _corridor_food_names()])
+		_warn_about_orphans()
+		_after_action()
+		return
 	if _tool == "remove":
 		# Same rule as a single bulldoze (see _clear_cell): a swept hub,
 		# storage or bridge leaves its road behind rather than taking it with it.
@@ -987,7 +1030,7 @@ func _update_sweep_preview() -> void:
 		_add_drag_segment(world_positions[i - 1], world_positions[i], SWEEP_TRACE_COLOR)
 	var color := SWEEP_BLOCKED_COLOR
 	if _drag_valid:
-		color = SWEEP_REMOVE_COLOR if _tool == "remove" else SWEEP_UPGRADE_COLOR
+		color = SWEEP_PREVIEW_COLORS.get(_tool, SWEEP_UPGRADE_COLOR)
 	for cell in _sweep_cells:
 		_add_drag_marker(_terrain.map_to_local(Vector3i(cell.x, 0, cell.y)) + Vector3(0, 1.3, 0), color)
 
@@ -1179,6 +1222,8 @@ func _handle_click(cell: Vector2i, screen_position := Vector2.ZERO) -> void:
 			_do_build_hub(cell)
 		"bridgeBuild":
 			_do_build_bridge(cell)
+		"coldCorridor":
+			_do_toggle_corridor(cell)
 		"remove":
 			_do_bulldoze(cell)
 	_after_action()
@@ -1217,6 +1262,78 @@ func _do_upgrade_route(cell: Vector2i) -> void:
 	# is new, and lands like one.
 	_pending_tile_pops[cell] = {"part": TilePart.ROAD, "delay": 0.0}
 	_show_toast("Upgraded to %s for §%d." % [GameBalance.ROUTE_LEVELS[cell_data.level].label, roundi(cost)])
+
+## ---------- cold corridors (v0.8 item 82) ----------
+## Reserves a road for the fastest-spoiling foods, or lifts the reservation.
+## The one player action that is a DESIGNATION rather than a purchase: it buys
+## nothing and costs nothing, and what it changes is which cargo the router
+## will send this way.
+##
+## Free deliberately. Every other tool is priced to make the player weigh it,
+## and the weighing here is somewhere else entirely -- the excluded foods have
+## to travel further, which costs road, upkeep and freshness. Charging for the
+## paint on top would only discourage the experimenting this is for; a corridor
+## is meant to be tried, watched for a day, and moved.
+##
+## Only plain road takes a designation. A hub is a junction cargo sorts AT
+## rather than a stretch it travels along, and a storage tile that turned away
+## most of the traffic it was bought to serve would be a trap; both are left
+## alone so the corridor is always a run of road with a clear start and end.
+func _do_toggle_corridor(cell: Vector2i) -> void:
+	var cell_data = _state.grid.get(cell)
+	if cell_data == null or cell_data.kind != "route":
+		_show_toast("Reserve a plain route tile -- hubs and storage carry whatever reaches them.", true)
+		return
+	_push_undo("that corridor change")
+	if cell_data.get("corridor", "") == SimulationEngine.CORRIDOR_COLD:
+		cell_data.erase("corridor")
+		_show_toast("Corridor lifted -- every food may use this tile again.")
+	else:
+		cell_data.corridor = SimulationEngine.CORRIDOR_COLD
+		_show_toast("Reserved for %s. Everything else now routes around it." % _corridor_food_names())
+	_warn_about_orphans()
+
+func _corridor_food_names() -> String:
+	var foods := GameBalance.food_types()
+	var names: Array[String] = []
+	for food_id in GameBalance.cold_corridor_foods():
+		names.append(foods[food_id].display_name.to_lower())
+	return " and ".join(names)
+
+## Says immediately when a corridor has cut a line off, rather than leaving the
+## player to find out from a red bubble at the end of the day.
+##
+## This is the risk the whole mechanic carries: excluding a food from the one
+## road that reached a settlement does not reroute it, it strands it. The day's
+## own report will say so (item 81) and say it precisely, but a designation is
+## a fiddly, reversible, experiment-and-look-again action, and finding out one
+## day later is far too slow a loop for that.
+##
+## A warning rather than a refusal. Mid-edit a network is legitimately broken
+## for a moment -- reserving a trunk before drawing the bulk road around it is
+## a perfectly sensible order to work in, and a tool that refused the first
+## half of that plan would be enforcing an order of operations nobody agreed to.
+func _warn_about_orphans() -> void:
+	var foods := GameBalance.food_types()
+	var stranded: Array[String] = []
+	for node in _map_data.node_placements:
+		if node.node_type != GameEnums.NodeType.SETTLEMENT:
+			continue
+		for food_id in OrderBook.active_demand(_state, node):
+			if _line_is_reachable(node, food_id, foods[food_id]):
+				continue
+			stranded.append("%s %s" % [node.display_name, food_id])
+	if stranded.is_empty():
+		return
+	_show_toast("No route left for: %s. They need a way round." % ", ".join(stranded), true)
+
+func _line_is_reachable(settlement: NodeData, food_id: String, food: FoodData) -> bool:
+	for node in _map_data.node_placements:
+		if node.node_type != GameEnums.NodeType.SOURCE or not node.produces.has(food_id):
+			continue
+		if not SimulationEngine.find_path(_state, _nodes_by_pos, node.grid_position, settlement.grid_position, food).is_empty():
+			return true
+	return false
 
 ## Expands a source by one step (DEV-03), up to GameBalance.SOURCE_UPGRADE_MAX
 ## times. The footprint does not change -- a source already stands on its full
@@ -1889,6 +2006,14 @@ func _render_grid() -> void:
 func _build_cell_visuals(parent: Node3D, pos: Vector2i, cell: Dictionary) -> Dictionary:
 	var world_pos: Vector3 = _terrain.map_to_local(Vector3i(pos.x, 0, pos.y)) + Vector3(0, 1.0, 0)
 	var surface := _add_road_surface(parent, world_pos, pos, cell.get("level", "dirt"))
+	# A cold corridor is PAINT ON the road, not a different road (v0.8 item 82):
+	# a thin ice-blue skin laid over whatever block is already there. Drawn this
+	# way rather than by tinting or swapping the block because the Dirt/Paved/
+	# Main level has to stay readable underneath -- a corridor and an upgrade are
+	# two independent things a player does to the same tile, and a tile that
+	# expressed only the newer of them would hide half its own state.
+	if cell.get("corridor", "") == SimulationEngine.CORRIDOR_COLD:
+		_add_tile_box(parent, world_pos + Vector3(0, surface.height, 0), CORRIDOR_PAINT_COLOR, CORRIDOR_PAINT_HEIGHT)
 	var structure: Node3D = null
 	if cell.kind == "route":
 		# A bridge tile keeps its ordinary road block -- the road underneath
@@ -1909,7 +2034,51 @@ func _build_cell_visuals(parent: Node3D, pos: Vector2i, cell: Dictionary) -> Dic
 		marker.position = world_pos + Vector3(0, surface.height, 0)
 		marker.apply_tint(MarkerColors.storage_color(cell.stype) if is_storage else MarkerColors.hub_color(cell.htype))
 		structure = marker
+		if is_storage:
+			_add_storage_load_label(parent, pos, cell, world_pos + Vector3(0, surface.height, 0))
 	return {TilePart.ROAD: surface.node, TilePart.STRUCTURE: structure}
+
+## ---------- what a chiller is actually handling (v0.8 item 82) ----------
+## "90/100" over a storage building, in the same used/capacity shape a source
+## chip already uses -- and in red once the traffic is past what the building
+## can chill.
+##
+## Without this the fridge-is-full rule is a mechanic the player feels and
+## cannot find. Freshness slides, the bonus stops, and the cause is one number
+## that exists nowhere on screen. The congestion dot marks the tile but says
+## only "busy"; the whole diagnosis is the ratio, because 180 against 100 tells
+## you both that you are swamped and roughly how much traffic has to go
+## somewhere else before you are not.
+##
+## Drawn only once a day has run, since before that there is no traffic to
+## report and "0/100" on a building the player just placed reads as broken.
+const STORAGE_LOAD_FONT_SIZE := 96
+const STORAGE_LOAD_PIXEL_SIZE := 0.0075
+const STORAGE_LOAD_RISE := 1.5
+const STORAGE_LOAD_OK_COLOR := Color("cfe4ee")
+const STORAGE_LOAD_OVER_COLOR := Color("f0a0a0")
+const STORAGE_LOAD_OUTLINE := Color(0.06, 0.08, 0.07, 0.95)
+
+func _add_storage_load_label(parent: Node3D, pos: Vector2i, cell: Dictionary, base: Vector3) -> void:
+	var used := 0.0
+	for f in _state.last_flows:
+		if pos in f.path:
+			used += f.delivered
+	if used <= 0.0:
+		return
+	var capacity: float = GameBalance.STORAGE_TYPES[cell.stype].capacity
+	var label := Label3D.new()
+	label.text = "%d/%d" % [roundi(used), roundi(capacity)]
+	label.font_size = STORAGE_LOAD_FONT_SIZE
+	label.pixel_size = STORAGE_LOAD_PIXEL_SIZE
+	label.modulate = STORAGE_LOAD_OVER_COLOR if used > capacity else STORAGE_LOAD_OK_COLOR
+	label.outline_size = 24
+	label.outline_modulate = STORAGE_LOAD_OUTLINE
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.render_priority = 4
+	label.position = base + Vector3(0, STORAGE_LOAD_RISE, 0)
+	parent.add_child(label)
 
 ## ---------- construction pop (items 64, 65) ----------
 ##
@@ -2988,6 +3157,12 @@ func _build_tools_section(box: VBoxContainer) -> void:
 		var label: String = st.name.replace(" Storage", "")
 		_add_tool_button(storage_grid, "%s  §%d" % [label, roundi(st.build)], tool, "%s -- §%d to build, §%d/day upkeep, protects the next %d tiles at %d%% decay." % [st.name, roundi(st.build), roundi(st.upkeep), st.protection, roundi(st.mult * 100)])
 
+	_add_section_title(box, "CORRIDORS")
+	var corridor_grid := _add_tool_grid(box)
+	_add_tool_button(corridor_grid, "Cold  free", "coldCorridor", "Cold Corridor -- reserve a run of road for %s, the foods that cannot survive a detour. Everything else routes the long way round, which is the point: a Cool Storage on a reserved run has only the delicate cargo to chill, so its %d/day goes much further. Free to set and free to lift; what it costs you is the distance the other foods now travel." % [
+		_corridor_food_names(), roundi(GameBalance.STORAGE_TYPES[GameEnums.StorageType.COOL].capacity),
+	])
+
 	_add_section_title(box, "HUBS & CLEARING")
 	var hub_grid := _add_tool_grid(box)
 	_add_tool_button(hub_grid, "Hub  §%d" % roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), "hubBuild", "Build a Small Hub on any existing route tile for §%d. Each connected road network supports %d hubs." % [roundi(GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].build), GameBalance.HUB_CAP_PER_NETWORK])
@@ -3074,6 +3249,7 @@ func _build_legend_section(box: VBoxContainer) -> void:
 	_add_legend_row(_legend_box, GameBalance.HUB_TYPES[GameEnums.HubType.SMALL].color, "Hub (build on any route tile)")
 	_add_legend_row(_legend_box, Color("D98E4A"), "Busy tile — costs freshness")
 	_add_legend_row(_legend_box, Color("C4573A"), "Over capacity — costs more")
+	_add_legend_row(_legend_box, CORRIDOR_PAINT_COLOR, "Cold corridor — %s only" % _corridor_food_names())
 	_add_legend_row(_legend_box, RIVER_BRIDGE_COLOR, "River / river crossing")
 	_add_legend_row(_legend_box, SEA_COLOR, "Open sea -- no route, at any price")
 	_add_legend_row(_legend_box, BRIDGE_DECK_COLOR, "Bridge deck -- routes cross, never join")

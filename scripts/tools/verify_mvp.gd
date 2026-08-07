@@ -35,6 +35,9 @@ func _initialize() -> void:
 	_test_a_busy_road_delivers_and_costs_freshness()
 	_test_lines_do_not_starve_by_iteration_order()
 	_test_a_short_line_says_why()
+	_test_a_cold_corridor_sorts_the_traffic()
+	_test_a_cold_corridor_is_only_a_traffic_rule()
+	_test_stacking_storage_does_not_help()
 	print("MVP simulation checks passed.")
 	quit()
 
@@ -1075,6 +1078,192 @@ func _test_a_short_line_says_why() -> void:
 	print("Shortfall reasons (UI-04): a road through a settlement reads '%s from %s', an empty source reads '%s', a full line reads nothing." % [
 		line.reason, ", ".join(Array(line.reason_sources)), starved.reason,
 	])
+
+## The whole point of a corridor, end to end (v0.8 item 82): keeping bulk cargo
+## off a chilled run leaves the Cool Storage with only the delicate cargo to
+## handle, and the delicate cargo arrives fresher for it.
+##
+## Built as the shape a player would actually build -- one settlement fed by
+## two sources down a shared trunk with a chiller on it, and a longer way round
+## available. Reserving the trunk should push the tough cargo onto the detour
+## and lift the fragile cargo's freshness, without either line going short.
+func _test_a_cold_corridor_sorts_the_traffic() -> void:
+	var results: Array[Dictionary] = []
+	for reserved in [false, true]:
+		var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+		var dairy := _node(map, "dairy")
+		var farm := _node(map, "farm")
+		var town := _node(map, "townD")
+		# Enough of each that the shared chiller is genuinely over its 100/day
+		# when both use it, and comfortably under when only the milk does.
+		dairy.produces = {"milk": 90.0}
+		farm.produces = {"grain": 90.0}
+		town.demand = {"milk": 90.0, "grain": 90.0}
+
+		var state := GameState.new()
+		# The short shared trunk, with a chiller at its head.
+		var trunk: Array[Vector2i] = []
+		for i in 6:
+			trunk.append(Vector2i(6 + i, 5))
+		# The long way round, which only exists so the excluded cargo has
+		# somewhere to go -- a corridor with no detour available strands things.
+		# Along row 1 and down column 16, both of which are clear of every node
+		# on this map: a detour laid through a settlement would be no detour at
+		# all, since a delivery may not transit one (§4.7).
+		var detour: Array[Vector2i] = []
+		for x in range(4, 17):
+			detour.append(Vector2i(x, 1))
+		for y in range(2, 7):
+			detour.append(Vector2i(16, y))
+		for cell in trunk + detour:
+			state.grid[cell] = {"kind": "route", "level": "dirt"}
+		state.grid[trunk[0]] = {"kind": "storage", "stype": GameEnums.StorageType.COOL, "level": "dirt"}
+		if reserved:
+			for cell in trunk.slice(1):
+				state.grid[cell].corridor = SimulationEngine.CORRIDOR_COLD
+
+		for source in [dairy, farm]:
+			state.add_connection(source.grid_position, trunk[0])
+			state.add_connection(source.grid_position, detour[0])
+		_connect_chain(state, trunk)
+		_connect_chain(state, detour)
+		state.add_connection(trunk[-1], town.grid_position)
+		state.add_connection(detour[-1], town.grid_position)
+
+		OrderBook.initialize(state, map)
+		state.active_orders[town.node_id] = {"milk": 1, "grain": 1}
+		SimulationEngine.run_day(state, map.node_placements)
+		var status: Dictionary = state.last_settlement_status[town.node_id]
+		results.append({
+			"milk": status.milk,
+			"grain": status.grain,
+			"milk_fresh": status.milk.fresh_sum / status.milk.delivered if status.milk.delivered > 0.0 else 0.0,
+			"chiller_load": _load_at(state, trunk[0]),
+		})
+
+	var open_road: Dictionary = results[0]
+	var sorted: Dictionary = results[1]
+
+	# Nothing is stranded either way -- the detour is what makes a corridor a
+	# rerouting rather than a wall, and a corridor that starved a line would
+	# have failed at being a trade.
+	for r in results:
+		assert(r.milk.delivered > 0.0 and r.grain.delivered > 0.0,
+			"Both foods must still arrive: milk %.0f, grain %.0f" % [r.milk.delivered, r.grain.delivered])
+
+	assert(sorted.chiller_load < open_road.chiller_load,
+		"Reserving the trunk must take traffic off the chiller: %.0f vs %.0f" % [sorted.chiller_load, open_road.chiller_load])
+	assert(sorted.milk_fresh > open_road.milk_fresh,
+		"A chiller with only the delicate cargo on it must deliver fresher milk: %.1f%% vs %.1f%%" % [
+			sorted.milk_fresh, open_road.milk_fresh,
+		])
+	assert(sorted.milk.earned > open_road.milk.earned,
+		"Fresher milk must be worth more: §%.0f vs §%.0f" % [sorted.milk.earned, open_road.milk.earned])
+	print("Cold corridor (ROUTE-20): reserving the trunk drops the chiller from %.0f to %.0f a day and lifts milk %.1f%% -> %.1f%% (§%.0f -> §%.0f); grain takes the long way and still arrives." % [
+		open_road.chiller_load, sorted.chiller_load, open_road.milk_fresh, sorted.milk_fresh,
+		open_road.milk.earned, sorted.milk.earned,
+	])
+
+## A corridor is a rule about TRAFFIC and nothing else. It must not change what
+## the road is: the network it belongs to, the hub and bridge budgets that
+## network carries, or what the overlay counts as an established route. Getting
+## this wrong would make a designation quietly re-shape the map, which is the
+## one thing the player would never think to check.
+func _test_a_cold_corridor_is_only_a_traffic_rule() -> void:
+	var state := GameState.new()
+	var spine: Array[Vector2i] = []
+	for i in 8:
+		spine.append(Vector2i(3 + i, 7))
+	for cell in spine:
+		state.grid[cell] = {"kind": "route", "level": "dirt"}
+	_connect_chain(state, spine)
+
+	var before := SimulationEngine.road_components(state).duplicate()
+	var hubs_before := SimulationEngine.hubs_on_network(state, spine[0])
+	var capped_before := SimulationEngine.network_at_hub_cap(state, spine[0])
+	for cell in spine:
+		state.grid[cell].corridor = SimulationEngine.CORRIDOR_COLD
+	var after := SimulationEngine.road_components(state)
+
+	assert(before.size() == after.size(), "A corridor must not change the vertex set")
+	for v in before:
+		assert(before[v] == after[v], "A corridor must not split or merge a road network at %s" % v)
+	assert(SimulationEngine.hubs_on_network(state, spine[0]) == hubs_before,
+		"A corridor must not change a network's hub count")
+	assert(SimulationEngine.network_at_hub_cap(state, spine[0]) == capped_before,
+		"A corridor must not change whether a network is at its hub cap")
+	assert(SimulationEngine.tile_capacity(state, spine[0]) == GameBalance.ROUTE_LEVELS.dirt.cap,
+		"A corridor must not change what a tile carries")
+
+	# And it admits exactly the fast-decaying foods, by decay rate rather than
+	# by a list, so a sixth food would classify itself.
+	var foods := GameBalance.food_types()
+	for food_id in foods:
+		var expected: bool = foods[food_id].decay_per_tile >= GameBalance.COLD_CORRIDOR_MIN_DECAY
+		assert(SimulationEngine.food_may_enter(state, spine[0], food_id) == expected,
+			"%s decays at %.1f/tile and must %s a cold corridor" % [
+				food_id, foods[food_id].decay_per_tile, "enter" if expected else "be kept out of",
+			])
+	print("Cold corridor (ROUTE-20): a designation changes traffic only -- networks, hub budgets and capacity all unmoved; admits %s." % [
+		", ".join(GameBalance.cold_corridor_foods()),
+	])
+
+## You cannot stack your way out of a swamped chiller (v0.8 item 82). Both
+## storages on one run see the same flow, both chill the same fraction, and the
+## second re-arms protection at the same weakened figure the first gave -- so
+## the second building buys nothing at all while charging its full upkeep.
+##
+## This is the property that makes the corridor a decision rather than a
+## flourish: if piling on storage worked, nobody would ever sort their traffic.
+func _test_stacking_storage_does_not_help() -> void:
+	var earnings: Array[float] = []
+	var upkeeps: Array[float] = []
+	for chillers in [1, 2]:
+		var map: MapData = load("res://data/maps/region_1_map.tres").duplicate(true)
+		var dairy := _node(map, "dairy")
+		var town := _node(map, "townD")
+		dairy.produces = {"milk": 250.0}
+		town.demand = {"milk": 250.0}
+		var state := GameState.new()
+		var run: Array[Vector2i] = []
+		for i in 7:
+			run.append(Vector2i(5 + i, 5))
+		for cell in run:
+			state.grid[cell] = {"kind": "route", "level": "main"}
+		# Well past the 100/day a Cool Storage handles, whichever of them it is.
+		for i in chillers:
+			state.grid[run[i]] = {"kind": "storage", "stype": GameEnums.StorageType.COOL, "level": "main"}
+		state.add_connection(dairy.grid_position, run[0])
+		_connect_chain(state, run)
+		state.add_connection(run[-1], town.grid_position)
+		OrderBook.initialize(state, map)
+		state.active_orders[town.node_id] = {"milk": 1}
+		var report := SimulationEngine.run_day(state, map.node_placements)
+		earnings.append(state.last_settlement_status[town.node_id].milk.earned)
+		upkeeps.append(report.storage_upkeep)
+
+	assert(upkeeps[1] > upkeeps[0], "The fixture must actually build the second chiller")
+	var gained: float = earnings[1] - earnings[0]
+	var extra_upkeep: float = upkeeps[1] - upkeeps[0]
+	# Not literally zero: the second building's own tile chills the share that
+	# fits instead of merely passing it, which is worth a hair. The claim that
+	# matters is economic -- what a second chiller adds on a run that is already
+	# swamped does not come close to paying for itself, so the player who
+	# reaches for another §180 building is spending to stand still.
+	assert(gained < earnings[0] * 0.05,
+		"A second chiller on a swamped run must add almost nothing: §%.2f on top of §%.2f" % [gained, earnings[0]])
+	assert(gained < extra_upkeep,
+		"A second chiller must not pay for itself: §%.2f gained against §%.2f/day upkeep" % [gained, extra_upkeep])
+	print("Stacked storage (STOR-09): a second chiller on the same swamped run adds §%.0f a day and costs §%.0f a day -- sorting the traffic is the only way out." % [
+		gained, extra_upkeep,
+	])
+
+func _load_at(state: GameState, pos: Vector2i) -> float:
+	var used := 0.0
+	for f in state.last_flows:
+		if pos in f.path:
+			used += f.delivered
+	return used
 
 func _connect_chain(state: GameState, cells: Array[Vector2i]) -> void:
 	for i in range(1, cells.size()):
